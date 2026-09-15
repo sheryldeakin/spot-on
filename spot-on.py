@@ -1,17 +1,17 @@
-"""Match Lab: score how closely generated code reproduces a reference image.
+"""Spot On: pixel-perfect pages, measured.
 
-A local tool for the case where a model is asked to copy an exact reference
-(a drawing, a logo, a screenshot) and keeps getting it almost right. It renders
-the attempt, scores it against the reference on four axes, shows where the
-miss is, and writes the feedback packet the model needs to do better on the
-next try. It can also run that loop itself through headless Claude Code.
+Stop playing spot the difference with your AI. When a page is clearly off from
+the design and the model keeps answering "fixed" without getting closer, Spot On
+screenshots the page, scores it against the design on four axes, shows where
+the miss is, and writes the feedback the model needs for the next round.
 
 Run:
-    python match-lab.py            # serve on http://127.0.0.1:7265
-    python match-lab.py 7266       # serve on another port
-    python match-lab.py score <reference.png> <attempt-file> [svg|html|canvas]
+    python spot-on.py              # serve on http://127.0.0.1:7265
+    python spot-on.py 7266         # serve on another port
+    python spot-on.py score <design.png> <url-or-file> [--kind url|html|svg|canvas]
+                            [--scale 1.5] [--diff out.png] [--json]
 
-Everything stays on loopback. Nothing is uploaded anywhere.
+The tool itself serves on loopback only. Nothing is uploaded anywhere.
 """
 
 import base64
@@ -39,15 +39,19 @@ RUNS_DIR.mkdir(exist_ok=True)
 CHROME_CANDIDATES = [
     # An unset override must not become Path("."), which exists and is not a browser.
     Path(p) for p in [
-        os.environ.get("MATCH_LAB_CHROME", "").strip(),
+        os.environ.get("SPOT_ON_CHROME", "").strip(),
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     ] if p
 ]
 
-KINDS = ("svg", "html", "canvas")
-MAX_SIDE = 1200          # references bigger than this are scaled down before scoring
+# url: a running page, the usual web dev case. html: a pasted page or component.
+# svg and canvas stay for icons and illustrations that live on the page.
+KINDS = ("url", "html", "svg", "canvas")
+SCALES = (1.0, 1.25, 1.5, 2.0)
+MAX_PIXELS = 6_000_000   # designs bigger than this are scaled down before scoring
 SSIM_WINDOW = 7          # odd; box window for the structural term
 INK_THRESHOLD = 28       # colour distance from the page ground that counts as drawn
 
@@ -117,10 +121,19 @@ def _find_chrome():
     for c in CHROME_CANDIDATES:
         if c.is_file():
             return c
-    found = shutil.which("chrome") or shutil.which("msedge")
-    if found:
-        return Path(found)
-    raise RuntimeError("no Chrome or Edge found; set MATCH_LAB_CHROME to the browser executable")
+    for name in ("chrome", "google-chrome", "chromium", "msedge"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    raise RuntimeError("no Chrome or Edge found; set SPOT_ON_CHROME to the browser executable")
+
+
+def _check_url(url):
+    u = (url or "").strip()
+    if not re.match(r"^https?://[^\s]+$", u):
+        raise ValueError("a running page needs a full http:// or https:// address, "
+                         "for example http://localhost:5173/pricing")
+    return u
 
 
 def _wrap(code, kind, width, height, ground="#FFFFFF"):
@@ -147,13 +160,27 @@ def _wrap(code, kind, width, height, ground="#FFFFFF"):
     return shell.format(w=width, h=height, g=ground, body=body)
 
 
-def render_code(code, kind, width, height, out_png, ground="#FFFFFF", settle_ms=1200):
-    """Rasterise an attempt with headless Chrome at exactly width x height."""
+def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale=1.0,
+                ground="#FFFFFF", settle_ms=None):
+    """Screenshot an attempt with headless Chrome.
+
+    The browser window is css_width x css_height CSS pixels at the given device
+    scale, which is what the design was captured at. A 2160px-wide screenshot
+    taken on a 150% display is a 1440px page; rendering it 2160px wide would
+    trigger a different layout, and the score would measure the wrong page.
+    """
     chrome = _find_chrome()
-    tmp = Path(tempfile.mkdtemp(prefix="match-lab-"))
+    out_size = out_size or (round(css_width * scale), round(css_height * scale))
+    tmp = Path(tempfile.mkdtemp(prefix="spot-on-"))
     try:
-        page = tmp / "attempt.html"
-        page.write_text(_wrap(code, kind, width, height, ground), encoding="utf-8")
+        if kind == "url":
+            target = _check_url(code)
+            settle_ms = settle_ms or 4000
+        else:
+            page = tmp / "attempt.html"
+            page.write_text(_wrap(code, kind, css_width, css_height, ground), encoding="utf-8")
+            target = page.as_uri()
+            settle_ms = settle_ms or 1200
         shot = tmp / "shot.png"
         cmd = [
             str(chrome),
@@ -161,21 +188,28 @@ def render_code(code, kind, width, height, out_png, ground="#FFFFFF", settle_ms=
             "--disable-gpu",
             "--hide-scrollbars",
             "--disable-extensions",
-            "--force-device-scale-factor=1",
-            "--default-background-color=00000000",
+            "--no-first-run",
+            "--force-device-scale-factor={}".format(scale),
             "--user-data-dir={}".format(tmp / "profile"),
-            "--window-size={},{}".format(width, height),
+            "--window-size={},{}".format(css_width, css_height),
             "--virtual-time-budget={}".format(settle_ms),
             "--screenshot={}".format(shot),
-            page.as_uri(),
+            target,
         ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=90)
+        proc = subprocess.run(cmd, capture_output=True, timeout=120)
         if not shot.exists():
             err = (proc.stderr or b"").decode("utf-8", "replace")[-600:]
             raise RuntimeError("the browser produced no screenshot. {}".format(err.strip()))
-        img = Image.open(shot).convert("RGB")
-        if img.size != (width, height):
-            img = img.resize((width, height), Image.LANCZOS)
+        shot_img = Image.open(shot)
+        if shot_img.mode in ("RGBA", "LA", "P"):
+            # A page with no background colour is white in a real browser, not black.
+            flat = Image.new("RGB", shot_img.size, "#FFFFFF")
+            flat.paste(shot_img.convert("RGBA"), mask=shot_img.convert("RGBA").split()[3])
+            img = flat
+        else:
+            img = shot_img.convert("RGB")
+        if img.size != tuple(out_size):
+            img = img.resize(tuple(out_size), Image.LANCZOS)
         out_png.parent.mkdir(parents=True, exist_ok=True)
         img.save(out_png)
         return img
@@ -266,6 +300,72 @@ def _palette_distance(ref_cols, att_cols):
     return 0.6 * fwd + 0.4 * back
 
 
+def _offsets(g_ref, g_att, bands=10, max_frac=0.15, min_px=4):
+    """Find content that is shifted rather than wrong, and where the shift starts.
+
+    On a web page one missing or extra element pushes everything below it, and a
+    pixel comparison then reports the whole lower page as wrong. Each horizontal
+    band of the design is slid up and down against the attempt (2D, on a softened
+    grayscale copy so font differences do not dominate) to find the distance that
+    lines it up best.
+
+    A shift is reported only when it clearly beats no shift and several bands
+    agree on the distance. A missing element or a small size change can make one
+    band prefer some offset, and reporting that as a shift would send the fix to
+    the wrong place.
+    """
+    h, w = g_ref.shape
+    f = max(1, int(np.ceil(h / 600.0)), int(np.ceil(w / 800.0)))
+    hh, ww = h // f, w // f
+    r = g_ref[:hh * f, :ww * f].reshape(hh, f, ww, f).mean(axis=(1, 3))
+    a = g_att[:hh * f, :ww * f].reshape(hh, f, ww, f).mean(axis=(1, 3))
+    r, a = _box_mean(r, 5), _box_mean(a, 5)
+    out = {"vertical": None, "horizontal": None}
+
+    lag = max(2, int(hh * max_frac))
+    found = []
+    for b in range(bands):
+        lo, hi = hh * b // bands, hh * (b + 1) // bands
+        band = r[lo:hi]
+        if band.std() < 2.0:
+            continue  # a flat band has nothing to line up
+        e0 = float(np.abs(band - a[lo:hi]).mean())
+        best, best_e = 0, e0
+        for d in range(-lag, lag + 1):
+            s0, s1 = lo - d, hi - d
+            if s0 < 0 or s1 > hh:
+                continue
+            e = float(np.abs(band - a[s0:s1]).mean())
+            if e < best_e - 1e-9:
+                best, best_e = d, e
+        # 0.75: on a real pricing page the shifted heading bands line up at 0.69 to
+        # 0.71, while the closest no-shift case in the tests sits at 0.78.
+        if e0 > 0 and abs(best) * f >= min_px and best_e <= 0.75 * e0:
+            found.append((lo * f, best * f))
+    if found:
+        tol = max(3, 2 * f)
+        groups = [[x for x in found if abs(x[1] - anchor[1]) <= tol] for anchor in found]
+        group = max(groups, key=len)
+        if len(group) >= 2:
+            out["vertical"] = {"from_y": group[0][0],
+                               "shift": int(np.median([d for _, d in group])),
+                               "bands": len(group)}
+
+    lag_x = max(2, int(ww * max_frac))
+    e0 = float(np.abs(r - a).mean())
+    best, best_e = 0, e0
+    for d in range(-lag_x, lag_x + 1):
+        if d >= 0:
+            e = float(np.abs(r[:, d:] - a[:, :ww - d]).mean()) if d < ww else None
+        else:
+            e = float(np.abs(r[:, :ww + d] - a[:, -d:]).mean())
+        if e is not None and e < best_e - 1e-9:
+            best, best_e = d, e
+    if e0 > 0 and abs(best) * f >= min_px and best_e <= 0.75 * e0:
+        out["horizontal"] = {"shift": best * f}
+    return out
+
+
 def _region_grid(diff_sq, rows=4, cols=4):
     h, w = diff_sq.shape
     cells = []
@@ -287,8 +387,12 @@ def _cell_name(cell):
     return "{}, {}".format(_ROW_WORDS[cell["row"]], _COL_WORDS[cell["col"]])
 
 
-def score_images(ref_img, att_img):
-    """Compare two same-size RGB images and return the full score report."""
+def score_images(ref_img, att_img, px_per_css=1.0):
+    """Compare two same-size RGB images and return the full score report.
+
+    px_per_css converts image pixels back to CSS pixels for the sentences in the
+    report, since that is the unit the person or model will edit.
+    """
     ref = np.asarray(ref_img.convert("RGB"), dtype=np.float64)
     att = np.asarray(att_img.convert("RGB").resize(ref_img.size, Image.LANCZOS), dtype=np.float64)
 
@@ -308,6 +412,17 @@ def score_images(ref_img, att_img):
     iou = float(inter) / float(union) if union else 1.0
     coverage_ref = float(m_ref.mean())
     coverage_att = float(m_att.mean())
+
+    # Coverage: the share of the design with something drawn within 6px of it.
+    # Missing content caps the whole score. SSIM forgives flat regions and the
+    # palette term forgives a colour that is barely present, so without this an
+    # element that was never drawn could outscore one drawn three pixels off.
+    att_near = _box_mean(m_att.astype(np.float64), 13) > 1e-9
+    missed = np.logical_and(m_ref, ~att_near)
+    ref_ink = float(m_ref.sum())
+    coverage = 1.0 - float(missed.sum()) / ref_ink if ref_ink else 1.0
+    missed_cells = _region_grid(missed.astype(np.float64))
+    missed_where = _cell_name(max(missed_cells, key=lambda c: c["rmse"]))
 
     # Structure and colour are measured on the drawn content and its surroundings,
     # not on the empty page. Averaged over the whole canvas, an attempt that simply
@@ -341,7 +456,8 @@ def score_images(ref_img, att_img):
     shape = max(0.0, min(100.0, iou * 100.0))
     colour = max(0.0, min(100.0, 100.0 * float(np.exp(-colour_dist / 60.0))))
     detail = max(0.0, min(100.0, edge_corr * 100.0))
-    match = 0.40 * structure + 0.25 * shape + 0.20 * colour + 0.15 * detail
+    weighted = 0.40 * structure + 0.25 * shape + 0.20 * colour + 0.15 * detail
+    match = weighted * (0.6 + 0.4 * coverage)
 
     cells = _region_grid(per_px)
     worst = sorted(cells, key=lambda c: -c["rmse"])[:3]
@@ -353,6 +469,7 @@ def score_images(ref_img, att_img):
             "shape": round(shape, 1),
             "colour": round(colour, 1),
             "detail": round(detail, 1),
+            "coverage": round(coverage * 100, 1),
         },
         "raw": {
             "mse": round(mse, 2),
@@ -364,12 +481,24 @@ def score_images(ref_img, att_img):
             "edge_correlation": round(edge_corr, 4),
             "ink_coverage_reference": round(coverage_ref * 100, 2),
             "ink_coverage_attempt": round(coverage_att * 100, 2),
+            "design_not_drawn_pct": round((1 - coverage) * 100, 2),
+            "design_not_drawn_where": missed_where,
         },
+        "size": [int(ref.shape[1]), int(ref.shape[0])],
         "ground": ["#{:02X}{:02X}{:02X}".format(*[int(v) for v in ground])],
         "colours": {"reference": ref_cols, "attempt": att_cols},
         "regions": cells,
         "worst_regions": [{"where": _cell_name(c), "rmse": c["rmse"]} for c in worst],
     }
+    off = _offsets(g_ref, g_att)
+    if off["vertical"]:
+        v = off["vertical"]
+        v["from_css_y"] = int(round(v["from_y"] / px_per_css))
+        v["css_shift"] = int(round(v["shift"] / px_per_css))
+        v["where"] = _ROW_WORDS[min(3, v["from_y"] * 4 // max(1, ref.shape[0]))]
+    if off["horizontal"]:
+        off["horizontal"]["css_shift"] = int(round(off["horizontal"]["shift"] / px_per_css))
+    report["offsets"] = off
     report["problems"] = _problems(report)
     return report, per_px, ground
 
@@ -379,19 +508,59 @@ def _problems(report):
     out = []
     comp = report["components"]
     raw = report["raw"]
-    ranked = sorted(comp.items(), key=lambda kv: kv[1])
+    ranked = sorted(((k, v) for k, v in comp.items() if k != "coverage"), key=lambda kv: kv[1])
+
+    off = report.get("offsets") or {}
+    if off.get("vertical"):
+        v = off["vertical"]
+        way = "higher" if v["css_shift"] > 0 else "lower"
+        if v["from_y"] * 10 < report["size"][1]:
+            out.append(
+                "Nearly everything sits about {}px {} than in the design. Something at the very top "
+                "is missing, extra or the wrong height: a label, a heading, padding or a margin. "
+                "Fix that first: most of the error below follows from this one shift.".format(
+                    abs(v["css_shift"]), way))
+        else:
+            out.append(
+                "From about {}px down (the {} of the page), content sits about {}px {} than in the "
+                "design. Something above that point is missing, extra or the wrong height. Fix that "
+                "first: most of the error below it follows from this one shift.".format(
+                    v["from_css_y"], v["where"], abs(v["css_shift"]), way))
+    if off.get("horizontal"):
+        hs = off["horizontal"]["css_shift"]
+        out.append("Content sits about {}px further {} than in the design; check the container "
+                   "width, side padding and centring.".format(abs(hs), "left" if hs > 0 else "right"))
+
+    if comp.get("coverage", 100) < 97:
+        if off.get("vertical") or off.get("horizontal"):
+            tail = "Part of that is the shift; whatever is still uncovered after fixing it is missing."
+        else:
+            tail = "Something is missing there, not just misplaced."
+        out.append("{:.0f}% of the design has nothing drawn near it, mostly in the {} of the page. "
+                   "{}".format(raw["design_not_drawn_pct"], raw["design_not_drawn_where"], tail))
 
     wording = {
-        "shape": "The silhouette is off: {:.0f}% of the drawn area overlaps the reference. "
-                 "Reference covers {:.1f}% of the canvas, the attempt covers {:.1f}%. {}",
-        "colour": "The palette is off by {:.0f} on a 0 to 441 scale: a reference colour has "
+        "shape": "The silhouette is off: {:.0f}% of the drawn area overlaps the design. "
+                 "The design covers {:.1f}% of the page, the attempt covers {:.1f}%. {}",
+        "colour": "The palette is off by {:.0f} on a 0 to 441 scale: a design colour has "
                   "no close match in the attempt, or the attempt invented one.",
         "structure": "Local structure does not line up (SSIM {:.3f}). Edges and gradients sit in "
                      "the wrong places even where the colours are close.",
         "detail": "Detail density does not match (edge correlation {:.2f}). {}",
     }
 
+    shifted = bool(off.get("vertical") or off.get("horizontal"))
+    typeface = (comp["colour"] >= 90 and comp.get("coverage", 100) >= 90
+                and comp["structure"] < 70 and not (shifted and abs(
+                    (off.get("vertical") or {}).get("css_shift", 0)) > 20))
+    if typeface:
+        out.append("Colours and layout are close but edges do not line up. On a page that is "
+                   "usually the text: check the font family first, then size, weight, line height "
+                   "and letter spacing against the design, before moving any boxes.")
+
     for name, value in ranked[:2]:
+        if typeface and name in ("structure", "detail"):
+            continue
         if value >= 92:
             continue
         if name == "shape":
@@ -405,7 +574,7 @@ def _problems(report):
         elif name == "structure":
             out.append(wording[name].format(raw["ssim"]))
         else:
-            hint = ("The attempt is smoother than the reference; it is missing texture or edges."
+            hint = ("The attempt is smoother than the design; it is missing texture or edges."
                     if raw["edge_correlation"] < 0.5 else "Some strokes land in the wrong place.")
             out.append(wording[name].format(raw["edge_correlation"], hint))
 
@@ -415,7 +584,7 @@ def _problems(report):
 
     if report["worst_regions"]:
         w = report["worst_regions"][0]
-        out.append("The worst area is the {} of the canvas (RMSE {:.0f}).".format(w["where"], w["rmse"]))
+        out.append("The worst area is the {} of the page (RMSE {:.0f}).".format(w["where"], w["rmse"]))
 
     ref_cols = report["colours"]["reference"]
     att_cols = report["colours"]["attempt"]
@@ -427,9 +596,9 @@ def _problems(report):
                 default=999.0,
             )
             if best > 70:
-                missing.append("{} ({:.0f}% of the reference)".format(rc["hex"], rc["share"]))
+                missing.append("{} ({:.0f}% of the design)".format(rc["hex"], rc["share"]))
         if missing:
-            out.append("Colours in the reference with no close match in the attempt: "
+            out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
     return out
 
@@ -451,13 +620,13 @@ def feedback_text(run, attempt, report):
     """The block a model can act on: what it built, how it scored, what to fix."""
     c = report["components"]
     lines = [
-        "REFERENCE MATCH REPORT",
-        "run: {}   attempt: {}   canvas: {}x{}   kind: {}".format(
+        "SPOT ON REPORT",
+        "run: {}   attempt: {}   size: {}x{}   kind: {}".format(
             run.get("name", ""), attempt, run.get("width"), run.get("height"), run.get("kind")),
         "",
         "match score: {}/100".format(report["match"]),
-        "  structure {:.1f}   shape {:.1f}   colour {:.1f}   detail {:.1f}".format(
-            c["structure"], c["shape"], c["colour"], c["detail"]),
+        "  structure {:.1f}   shape {:.1f}   colour {:.1f}   detail {:.1f}   coverage {:.1f}".format(
+            c["structure"], c["shape"], c["colour"], c["detail"], c.get("coverage", 100.0)),
         "  rmse {}   ssim {}   shape IoU {}".format(
             report["raw"]["rmse"], report["raw"]["ssim"], report["raw"]["shape_iou"]),
         "",
@@ -467,7 +636,7 @@ def feedback_text(run, attempt, report):
         lines.append("  {}. {}".format(i, p))
     ref_cols = report["colours"]["reference"]
     if ref_cols:
-        lines += ["", "dominant reference colours: " + ", ".join(
+        lines += ["", "dominant design colours: " + ", ".join(
             "{} {}%".format(c0["hex"], c0["share"]) for c0 in ref_cols)]
     lines += ["", "worst areas: " + ", ".join(
         "{} ({})".format(w["where"], w["rmse"]) for w in report["worst_regions"])]
@@ -484,24 +653,46 @@ ITERATE_SCHEMA = {
 }
 
 
-def _iterate_prompt(run, n, code, report, extra):
+def iteration_base(history):
+    """The attempt the next round builds on: the best so far, not the latest.
+
+    A round that scores lower is a failed experiment. Building on it compounds the
+    mistake, which is exactly what happens when a person keeps saying "closer".
+    """
+    best = max(history, key=lambda a: (a["match"], a["n"]))
+    latest = history[-1]
+    return best, (latest if latest["n"] != best["n"] else None)
+
+
+def _iterate_prompt(run, n, code, report, extra, discarded=None):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
     parts = [
-        "You are matching a reference image as closely as possible with {} code.".format(run["kind"]),
+        "You are making {} code look exactly like a design.".format(run["kind"]),
         "",
         "Look at all three images before you change anything:",
-        "  Read {} (the target)".format(ref),
+        "  Read {} (the design)".format(ref),
         "  Read {} (your last attempt, rendered)".format(att),
         "  Read {} (the difference; bright red is where you missed)".format(dif),
         "",
-        "The canvas is exactly {}x{} pixels on a {} ground.".format(
-            run["width"], run["height"], run.get("ground", "#FFFFFF")),
+        "The page is {}x{} CSS pixels on a {} ground.".format(
+            run.get("css_width", run["width"]), run.get("css_height", run["height"]),
+            run.get("ground", "#FFFFFF")),
         "",
         feedback_text(run, n, report),
         "",
-        "Your last attempt was:",
+    ]
+    if discarded:
+        parts += [
+            "Your most recent attempt ({}) scored {:.1f}, below this one at {:.1f}, so it was "
+            "discarded. Its change was: {}. Do not repeat it; try a different fix.".format(
+                discarded["n"], discarded["match"], report["match"],
+                discarded.get("changes") or "not recorded"),
+            "",
+        ]
+    parts += [
+        "The attempt to improve is:",
         "-----",
         code,
         "-----",
@@ -520,20 +711,28 @@ def _iterate_prompt(run, n, code, report, extra):
 def run_iteration(slug, extra=""):
     """One round: ask headless Claude Code for a better attempt, render it, score it."""
     run = _load_run(slug)
+    if run["kind"] == "url":
+        # The code behind a running page lives in someone's repo, which this process
+        # cannot and should not edit. That loop belongs to the session doing the work.
+        raise ValueError("a running page is iterated by the session editing its code; "
+                         "use the spot-on skill there")
     d = _run_dir(slug)
     history = _attempts(slug)
     if not history:
         raise ValueError("render a first attempt before iterating")
-    last = history[-1]
-    n = last["n"]
+    base, discarded = iteration_base(history)
+    n = base["n"]
     code = (d / "attempts" / "{:03d}.code".format(n)).read_text(encoding="utf-8")
-    report = last["report"]
+    report = base["report"]
 
-    prompt = _iterate_prompt(run, n, code, report, extra)
+    prompt = _iterate_prompt(run, n, code, report, extra, discarded)
     cmd = ["claude", "-p", prompt, "--output-format", "json",
-           "--model", os.environ.get("MATCH_LAB_MODEL", "sonnet"),
+           "--model", os.environ.get("SPOT_ON_MODEL", "sonnet"),
            "--json-schema", json.dumps(ITERATE_SCHEMA)]
-    proc = subprocess.run(cmd, cwd=str(d), capture_output=True, text=True, timeout=600)
+    # Explicit UTF-8: the Windows default codepage turns a model's arrows, quotes and
+    # dashes into mojibake, in its notes and in the generated page alike.
+    proc = subprocess.run(cmd, cwd=str(d), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=600)
     if proc.returncode != 0 and not proc.stdout.strip():
         raise RuntimeError("claude exited {}: {}".format(proc.returncode, (proc.stderr or "")[-400:]))
 
@@ -556,6 +755,8 @@ def _looks_like(code, kind):
         return "<svg" in c.lower()
     if kind == "canvas":
         return "ctx" in c and (";" in c or "\n" in c)
+    if kind == "url":
+        return bool(re.match(r"^https?://\S+$", c))
     return "<" in c and ">" in c
 
 
@@ -597,9 +798,12 @@ def record_attempt(slug, code, source="manual", changes=""):
     png = d / "attempts" / "{:03d}.png".format(n)
 
     t0 = time.time()
-    att_img = render_code(code, run["kind"], run["width"], run["height"], png,
-                          ground=run.get("ground", "#FFFFFF"))
-    report, per_px, _ = score_images(ref_img, att_img)
+    att_img = render_code(code, run["kind"],
+                          run.get("css_width", run["width"]), run.get("css_height", run["height"]),
+                          png, out_size=(run["width"], run["height"]),
+                          scale=run.get("scale", 1.0), ground=run.get("ground", "#FFFFFF"))
+    px_per_css = run["width"] / float(run.get("css_width", run["width"]))
+    report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css)
     diff_heatmap(per_px, d / "attempts" / "{:03d}-diff.png".format(n))
     (d / "attempts" / "{:03d}.code".format(n)).write_text(code, encoding="utf-8")
 
@@ -622,35 +826,54 @@ def record_attempt(slug, code, source="manual", changes=""):
     return record
 
 
-def create_run(name, kind, reference_bytes=None, reference_path=None, width=None, height=None):
-    slug = _slugify(name)
-    d = _run_dir(slug)
-    (d / "attempts").mkdir(parents=True, exist_ok=True)
-
+def load_design(reference_bytes=None, reference_path=None):
     if reference_bytes is not None:
         import io
         img = Image.open(io.BytesIO(reference_bytes))
     elif reference_path:
         img = Image.open(reference_path)
     else:
-        raise ValueError("a reference image is required")
-    img = img.convert("RGB")
+        raise ValueError("a design image is required")
+    if img.mode in ("RGBA", "LA", "P"):
+        flat = Image.new("RGB", img.size, "#FFFFFF")
+        rgba = img.convert("RGBA")
+        flat.paste(rgba, mask=rgba.split()[3])
+        return flat
+    return img.convert("RGB")
 
-    if width and height:
-        img = img.resize((int(width), int(height)), Image.LANCZOS)
-    elif max(img.size) > MAX_SIDE:
-        scale = MAX_SIDE / float(max(img.size))
-        img = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))),
-                         Image.LANCZOS)
+
+def page_geometry(img, scale):
+    """CSS page size the design was captured at, and the size scoring happens at."""
+    scale = float(scale) if float(scale) in SCALES else 1.0
+    css_w, css_h = max(1, round(img.width / scale)), max(1, round(img.height / scale))
+    w, h = img.width, img.height
+    if w * h > MAX_PIXELS:
+        f = (MAX_PIXELS / float(w * h)) ** 0.5
+        w, h = max(1, int(w * f)), max(1, int(h * f))
+    return scale, css_w, css_h, w, h
+
+
+def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0):
+    slug = _slugify(name)
+    d = _run_dir(slug)
+    (d / "attempts").mkdir(parents=True, exist_ok=True)
+
+    img = load_design(reference_bytes, reference_path)
+    scale, css_w, css_h, w, h = page_geometry(img, scale)
+    if (w, h) != img.size:
+        img = img.resize((w, h), Image.LANCZOS)
     img.save(d / "reference.png")
 
     ground = _ground_colour(np.asarray(img, dtype=np.float64))
     run = {
         "slug": slug,
         "name": name,
-        "kind": kind if kind in KINDS else "svg",
-        "width": img.width,
-        "height": img.height,
+        "kind": kind if kind in KINDS else "url",
+        "width": w,
+        "height": h,
+        "css_width": css_w,
+        "css_height": css_h,
+        "scale": scale,
         "ground": "#{:02X}{:02X}{:02X}".format(*[int(v) for v in ground]),
         "created": time.time(),
         "best_match": -1,
@@ -661,6 +884,7 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, width=None
 
 
 STARTERS = {
+    "url": "http://localhost:5173/",
     "svg": '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
            'viewBox="0 0 {w} {h}">\n  <rect width="{w}" height="{h}" fill="{g}"/>\n'
            '  <circle cx="{cx}" cy="{cy}" r="{r}" fill="#52796F"/>\n</svg>',
@@ -675,7 +899,7 @@ STARTERS = {
 
 
 def starter_code(run):
-    w, h = run["width"], run["height"]
+    w, h = run.get("css_width", run["width"]), run.get("css_height", run["height"])
     return STARTERS[run["kind"]].format(
         w=w, h=h, g=run.get("ground", "#FFFFFF"),
         cx=w // 2, cy=h // 2, r=int(min(w, h) * 0.3))
@@ -686,7 +910,7 @@ PAGE_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Match Lab</title>
+<title>Spot On</title>
 <style>
   :root {
     --ink: #22372B;
@@ -844,14 +1068,14 @@ PAGE_HTML = r"""<!doctype html>
   <header style="position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 26px 26px 18px; margin: 0 -26px;">
     <div class="wash wash-sage" aria-hidden="true"></div>
     <div>
-      <h1 style="margin: 0; font-family: 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif; font-size: 40px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; background: linear-gradient(96deg, #22372B, #52796F); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;">Match Lab</h1>
-      <p style="margin: 5px 0 0; font-size: 15px; color: var(--muted);">Copy it exactly.</p>
-      <p style="margin: 2px 0 0; font-size: 12px; color: var(--faint);">Scored against the reference, pixel by pixel.</p>
+      <h1 style="margin: 0; font-family: 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif; font-size: 40px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; background: linear-gradient(96deg, #22372B, #52796F); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;">Spot On</h1>
+      <p style="margin: 5px 0 0; font-size: 15px; color: var(--muted);">Pixel-perfect pages, measured.</p>
+      <p style="margin: 2px 0 0; font-size: 12px; color: var(--faint);">Stop playing spot the difference with your AI.</p>
     </div>
     <div style="display: flex; align-items: center; gap: 10px; padding-top: 6px;">
       <span style="height: 28px; border-radius: 999px; border: 1px solid var(--border); background: #FFFFFF; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; box-shadow: 0 1px 2px rgb(16 24 40/0.05);">
         <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--accent);"></span>
-        <span id="active-chip" style="font-size: 13px; font-weight: 500;">no reference</span>
+        <span id="active-chip" style="font-size: 13px; font-weight: 500;">no design</span>
       </span>
       <span style="height: 28px; border-radius: 999px; background: rgba(255,255,255,0.62); border: 1px solid rgba(231,233,229,0.9); padding: 0 11px 0 9px; display: inline-flex; align-items: center; gap: 6px;">
         <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: mlBreathe 3.4s ease-in-out infinite;"></span>
@@ -867,8 +1091,8 @@ PAGE_HTML = r"""<!doctype html>
       <div class="wash wash-cream" aria-hidden="true"></div>
       <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
         <div>
-          <h2 class="sec-title">Reference</h2>
-          <div class="sec-tag">The thing being copied. Everything is scored against this.</div>
+          <h2 class="sec-title">Design</h2>
+          <div class="sec-tag">The mockup or screenshot the page should match. Everything is scored against this.</div>
         </div>
         <div id="ref-meta" style="display: flex; align-items: center; gap: 7px;"></div>
       </div>
@@ -878,7 +1102,7 @@ PAGE_HTML = r"""<!doctype html>
         <div>
           <div id="ref-shell" style="width: 300px; height: 200px; border-radius: 10px; border: 1px solid var(--border); background: #FFFFFF; display: flex; align-items: center; justify-content: center; overflow: hidden;">
             <img id="ref-img" alt="" hidden style="max-width: 100%; max-height: 100%; display: block;">
-            <span id="ref-empty" class="mono" style="font-size: 11px; color: var(--faint);">no reference loaded</span>
+            <span id="ref-empty" class="mono" style="font-size: 11px; color: var(--faint);">no design loaded</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
             <button type="button" id="pick-file" class="btn-fill small">Choose image</button>
@@ -892,27 +1116,34 @@ PAGE_HTML = r"""<!doctype html>
         <div style="min-width: 0;">
           <div id="new-panel">
             <div id="drop" class="drop-zone">
-              <div style="font-size: 13px; color: var(--deep);">Drop a reference image here, or choose one.</div>
-              <div class="hint" style="margin-top: 5px;">PNG, JPG, WEBP. Anything wider than 1200px is scaled down so scoring stays quick.</div>
+              <div style="font-size: 13px; color: var(--deep);">Drop the design here: a Figma export or a screenshot.</div>
+              <div class="hint" style="margin-top: 5px;">PNG, JPG, WEBP. Full-page screenshots are fine; very large ones are scaled down for scoring only.</div>
             </div>
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 14px;">
-              <input type="text" id="run-name" class="text-input" placeholder="Name this run, for example jellyfish" style="flex: 1; min-width: 0;">
-              <select id="run-kind" class="text-input" style="width: 150px;" title="What the model writes. SVG for drawings and logos, canvas for procedural art, HTML for layouts.">
+              <input type="text" id="run-name" class="text-input" placeholder="Name this run, for example pricing page" style="flex: 1; min-width: 0;">
+              <select id="run-kind" class="text-input" style="width: 150px;" title="What gets scored. A running page is the usual case: point it at your dev server. Pasted HTML suits a single component; SVG and canvas suit icons and illustrations.">
+                <option value="url">Running page</option>
+                <option value="html">Pasted HTML</option>
                 <option value="svg">SVG</option>
                 <option value="canvas">Canvas 2D</option>
-                <option value="html">HTML and CSS</option>
+              </select>
+              <select id="run-scale" class="text-input" style="width: 126px;" title="The display scale the design screenshot was taken at. A screenshot from a 150% Windows display or a Retina Mac is bigger than the page it shows; pick the matching scale so the page is rendered at its real width.">
+                <option value="1">1x capture</option>
+                <option value="1.25">1.25x capture</option>
+                <option value="1.5">1.5x capture</option>
+                <option value="2">2x capture</option>
               </select>
               <button type="button" id="create-run" class="btn-primary" disabled>Start run</button>
             </div>
             <div id="guide" style="padding: 20px 0 4px; display: flex; flex-direction: column; gap: 7px;">
-              <div class="guide-step"><span class="guide-num">01</span><span class="guide-text">Load the reference and name the run.</span></div>
-              <div class="guide-step"><span class="guide-num">02</span><span class="guide-text">Paste a first attempt, or take the starter, and render it.</span></div>
-              <div class="guide-step"><span class="guide-num">03</span><span class="guide-text">Read the score, hand the packet back to the model, repeat.</span></div>
+              <div class="guide-step"><span class="guide-num">01</span><span class="guide-text">Drop in the design and name the run.</span></div>
+              <div class="guide-step"><span class="guide-num">02</span><span class="guide-text">Point it at the running page, or paste HTML, and score it.</span></div>
+              <div class="guide-step"><span class="guide-num">03</span><span class="guide-text">Hand the report to the model and watch the score climb instead of guessing.</span></div>
             </div>
           </div>
 
           <div id="runs-panel" hidden>
-            <div style="font-size: 12px; color: var(--muted); padding-bottom: 6px;">Saved runs. Opening one restores its reference, its history and its best attempt.</div>
+            <div style="font-size: 12px; color: var(--muted); padding-bottom: 6px;">Saved runs. Opening one restores its design, its history and its best attempt.</div>
             <div class="rule13"></div>
             <div id="runs-list"></div>
           </div>
@@ -929,24 +1160,32 @@ PAGE_HTML = r"""<!doctype html>
         <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
           <div>
             <h2 class="sec-title">Attempt</h2>
-            <div class="sec-tag">The code the model wrote. Rendered at the reference size.</div>
+            <div class="sec-tag">The page the model built, screenshot at the design's size.</div>
           </div>
           <span id="attempt-meta" class="mono" style="font-size: 11px; color: var(--muted);"></span>
         </div>
         <div class="rule16" style="margin-bottom: 12px;"></div>
-        <textarea id="code" class="code-area" rows="16" spellcheck="false" placeholder="Paste the model's SVG, canvas code or HTML here."></textarea>
-        <div class="hint">Rendered by headless Chrome at exactly the reference size, on the reference ground colour, so the score reflects the code and nothing else.</div>
+        <div id="url-wrap" hidden>
+          <input type="text" id="url-input" class="text-input mono" spellcheck="false" placeholder="http://localhost:5173/pricing" style="width: 100%; height: 38px; font-size: 13px;">
+          <div class="hint">Your dev server, at the page that should match the design. Change the code in your editor, then screenshot again; hot reload keeps it to one click.</div>
+        </div>
+        <textarea id="code" class="code-area" rows="16" spellcheck="false" placeholder="Paste the page's HTML, or SVG or canvas code."></textarea>
+        <div class="hint">Screenshot by headless Chrome at the design's page size and display scale, so the score reflects the page and nothing else.</div>
 
         <div style="display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;">
-          <button type="button" id="render" class="btn-primary" disabled><span id="render-spin" hidden style="width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.4); border-top-color: #FFFFFF; animation: mlSpin .7s linear infinite;"></span><span id="render-label">Render and score</span></button>
+          <button type="button" id="render" class="btn-primary" disabled><span id="render-spin" hidden style="width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.4); border-top-color: #FFFFFF; animation: mlSpin .7s linear infinite;"></span><span id="render-label">Screenshot and score</span></button>
           <button type="button" id="starter" class="btn-fill" disabled>Insert starter</button>
-          <span id="status-line" style="margin-left: 4px; font-size: 12px; color: var(--muted);" aria-live="polite">Load a reference to begin.</span>
+          <span id="status-line" style="margin-left: 4px; font-size: 12px; color: var(--muted);" aria-live="polite">Drop in a design to begin.</span>
         </div>
 
         <div class="rule22" style="margin-top: 20px;"></div>
-        <div style="padding-top: 14px;">
+        <div id="url-loop-note" hidden style="padding-top: 14px; max-width: 580px;">
+          <div style="font-size: 13px; font-weight: 500;">Letting the model iterate</div>
+          <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">A running page's code lives in your repo, so the loop runs in the session that edits it. Ask that session to use <span class="mono">/spot-on</span>: it scores the page after each change, reads the difference map, and its attempts land in this history.</div>
+        </div>
+        <div id="iterate-wrap" style="padding-top: 14px;">
           <div style="font-size: 13px; font-weight: 500;">Let Claude iterate</div>
-          <div style="font-size: 12px; color: var(--muted); margin-top: 2px; max-width: 560px;">Each round shows the model the reference, its own render and the difference map, hands it the report below, and scores whatever comes back.</div>
+          <div style="font-size: 12px; color: var(--muted); margin-top: 2px; max-width: 560px;">Each round shows the model the design, its own render and the difference map, hands it the report below, and scores whatever comes back.</div>
           <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap;">
             <button type="button" id="iterate" class="btn-fill" disabled><span id="iter-spin" hidden style="width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(82,121,111,0.3); border-top-color: var(--accent); animation: mlSpin .7s linear infinite; display: inline-block; margin-right: 7px; vertical-align: -1px;"></span><span id="iter-label">Run 3 rounds</span></button>
             <select id="rounds" class="text-input" style="width: 104px; height: 32px;">
@@ -954,7 +1193,7 @@ PAGE_HTML = r"""<!doctype html>
               <option value="3" selected>3 rounds</option>
               <option value="5">5 rounds</option>
             </select>
-            <input type="text" id="iter-note" class="text-input" placeholder="Optional steer, for example keep the palette, fix the tentacles" style="flex: 1; min-width: 220px;">
+            <input type="text" id="iter-note" class="text-input" placeholder="Optional steer, for example the font is Inter, keep the card colours" style="flex: 1; min-width: 220px;">
             <button type="button" id="iter-stop" class="btn-ghost" hidden style="height: 32px;">Stop</button>
           </div>
         </div>
@@ -966,14 +1205,14 @@ PAGE_HTML = r"""<!doctype html>
         <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 0 0 12px;">
           <div style="flex: 1; min-width: 0;">
             <h2 class="sec-title" style="color: #EDF2ED;">Comparison</h2>
-            <div style="font-size: 13px; color: #E2EAE3; margin-top: 2px;">Where the attempt and the reference disagree.</div>
+            <div style="font-size: 13px; color: #E2EAE3; margin-top: 2px;">Where the page and the design disagree.</div>
           </div>
           <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.16em; text-transform: uppercase;">live</span>
         </div>
         <div style="height: 1px; background: linear-gradient(90deg, rgba(255,255,255,0.13), rgba(255,255,255,0.13) 94%, transparent); margin-bottom: 12px;"></div>
 
         <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 11px; flex-wrap: wrap;">
-          <button type="button" class="dark-chip" data-view="reference">reference</button>
+          <button type="button" class="dark-chip" data-view="reference">design</button>
           <button type="button" class="dark-chip active" data-view="attempt">attempt</button>
           <button type="button" class="dark-chip" data-view="difference">difference</button>
           <button type="button" class="dark-chip" data-view="overlay">overlay</button>
@@ -986,9 +1225,9 @@ PAGE_HTML = r"""<!doctype html>
         </div>
 
         <div id="onion-row" hidden style="display: flex; align-items: center; gap: 10px; margin-top: 11px;">
-          <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase;">ref</span>
+          <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase;">design</span>
           <input type="range" id="onion" min="0" max="100" value="50" style="flex: 1; min-width: 0;">
-          <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase;">att</span>
+          <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase;">page</span>
         </div>
         <div style="color: #E2EAE3; font-size: 11px; margin-top: 9px;">In the difference view, bright red is a big miss and black is an exact match. Antialiasing always leaves a faint outline.</div>
       </div>
@@ -998,7 +1237,7 @@ PAGE_HTML = r"""<!doctype html>
         <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
           <div>
             <h2 class="sec-title">Score</h2>
-            <div class="sec-tag">One number to chase, four to explain it.</div>
+            <div class="sec-tag">One number to chase, five to explain it.</div>
           </div>
           <span id="score-raw" class="mono" style="font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;"></span>
         </div>
@@ -1076,12 +1315,12 @@ PAGE_HTML = r"""<!doctype html>
   <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 40px; margin-top: 20px;">
     <div class="mono" style="display: flex; align-items: center; gap: 9px; font-size: 10.5px; color: var(--muted); line-height: 1.65;">
       <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: mlBreathe 3.4s ease-in-out infinite;"></span>
-      <span style="color: var(--deep);">match-lab</span><span>v1</span>
+      <span style="color: var(--deep);">spot-on</span><span>v1</span>
       <span style="width: 1px; height: 10px; background: rgba(70,80,72,0.18);"></span><span>127.0.0.1:7265</span>
       <span style="width: 1px; height: 10px; background: rgba(70,80,72,0.18);"></span><span>chrome + numpy</span>
     </div>
     <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: 720px;">
-      <p style="margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); text-wrap: pretty;">Thanks for using Match Lab. I build tools and projects around human-centered AI, aiming to make these systems more accessible and to have a positive impact on the people they are built for.</p>
+      <p style="margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); text-wrap: pretty;">Thanks for using Spot On. I build tools and projects around human-centered AI, aiming to make these systems more accessible and to have a positive impact on the people they are built for.</p>
       <img src="/signature.svg" alt="" onerror="this.style.display='none'" style="display: block; margin-top: -10px; width: 124px; height: 36px; object-fit: contain; object-position: right bottom; opacity: 0.5;">
     </div>
   </div>
@@ -1107,6 +1346,22 @@ function api(path, body) {
   });
 }
 
+// ---- attempt input: a URL for running pages, source for everything else ----
+function isUrlKind() { return !!state.run ? state.run.kind === "url" : $("run-kind").value === "url"; }
+function getCode() { return isUrlKind() ? $("url-input").value.trim() : $("code").value; }
+function setCode(v) { if (isUrlKind()) $("url-input").value = v || ""; else $("code").value = v || ""; }
+function syncKindUi() {
+  var url = isUrlKind();
+  $("url-wrap").hidden = !url;
+  $("code").hidden = url;
+  $("url-loop-note").hidden = !url;
+  $("iterate-wrap").hidden = url;
+  $("starter").textContent = url ? "Use localhost" : "Insert starter";
+}
+$("url-input").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") $("render").click();
+});
+
 // ---- reference and runs ----
 function loadRuns() {
   return api("/runs").then(function (runs) {
@@ -1119,7 +1374,7 @@ function loadRuns() {
       row.innerHTML =
         '<span style="font-size: 14px; font-weight: 500; min-width: 150px;"></span>' +
         '<span class="meta-pill">' + r.kind + '</span>' +
-        '<span class="meta-pill">' + r.width + ' x ' + r.height + '</span>' +
+        '<span class="meta-pill">' + (r.css_width || r.width) + ' x ' + (r.css_height || r.height) + '</span>' +
         '<span class="mono" style="font-size: 12px; color: var(--muted); flex: 1;">' + r.attempts + ' attempts, best ' + best + '</span>';
       row.firstChild.textContent = r.name;
       var open = document.createElement("button");
@@ -1154,6 +1409,7 @@ function openRun(slug) {
     $("ref-empty").hidden = true;
     $("active-chip").textContent = run.name;
     $("run-kind").value = run.kind;
+    syncKindUi();
     $("new-panel").hidden = true;
     $("runs-panel").hidden = false;
     $("render").disabled = false;
@@ -1163,7 +1419,7 @@ function openRun(slug) {
       loadAttemptCode(state.sel);
       setStatus("Attempt " + state.sel + " of " + state.attempts.length + ", best " + run.best_match.toFixed(1) + ".");
     } else {
-      $("code").value = "";
+      setCode("");
       setStatus("Ready. Paste an attempt or insert the starter.");
     }
     renderAll();
@@ -1175,8 +1431,9 @@ function renderRefMeta() {
   var r = state.run;
   if (!r) { $("ref-meta").innerHTML = ""; return; }
   $("ref-meta").innerHTML =
-    '<span class="meta-pill" title="Canvas size every attempt is rendered at">' + r.width + ' x ' + r.height + '</span>' +
-    '<span class="meta-pill" title="Page colour read from the reference border, used as the render ground">' + r.ground + '</span>' +
+    '<span class="meta-pill" title="Page size in CSS pixels that every attempt is screenshot at">' + (r.css_width || r.width) + ' x ' + (r.css_height || r.height) + '</span>' +
+    '<span class="meta-pill" title="Display scale the design was captured at">' + (r.scale || 1) + 'x</span>' +
+    '<span class="meta-pill" title="Page colour read from the border of the design, used as the render ground">' + r.ground + '</span>' +
     '<span class="meta-pill" title="What the model writes for this run">' + r.kind + '</span>';
 }
 
@@ -1189,7 +1446,7 @@ function handleFile(file) {
     $("ref-empty").hidden = true;
     if (!$("run-name").value) $("run-name").value = file.name.replace(/\.[^.]+$/, "");
     $("create-run").disabled = false;
-    setStatus("Reference loaded. Name the run and start it.");
+    setStatus("Design loaded. Name the run and start it.");
   };
   reader.readAsDataURL(file);
 }
@@ -1203,7 +1460,8 @@ $("new-run").addEventListener("click", function () {
   $("new-panel").hidden = false;
   $("ref-img").hidden = true; $("ref-empty").hidden = false;
   $("run-name").value = ""; $("create-run").disabled = true;
-  $("active-chip").textContent = "no reference";
+  $("active-chip").textContent = "no design";
+  syncKindUi();
   renderAll();
 });
 var drop = $("drop");
@@ -1223,37 +1481,40 @@ $("create-run").addEventListener("click", function () {
   var name = $("run-name").value.trim();
   if (!name || !state.pending) return;
   setStatus("Creating run...");
-  api("/runs", { name: name, kind: $("run-kind").value, data_url: state.pending })
+  api("/runs", { name: name, kind: $("run-kind").value, scale: parseFloat($("run-scale").value), data_url: state.pending })
     .then(function (run) { state.pending = null; return loadRuns().then(function () { return openRun(run.slug); }); })
     .then(function () { setStatus("Run created. Paste an attempt or insert the starter."); })
     .catch(function (e) { setStatus("Could not create the run: " + e.message); });
 });
 
 $("run-kind").addEventListener("change", function () {
-  if (!state.run) return;
+  if (!state.run) { syncKindUi(); return; }
   api("/kind", { run: state.run.slug, kind: $("run-kind").value }).then(function (run) {
     state.run.kind = run.kind;
+    state.run.starter = null;
+    syncKindUi();
     renderRefMeta();
   });
 });
 
 $("starter").addEventListener("click", function () {
-  if (state.run && state.run.starter) $("code").value = state.run.starter;
+  if (!state.run) return;
+  api("/run?run=" + encodeURIComponent(state.run.slug)).then(function (run) { setCode(run.starter); });
 });
 
 // ---- render and score ----
 function busy(on, label) {
   $("render").disabled = on || !state.run;
   $("render-spin").hidden = !on;
-  $("render-label").textContent = on ? (label || "Rendering") : "Render and score";
+  $("render-label").textContent = on ? (label || "Rendering") : "Screenshot and score";
   $("iterate").disabled = on || !state.attempts.length;
 }
 
 $("render").addEventListener("click", function () {
-  var code = $("code").value;
+  var code = getCode();
   if (!state.run || !code.trim()) { setStatus("Nothing to render yet."); return; }
   busy(true);
-  setStatus("Rendering in headless Chrome...");
+  setStatus("Taking the screenshot...");
   api("/attempt", { run: state.run.slug, code: code })
     .then(function (rec) {
       state.attempts.push(rec);
@@ -1283,7 +1544,7 @@ function iterateRounds(left, note) {
     return;
   }
   $("iter-label").textContent = left + " to go";
-  setStatus("Claude is looking at the reference and the difference map...");
+  setStatus("Claude is looking at the design and the difference map...");
   api("/iterate", { run: state.run.slug, instructions: note })
     .then(function (rec) {
       state.attempts.push(rec);
@@ -1322,7 +1583,7 @@ $("rounds").addEventListener("change", function () {
 
 function loadAttemptCode(n) {
   return api("/code?run=" + encodeURIComponent(state.run.slug) + "&n=" + n).then(function (d) {
-    $("code").value = d.code;
+    setCode(d.code);
   });
 }
 
@@ -1374,9 +1635,10 @@ $("onion").addEventListener("input", function () {
 // ---- score panel ----
 var COMPONENT_HELP = {
   structure: "SSIM over 7px windows. Whether edges and gradients sit in the same places.",
-  shape: "Overlap of the drawn area with the reference's drawn area, as intersection over union.",
+  shape: "Overlap of the drawn area with the design's drawn area, as intersection over union.",
   colour: "How far the colours are where both images have drawn something.",
-  detail: "Correlation of edge density. Low means the attempt is smoother or busier than the reference."
+  detail: "Correlation of edge density. Low means the attempt is smoother or busier than the design.",
+  coverage: "Share of the design with something drawn within 6px of it. Missing content caps the whole score."
 };
 
 function renderScore() {
@@ -1401,7 +1663,8 @@ function renderScore() {
 
   var comp = $("components");
   comp.innerHTML = "";
-  ["structure", "shape", "colour", "detail"].forEach(function (k) {
+  ["structure", "shape", "colour", "detail", "coverage"].forEach(function (k) {
+    if (rep.components[k] === undefined) return;
     var v = rep.components[k];
     var row = document.createElement("div");
     row.className = "comp-row";
@@ -1438,7 +1701,7 @@ function renderScore() {
 
   var pal = $("palette-row");
   pal.innerHTML = "";
-  [["reference", rep.colours.reference], ["attempt", rep.colours.attempt]].forEach(function (pair) {
+  [["design", rep.colours.reference], ["attempt", rep.colours.attempt]].forEach(function (pair) {
     if (!pair[1] || !pair[1].length) return;
     var wrap = document.createElement("div");
     wrap.style.cssText = "display:flex;align-items:center;gap:7px;";
@@ -1591,7 +1854,7 @@ $("next-att").addEventListener("click", function () {
 
 // ---- track header ----
 var TRACK_SECTIONS = [
-  { id: "sec-ref", label: "reference" },
+  { id: "sec-ref", label: "design" },
   { id: "sec-attempt", label: "attempt" },
   { id: "sec-score", label: "score" },
   { id: "sec-history", label: "history" },
@@ -1641,6 +1904,7 @@ function renderAll() {
 }
 
 renderTrack();
+syncKindUi();
 renderAll();
 loadRuns().then(function (runs) {
   if (runs.length) openRun(runs[0].slug);
@@ -1733,8 +1997,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/runs":
                 data = payload.get("data_url")
                 raw = base64.b64decode(data.split(",", 1)[1]) if data else None
-                run = create_run(payload["name"], payload.get("kind", "svg"),
-                                 reference_bytes=raw, reference_path=payload.get("path"))
+                run = create_run(payload["name"], payload.get("kind", "url"),
+                                 reference_bytes=raw, reference_path=payload.get("path"),
+                                 scale=payload.get("scale", 1.0))
                 run["starter"] = starter_code(run)
                 self._send_json(200, run)
             elif path == "/runs/delete":
@@ -1757,30 +2022,86 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error_json(e)
 
 
-def _cli_score(args):
-    ref_path, attempt_path = Path(args[0]), Path(args[1])
-    kind = args[2] if len(args) > 2 else ("svg" if attempt_path.suffix == ".svg" else "html")
-    ref = Image.open(ref_path).convert("RGB")
-    tmp = Path(tempfile.mkdtemp(prefix="match-lab-cli-"))
-    try:
-        png = tmp / "attempt.png"
-        att = render_code(attempt_path.read_text(encoding="utf-8"), kind,
-                          ref.width, ref.height, png)
-        report, per_px, _ = score_images(ref, att)
-        run = {"name": ref_path.stem, "width": ref.width, "height": ref.height, "kind": kind}
-        print(feedback_text(run, 1, report))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+def _guess_kind(target):
+    if re.match(r"^https?://", target):
+        return "url"
+    suffix = Path(target).suffix.lower()
+    return {".svg": "svg", ".js": "canvas"}.get(suffix, "html")
+
+
+def cli_score(argv):
+    """Score one attempt from the command line, as a step in someone else's loop.
+
+    Each call is recorded as the next attempt of a named run, the same runs the
+    page shows, so a session iterating on a real site builds a visible history
+    and can see whether its last change helped.
+    """
+    import argparse
+    import hashlib
+    ap = argparse.ArgumentParser(prog="spot-on.py score")
+    ap.add_argument("design", help="the design: a mockup export or screenshot")
+    ap.add_argument("target", help="a running page URL, or a .html / .svg / .js file")
+    ap.add_argument("--kind", choices=KINDS, help="what the target is; guessed if omitted")
+    ap.add_argument("--scale", type=float, default=1.0,
+                    help="display scale the design was captured at: 1, 1.25, 1.5 or 2")
+    ap.add_argument("--run", help="run name; defaults to the design's file name")
+    ap.add_argument("--note", default="", help="one line on what changed since the last attempt")
+    ap.add_argument("--json", action="store_true", help="print the record as JSON")
+    a = ap.parse_args(argv)
+
+    design = Path(a.design)
+    kind = a.kind or _guess_kind(a.target)
+    code = a.target if kind == "url" else Path(a.target).read_text(encoding="utf-8")
+    slug = _slugify(a.run or design.stem)
+    sha = hashlib.sha256(design.read_bytes()).hexdigest()[:16]
+
+    if (_run_dir(slug) / "run.json").exists():
+        run = _load_run(slug)
+        if run.get("design_sha") and run["design_sha"] != sha:
+            raise SystemExit("run {!r} was started with a different design image; "
+                             "pass --run with a new name".format(slug))
+        if run["kind"] != kind:
+            run["kind"] = kind
+            _save_run(slug, run)
+    else:
+        run = create_run(a.run or design.stem, kind, reference_path=design, scale=a.scale)
+        run["design_sha"] = sha
+        _save_run(slug, run)
+
+    history = _attempts(slug)
+    record = record_attempt(slug, code, source="session", changes=a.note)
+    d = _run_dir(slug) / "attempts"
+    record["files"] = {
+        "design": str(_run_dir(slug) / "reference.png"),
+        "attempt": str(d / "{:03d}.png".format(record["n"])),
+        "difference": str(d / "{:03d}-diff.png".format(record["n"])),
+    }
+    prev = history[-1]["match"] if history else None
+    best = max([h["match"] for h in history] + [record["match"]])
+
+    if a.json:
+        record["previous_match"] = prev
+        record["best_match"] = best
+        print(json.dumps(record, indent=2))
+        return
+    run = _load_run(slug)
+    print(feedback_text(run, record["n"], record["report"]))
+    print("")
+    if prev is None:
+        print("first attempt in run {!r}".format(slug))
+    else:
+        print("change from attempt {}: {:+.1f}   best so far: {:.1f}".format(
+            record["n"] - 1, record["match"] - prev, best))
+    print("design:     " + record["files"]["design"])
+    print("attempt:    " + record["files"]["attempt"])
+    print("difference: " + record["files"]["difference"])
 
 
 def main():
     global PORT
     args = sys.argv[1:]
     if args and args[0] == "score":
-        if len(args) < 3:
-            print("usage: python match-lab.py score <reference.png> <attempt-file> [kind]")
-            return
-        _cli_score(args[1:])
+        cli_score(args[1:])
         return
     if args:
         try:

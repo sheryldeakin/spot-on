@@ -1,0 +1,8 @@
+case    match  structure  shape  colour  detail  coverage  what it is
+exact    97.7       95.6   99.1    99.8    98.1     100.0  identical to the design
+close    88.8       85.4   94.6    99.7    73.6     100.0  3px offset and a slight hue shift
+half     80.7       88.5   84.1    83.8    84.9      85.0  the square left out entirely
+hue      84.6       95.3   99.1    35.0    98.2     100.0  right geometry, wrong colour
+shift    51.2       65.3   46.7    99.8     0.0      71.8  right colours, 40px to the right
+wrong    32.8       62.8   42.7    24.0     0.0      52.0  one wrong shape in the wrong place
+blank    14.5       60.3    0.0     0.1     0.0       0.0  nothing drawn
