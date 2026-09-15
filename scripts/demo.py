@@ -53,6 +53,8 @@ def show(line):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--candidates", type=int, default=3,
+                    help="rewrites per round; the best scoring one is kept (default 3)")
     ap.add_argument("--rebuild", action="store_true",
                     help="rewrite docs/demo-run.txt from runs/pricing-demo without calling a model")
     a = ap.parse_args()
@@ -81,7 +83,7 @@ def main():
     add(so.record_attempt(RUN, (demo / "first-attempt.html").read_text(encoding="utf-8")))
     for _ in range(a.rounds):
         try:
-            add(so.run_iteration(so._slugify(RUN)))
+            add(so.run_iteration(so._slugify(RUN), candidates=a.candidates))
         except Exception as e:
             lines.append("stopped: {}".format(e))
             show(lines[-1])

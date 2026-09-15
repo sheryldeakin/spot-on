@@ -84,6 +84,14 @@ def score(name):
     return report
 
 
+def _chrome_available():
+    try:
+        so._find_chrome()
+        return True
+    except RuntimeError:
+        return False
+
+
 class ScoreOrdering(unittest.TestCase):
     """The score has to agree with the eye, or the loop learns the wrong lesson."""
 
@@ -497,6 +505,105 @@ class AgentRequests(unittest.TestCase):
         self.assertIn("cli", out)
 
 
+class BestOfN(unittest.TestCase):
+    """Several rewrites per round, in parallel; the highest scoring one wins."""
+
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">'
+           '<rect width="400" height="300" fill="#FFFFFF"/>{}</svg>')
+    CIRCLE = '<circle cx="200" cy="150" r="{}" fill="#52796F"/>'
+
+    def setUp(self):
+        self.saved_agent, self.saved_runs = so.run_agent, so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-bestof-"))
+        so.RUNS_DIR = self.tmp
+
+    def tearDown(self):
+        so.run_agent, so.RUNS_DIR = self.saved_agent, self.saved_runs
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def seed_run(self):
+        run = so.create_run("bestof", "svg", reference_bytes=_png_bytes(DESIGN))
+        so.record_attempt("bestof", self.SVG.format(self.CIRCLE.format(20)))
+        return run
+
+    def answer(self, *bodies):
+        seen = []
+
+        def fake(agent, prompt, cwd, images):
+            body = bodies[len(seen) % len(bodies)]
+            seen.append(body)
+            return "```\n" + body + "\n```"
+
+        so.run_agent = fake
+        return seen
+
+    @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+    def test_the_best_candidate_is_returned_and_all_are_kept(self):
+        self.seed_run()
+        # radius 80 matches the design; 20 and 140 do not.
+        self.answer(self.SVG.format(self.CIRCLE.format(140)),
+                    self.SVG.format(self.CIRCLE.format(80)),
+                    self.SVG.format(self.CIRCLE.format(30)))
+        best = so.run_iteration("bestof", candidates=3)
+        self.assertEqual(len(best["candidate_scores"]), 3)
+        self.assertEqual(best["match"], max(best["candidate_scores"]))
+        self.assertEqual(len(so._attempts("bestof")), 4)  # the seed plus three candidates
+        self.assertEqual(so._load_run("bestof")["best_attempt"], best["n"])
+        self.assertEqual(best["candidate_of"], 1)
+
+    @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+    def test_one_refusal_does_not_sink_the_round(self):
+        self.seed_run()
+        self.answer("You have reached your usage limit.",
+                    self.SVG.format(self.CIRCLE.format(80)))
+        best = so.run_iteration("bestof", candidates=2)
+        self.assertEqual(len(best["candidate_scores"]), 1)
+
+    def test_every_candidate_refusing_is_an_error_that_quotes_it(self):
+        self.seed_run()
+        self.answer("You have reached your usage limit.")
+        with self.assertRaises(RuntimeError) as e:
+            so.run_iteration("bestof", candidates=2)
+        self.assertIn("usage limit", str(e.exception))
+
+    def test_count_is_clamped_and_defaults_to_three(self):
+        seen = {"n": 0}
+
+        def counting(agent, prompt, cwd, images, count, kind):
+            seen["n"] = count
+            return [], ["nothing"]
+
+        saved = so.gather_candidates
+        so.gather_candidates = counting
+        self.seed_run()
+        try:
+            for asked, expected in ((None, 3), (1, 1), (99, 5)):
+                with self.assertRaises(RuntimeError):
+                    so.run_iteration("bestof", candidates=asked)
+                self.assertEqual(seen["n"], expected)
+        finally:
+            so.gather_candidates = saved
+
+    def test_candidates_run_at_the_same_time(self):
+        import threading
+        import time as _time
+        active, peak, lock = [0], [0], threading.Lock()
+
+        def slow(agent, prompt, cwd, images):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            _time.sleep(0.2)
+            with lock:
+                active[0] -= 1
+            return "```\n" + self.SVG.format(self.CIRCLE.format(80)) + "\n```"
+
+        so.run_agent = slow
+        drafts, _ = so.gather_candidates("claude", "p", self.tmp, [], 3, "svg")
+        self.assertEqual(len(drafts), 3)
+        self.assertGreater(peak[0], 1, "candidates ran one after another")
+
+
 class PromptShape(unittest.TestCase):
     def test_far_off_pages_are_told_to_fix_everything(self):
         text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
@@ -543,14 +650,6 @@ class PageGeometry(unittest.TestCase):
     def test_url_without_scheme_is_rejected(self):
         with self.assertRaises(ValueError):
             so._check_url("localhost:5173/pricing")
-
-
-def _chrome_available():
-    try:
-        so._find_chrome()
-        return True
-    except RuntimeError:
-        return False
 
 
 @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")

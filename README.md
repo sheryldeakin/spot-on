@@ -31,7 +31,9 @@ Overlay extensions such as [PerfectPixel](https://www.welldonecode.com/perfectpi
 python spot-on.py score design.png http://localhost:5173/pricing --scale 2 --run pricing --note "fixed card padding"
 ```
 
-**On a snippet.** For pasted HTML, an SVG or canvas code with no repo behind it, the page can run the loop by itself: render a first attempt, then press **Run 3 rounds**. Each round shows the AI the design, its best render so far and the difference map, hands it the report, and scores what comes back. It builds on the best attempt, not the latest, so a round that made things worse is discarded instead of compounded. While the page is far off, a round fixes everything the report names. Once it is close, a round may change at most three things, each on a named element, because sweeping edits ("set a line height on every text element") were what repeatedly undid good rounds. Every round is also told which earlier changes lowered the score, so it stops re-trying them.
+**On a snippet.** For pasted HTML, an SVG or canvas code with no repo behind it, the page can run the loop by itself: render a first attempt, then press **Run 3 rounds**. Each round shows the AI the design, its best render so far and the difference map, hands it the report, and scores what comes back. It builds on the best attempt, not the latest, so a round that made things worse is discarded instead of compounded. Each round asks for **three rewrites at once and keeps the highest scoring one**, which evens out the luck of a single draw; the others stay in the history marked "not kept". Change it in the page (1 try each, best of 2, 3 or 5), with `--candidates` on the demo script, or with `SPOT_ON_CANDIDATES`. They run in parallel, so a round takes about as long as one rewrite and costs as much as that many.
+
+While the page is far off, a round fixes everything the report names. Once it is close, a round may change at most three things, each on a named element, because sweeping edits ("set a line height on every text element") were what repeatedly undid good rounds. Every round is also told which earlier changes lowered the score, so it stops re-trying them.
 
 ## Which AI runs the loop
 
@@ -115,7 +117,7 @@ What the run shows:
 - **A confident fix made it worse, and the number caught it.** Round 3 decided the text was in a substituted font and added `Liberation Sans` to the stack. It scored 47.7, down from 56.1. The loop discarded it, told the next round what had failed, and round 5 reached the best score of the run.
 - **Later rounds work element by element**, because that is what the report gives them: which text is a few percent too wide, which card is too tall, what sits a few pixels off.
 
-**The numbers move between runs.** Rendering and scoring do not: the same code scores the same, and three renders of one page differed by zero pixels. The model does. Each round is a fresh sample, and the loop is a greedy climb, so the big rebuild in round 2 sets a ceiling that later rounds only nudge. Runs from this same starting point have finished anywhere from the high fifties to the low seventies.
+**The numbers move between runs.** Rendering and scoring do not: the same code scores the same, and three renders of one page differed by zero pixels. The model does. Each round is a fresh sample, and the loop is a greedy climb, so the big rebuild in round 2 sets a ceiling that later rounds only nudge. Runs from this same starting point have finished anywhere from the high fifties to the low seventies. Taking the best of three rewrites per round is the lever against that, at three times the cost; the run above was one rewrite per round.
 
 ## Running it
 

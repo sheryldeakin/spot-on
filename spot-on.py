@@ -1130,7 +1130,34 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     return "\n".join(parts)
 
 
-def run_iteration(slug, extra="", agent=None):
+def gather_candidates(agent, prompt, cwd, images, count, kind):
+    """Ask for `count` independent rewrites at once and return the usable ones.
+
+    Each round is a fresh sample, so the spread between draws is wide: keeping the
+    best of several is the same trick as building on the best attempt, applied
+    inside one round. They run in parallel, so the round still takes about as long
+    as a single draw, and costs `count` times as much.
+    """
+    import concurrent.futures
+
+    def one(_):
+        raw = run_agent(agent, prompt, cwd, images)
+        code, changes = _parse_iteration(raw)
+        if not code or not _looks_like(code, kind):
+            return None, " ".join((code or "").split())[:240]
+        return code, changes
+
+    out, refusals = [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
+        for code, changes in pool.map(one, range(count)):
+            if code:
+                out.append((code, changes))
+            else:
+                refusals.append(changes)
+    return out, refusals
+
+
+def run_iteration(slug, extra="", agent=None, candidates=None):
     """One round: ask headless Claude Code for a better attempt, render it, score it."""
     run = _load_run(slug)
     if run["kind"] == "url":
@@ -1148,23 +1175,29 @@ def run_iteration(slug, extra="", agent=None):
     report = base["report"]
 
     chosen = pick_agent(agent)
+    count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
+    count = max(1, min(5, int(count)))
     can_read_files = bool(_cli_for(chosen))
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
                              rejected_changes(history, base), can_read_files)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
-    raw = run_agent(chosen, prompt, d, images)
 
-    new_code, changes = _parse_iteration(raw)
-    if not new_code:
-        raise RuntimeError("no code came back from {}".format(AGENT_LABELS[chosen]))
-    if not _looks_like(new_code, run["kind"]):
+    drafts, refusals = gather_candidates(chosen, prompt, d, images, count, run["kind"])
+    if not drafts:
         # Usage limits, refusals and errors all come back as ordinary prose. Rendering
         # that as if it were code silently poisons the run, so stop and show it instead.
-        raise RuntimeError("{} did not return {} code. It said: {}".format(
-            AGENT_LABELS[chosen], run["kind"], " ".join(new_code.split())[:240]))
-    return record_attempt(slug, new_code, source=chosen, changes=changes)
+        raise RuntimeError("{} returned no usable {} code. It said: {}".format(
+            AGENT_LABELS[chosen], run["kind"], refusals[0] if refusals else "nothing"))
+
+    # Recorded one at a time: each attempt takes the next number in the run.
+    records = [record_attempt(slug, c, source=chosen, changes=ch,
+                              meta={"candidate_of": n, "candidates": len(drafts)})
+               for c, ch in drafts]
+    best = max(records, key=lambda r: r["match"])
+    best["candidate_scores"] = [r["match"] for r in records]
+    return best
 
 
 def _looks_like(code, kind):
@@ -1209,7 +1242,7 @@ def _parse_iteration(stdout):
 
 # ----------------------------------------------------------------- the attempt
 
-def record_attempt(slug, code, source="manual", changes=""):
+def record_attempt(slug, code, source="manual", changes="", meta=None):
     """Render, score, store, and return the attempt record."""
     run = _load_run(slug)
     d = _run_dir(slug)
@@ -1236,6 +1269,7 @@ def record_attempt(slug, code, source="manual", changes=""):
         "render_seconds": round(time.time() - t0, 2),
         "report": report,
     }
+    record.update(meta or {})
     (d / "attempts" / "{:03d}.json".format(n)).write_text(
         json.dumps(record, indent=2), encoding="utf-8")
 
@@ -1622,6 +1656,12 @@ PAGE_HTML = r"""<!doctype html>
               <option value="3" selected>3 rounds</option>
               <option value="5">5 rounds</option>
             </select>
+            <select id="candidates" class="text-input" style="width: 116px; height: 32px;" title="How many rewrites to ask for per round. They run at the same time and the highest scoring one is kept, which evens out the luck of a single draw. Each one costs as much as a round on its own.">
+              <option value="1">1 try each</option>
+              <option value="2">best of 2</option>
+              <option value="3" selected>best of 3</option>
+              <option value="5">best of 5</option>
+            </select>
             <input type="text" id="iter-note" class="text-input" placeholder="Optional steer, for example the font is Inter, keep the card colours" style="flex: 1; min-width: 220px;">
             <button type="button" id="iter-stop" class="btn-ghost" hidden style="height: 32px;">Stop</button>
           </div>
@@ -1872,6 +1912,7 @@ function loadAgents() {
     $("iterate").hidden = usable.length === 0;
     $("rounds").hidden = usable.length === 0;
     $("iter-note").hidden = usable.length === 0;
+    $("candidates").hidden = usable.length === 0;
     $("agent-note").textContent = usable.length > 1 ? "others found: " +
       usable.slice(1).map(function (a) { return a.label; }).join(", ") : "";
     if (usable.length === 0) {
@@ -2056,9 +2097,11 @@ function startRoundClock(round, total) {
   clearInterval(roundTimer);
   function tick() {
     var s = Math.round((Date.now() - t0) / 1000);
+    var tries = parseInt($("candidates").value, 10);
     setStatus("Round " + round + " of " + total + ", " +
-      Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2) +
-      " elapsed. Claude is looking at the design, its own render and the difference map. " +
+      Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2) + " elapsed. " +
+      (tries > 1 ? tries + " rewrites are running at once; the best one is kept. "
+                 : "One rewrite is running. ") +
       "A round usually takes two to five minutes.");
   }
   tick();
@@ -2087,7 +2130,8 @@ function iterateRounds(left, note) {
   startRoundClock(state.rounds - left + 1, state.rounds);
   ($("agent").value === BROWSER_AGENT
     ? runBrowserRound(note)
-    : api("/iterate", { run: state.run.slug, instructions: note, agent: $("agent").value }))
+    : api("/iterate", { run: state.run.slug, instructions: note, agent: $("agent").value,
+                        candidates: parseInt($("candidates").value, 10) }))
     .then(function (rec) {
       state.attempts.push(rec);
       state.sel = rec.n;
@@ -2598,7 +2642,8 @@ class Handler(BaseHTTPRequestHandler):
                                                     changes=payload.get("changes", "")))
             elif path == "/iterate":
                 self._send_json(200, run_iteration(payload["run"], payload.get("instructions", ""),
-                                                   payload.get("agent") or None))
+                                                   payload.get("agent") or None,
+                                                   payload.get("candidates")))
             elif path == "/kind":
                 run = _load_run(payload["run"])
                 run["kind"] = payload["kind"] if payload["kind"] in KINDS else run["kind"]
