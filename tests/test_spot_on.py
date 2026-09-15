@@ -510,9 +510,14 @@ class PageStillness(unittest.TestCase):
     """A page that will not hold still has a ceiling, and the report has to say so."""
 
     STATIC = '<div style="width:200px;height:120px;background:#52796F"></div>'
-    MOVING = ('<div id="b" style="width:200px;height:120px"></div><script>'
+    # A still layout with one element that changes every render, like a carousel.
+    MOVING = ('<div style="width:200px;height:120px;background:#52796F">'
+              '<div id="b" style="width:60px;height:40px;margin:10px"></div></div><script>'
               'document.getElementById("b").style.background = '
               '"rgb(" + Math.floor(Math.random()*255) + ",40,40)";</script>')
+    ALL_MOVING = ('<div id="b" style="width:200px;height:120px"></div><script>'
+                  'document.getElementById("b").style.background = '
+                  '"rgb(" + Math.floor(Math.random()*255) + ",40,40)";</script>')
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-still-"))
@@ -523,27 +528,60 @@ class PageStillness(unittest.TestCase):
     def run_for(self, code):
         run = {"kind": "html", "width": 200, "height": 120, "css_width": 200,
                "css_height": 120, "scale": 1.0, "ground": "#FFFFFF"}
-        return so.measure_stability(run, code, self.tmp)
+        stats, mask = so.measure_stability(run, code, self.tmp)
+        return stats
+
+    def test_the_first_capture_is_thrown_away(self):
+        # Regression: measuring a cold page masked out the 3D avatar that had not
+        # finished loading, and excluded it from the score for the whole run.
+        shots = []
+        saved = so.render_code
+
+        def counting(code, kind, w, h, out, **kw):
+            shots.append(Path(out).name)
+            return saved(code, kind, w, h, out, **kw)
+
+        so.render_code = counting
+        try:
+            self.run_for(self.STATIC)
+        finally:
+            so.render_code = saved
+        self.assertEqual(len(shots), 3, shots)
+        self.assertIn("stability-warmup.png", shots)
 
     def test_a_still_page_scores_against_itself(self):
         self.assertGreater(self.run_for(self.STATIC)["match"], 99)
 
-    def test_a_moving_page_does_not(self):
+    def test_a_moving_element_is_found_and_excluded(self):
         moving = self.run_for(self.MOVING)
-        self.assertLess(moving["match"], 99)
-        self.assertGreater(moving["pixels_changed"], 0)
+        self.assertLess(moving["raw_match"], 99)       # it does not match itself
+        self.assertGreater(moving["match"], 99)        # until the moving part is excluded
+        self.assertGreater(moving["ignored_pct"], 0)
+        self.assertLess(moving["ignored_pct"], 60)
+        self.assertFalse(moving.get("unscoreable"))
 
-    def test_the_ceiling_is_stated_in_the_report(self):
+    def test_the_excluded_area_is_stated_in_the_report(self):
         run = {"name": "x", "kind": "url", "width": 10, "height": 10,
-               "stability": {"match": 77.3, "pixels_changed": 3.27}}
+               "stability": {"match": 100.0, "raw_match": 80.3, "ignored_pct": 3.6}}
         text = so.feedback_text(run, 1, score("close"))
-        self.assertIn("does not hold still", text)
-        self.assertIn("77.3", text)
+        self.assertIn("3.6% of this page moves", text)
+        self.assertIn("excluded from the score", text)
 
-    def test_a_still_page_gets_no_ceiling_warning(self):
+    def test_a_still_page_gets_no_warning(self):
         run = {"name": "x", "kind": "url", "width": 10, "height": 10,
-               "stability": {"match": 99.6, "pixels_changed": 0.01}}
-        self.assertNotIn("hold still", so.feedback_text(run, 1, score("close")))
+               "stability": {"match": 99.6, "raw_match": 99.6, "ignored_pct": 0.0}}
+        self.assertNotIn("moves between screenshots",
+                         so.feedback_text(run, 1, score("close")))
+
+    def test_a_page_that_moves_everywhere_is_called_unscoreable(self):
+        # Excluding nearly everything would leave nothing to compare, and every
+        # attempt would come back a meaningless 100.
+        stats = self.run_for(self.ALL_MOVING)
+        self.assertGreater(stats["ignored_pct"], 60)
+        run = {"name": "x", "kind": "url", "width": 10, "height": 10,
+               "stability": dict(stats, unscoreable=True)}
+        text = so.feedback_text(run, 1, score("close"))
+        self.assertIn("too much to score", text)
 
 
 class BestOfN(unittest.TestCase):

@@ -612,14 +612,28 @@ def _cell_name(cell):
     return "{}, {}".format(_ROW_WORDS[cell["row"]], _COL_WORDS[cell["col"]])
 
 
-def score_images(ref_img, att_img, px_per_css=1.0):
+def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
     """Compare two same-size RGB images and return the full score report.
 
     px_per_css converts image pixels back to CSS pixels for the sentences in the
     report, since that is the unit the person or model will edit.
+
+    `ignore` is a mask of pixels that cannot be measured because the page moves
+    there. Both images are flattened to the page colour inside it, so the area
+    holds no content, no edges and no difference, and every part of the score is
+    computed on what is left. Scoring motion would otherwise dominate: on one real
+    page only 6.5% of the pixels were drawn at all, and a quarter of those were the
+    animation, which read as a 22 point gap that no change could ever close.
     """
     ref = np.asarray(ref_img.convert("RGB"), dtype=np.float64)
     att = np.asarray(att_img.convert("RGB").resize(ref_img.size, Image.LANCZOS), dtype=np.float64)
+    ignored_share = 0.0
+    if ignore is not None and ignore.any():
+        ground_rgb = _ground_colour(ref)
+        ref, att = ref.copy(), att.copy()
+        ref[ignore] = ground_rgb
+        att[ignore] = ground_rgb
+        ignored_share = float(ignore.mean() * 100)
 
     d = ref - att
     per_px = (d ** 2).sum(axis=2) / 3.0          # the jelly-lab MSE, kept for continuity
@@ -710,6 +724,7 @@ def score_images(ref_img, att_img, px_per_css=1.0):
             "design_not_drawn_where": missed_where,
         },
         "size": [int(ref.shape[1]), int(ref.shape[0])],
+        "ignored_pct": round(ignored_share, 2),
         "ground": ["#{:02X}{:02X}{:02X}".format(*[int(v) for v in ground])],
         "colours": {"reference": ref_cols, "attempt": att_cols},
         "regions": cells,
@@ -835,13 +850,19 @@ def _problems(report):
     return out
 
 
-def diff_heatmap(per_px, out_png):
-    """Red-orange heatmap, the same mapping the jelly lab used."""
+def diff_heatmap(per_px, out_png, ignore=None):
+    """Red-orange heatmap, the same mapping the jelly lab used.
+
+    Areas excluded for moving are painted slate blue, so they read as "not
+    measured" rather than as a perfect match.
+    """
     intensity = np.minimum(255.0, np.sqrt(per_px) * 3.0)
     h, w = intensity.shape
     img = np.zeros((h, w, 3), dtype=np.uint8)
     img[:, :, 0] = intensity.astype(np.uint8)
     img[:, :, 1] = (intensity * 0.35).astype(np.uint8)
+    if ignore is not None and ignore.any():
+        img[ignore] = (38, 58, 92)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(img).save(out_png)
 
@@ -864,13 +885,21 @@ def feedback_text(run, attempt, report):
         "",
     ]
     st = run.get("stability") or {}
-    if st.get("match") is not None and st["match"] < 97:
+    if st.get("unscoreable"):
         lines += [
-            "this page does not hold still: two screenshots of it, with nothing changed,".format(),
-            "score {:.1f} against each other ({:.1f}% of pixels move). That is the ceiling for".format(
-                st["match"], st["pixels_changed"]),
-            "this page. Freeze animations, carousels and live data, or score a still section,",
-            "before chasing anything below it.",
+            "{:.0f}% of this page moves between screenshots, which is too much to score.".format(
+                st["ignored_pct"]),
+            "Freeze the animation or the video, or point at a section that holds still;",
+            "until then the number below is mostly measuring motion.",
+            "",
+        ]
+    elif st.get("ignored_pct"):
+        lines += [
+            "{:.1f}% of this page moves between screenshots (an animation, a carousel or live".format(
+                st["ignored_pct"]),
+            "data). That area is excluded from the score and shown slate blue in the difference",
+            "map, so do not try to fix anything there. With it excluded, two screenshots of the",
+            "page score {:.1f} against each other, which is the ceiling here.".format(st["match"]),
             "",
         ]
     lines += [
@@ -1267,6 +1296,12 @@ def measure_stability(run, code, tmp_dir):
     chases motion it cannot fix. The number it returns is the ceiling for
     that page: nothing can score above it.
     """
+    # Throw the first one away: a cold page is still fetching fonts, images and
+    # lazy chunks, and measuring that would mask out real content for the whole run.
+    render_code(code, run["kind"], run.get("css_width", run["width"]),
+                run.get("css_height", run["height"]), tmp_dir / "stability-warmup.png",
+                out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
+                ground=run.get("ground", "#FFFFFF"))
     a = render_code(code, run["kind"], run.get("css_width", run["width"]),
                     run.get("css_height", run["height"]), tmp_dir / "stability-a.png",
                     out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
@@ -1275,9 +1310,51 @@ def measure_stability(run, code, tmp_dir):
                     run.get("css_height", run["height"]), tmp_dir / "stability-b.png",
                     out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
                     ground=run.get("ground", "#FFFFFF"))
-    report, per_px, _ = score_images(a, b)
-    changed = float((per_px > 64).mean() * 100)
-    return {"match": report["match"], "pixels_changed": round(changed, 2)}
+    raw, per_px, _ = score_images(a, b)
+    moving = per_px > 64
+    if moving.any():
+        # Widen it a little: the edge of a moving element shimmers by a pixel or two.
+        moving = _box_mean(moving.astype(np.float64), 9) > 0
+    steady, _, _ = score_images(a, b, ignore=moving if moving.any() else None)
+    ys, xs = np.where(moving)
+    box = ([int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+           if moving.any() else None)
+    return {"match": steady["match"], "raw_match": raw["match"],
+            "pixels_changed": round(float((per_px > 64).mean() * 100), 2),
+            "ignored_pct": round(float(moving.mean() * 100), 2),
+            "box": box}, moving
+
+
+def _unstable_mask(slug, run, code):
+    """The parts of a running page that move, measured once and reused.
+
+    Only running pages need it: pasted code renders the same every time.
+    """
+    if run["kind"] != "url":
+        return None
+    d = _run_dir(slug)
+    mask_file = d / "unstable.png"
+    if "stability" not in run:
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix="spot-on-stability-"))
+            try:
+                stats, moving = measure_stability(run, code, tmp)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            # Excluding most of the page would leave nothing to score, and every
+            # attempt would come back a meaningless 100.
+            stats["unscoreable"] = stats["ignored_pct"] > 60
+            if moving.any() and not stats["unscoreable"]:
+                Image.fromarray((moving * 255).astype(np.uint8), mode="L").save(mask_file)
+            run["stability"] = stats
+        except Exception as e:
+            run["stability"] = {"error": str(e)[:200]}
+        _save_run(slug, run)
+    if (run.get("stability") or {}).get("unscoreable"):
+        return None
+    if mask_file.exists():
+        return np.asarray(Image.open(mask_file).convert("L")) > 127
+    return None
 
 
 def record_attempt(slug, code, source="manual", changes="", meta=None):
@@ -1294,8 +1371,9 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
                           png, out_size=(run["width"], run["height"]),
                           scale=run.get("scale", 1.0), ground=run.get("ground", "#FFFFFF"))
     px_per_css = run["width"] / float(run.get("css_width", run["width"]))
-    report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css)
-    diff_heatmap(per_px, d / "attempts" / "{:03d}-diff.png".format(n))
+    ignore = _unstable_mask(slug, run, code)
+    report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css, ignore=ignore)
+    diff_heatmap(per_px, d / "attempts" / "{:03d}-diff.png".format(n), ignore=ignore)
     (d / "attempts" / "{:03d}.code".format(n)).write_text(code, encoding="utf-8")
 
     record = {
@@ -1312,16 +1390,6 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
         json.dumps(record, indent=2), encoding="utf-8")
 
     # A running page is measured for stillness once, on its first attempt.
-    if run["kind"] == "url" and "stability" not in run:
-        try:
-            tmp = Path(tempfile.mkdtemp(prefix="spot-on-stability-"))
-            try:
-                run["stability"] = measure_stability(run, code, tmp)
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
-        except Exception as e:
-            run["stability"] = {"error": str(e)[:200]}
-        _save_run(slug, run)
     record["stability"] = run.get("stability")
 
     if report["match"] > run.get("best_match", -1):
@@ -2045,8 +2113,8 @@ function renderRefMeta() {
     '<span class="meta-pill" title="Display scale the design was captured at">' + (r.scale || 1) + 'x</span>' +
     '<span class="meta-pill" title="Page colour read from the border of the design, used as the render ground">' + r.ground + '</span>' +
     '<span class="meta-pill" title="What the model writes for this run">' + r.kind + '</span>' +
-    (r.stability && r.stability.match !== undefined && r.stability.match < 97
-      ? '<span class="meta-pill" style="background: rgba(194,112,63,0.14); color: #8A4B22;" title="Two screenshots of this page, with nothing changed, score this against each other. Motion on the page makes anything above it noise. Freeze animations or score a still section.">moves: ceiling ' + r.stability.match.toFixed(1) + '</span>'
+    (r.stability && r.stability.ignored_pct
+      ? '<span class="meta-pill" style="background: rgba(38,58,92,0.12); color: #26456E;" title="This share of the page moves between screenshots, so it is excluded from the score and shown slate blue in the difference map. With it excluded, two screenshots of the page score ' + r.stability.match.toFixed(1) + ' against each other.">' + r.stability.ignored_pct.toFixed(1) + '% moving, excluded</span>'
       : '');
 }
 
