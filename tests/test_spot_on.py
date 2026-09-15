@@ -505,6 +505,47 @@ class AgentRequests(unittest.TestCase):
         self.assertIn("cli", out)
 
 
+@unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+class PageStillness(unittest.TestCase):
+    """A page that will not hold still has a ceiling, and the report has to say so."""
+
+    STATIC = '<div style="width:200px;height:120px;background:#52796F"></div>'
+    MOVING = ('<div id="b" style="width:200px;height:120px"></div><script>'
+              'document.getElementById("b").style.background = '
+              '"rgb(" + Math.floor(Math.random()*255) + ",40,40)";</script>')
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-still-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_for(self, code):
+        run = {"kind": "html", "width": 200, "height": 120, "css_width": 200,
+               "css_height": 120, "scale": 1.0, "ground": "#FFFFFF"}
+        return so.measure_stability(run, code, self.tmp)
+
+    def test_a_still_page_scores_against_itself(self):
+        self.assertGreater(self.run_for(self.STATIC)["match"], 99)
+
+    def test_a_moving_page_does_not(self):
+        moving = self.run_for(self.MOVING)
+        self.assertLess(moving["match"], 99)
+        self.assertGreater(moving["pixels_changed"], 0)
+
+    def test_the_ceiling_is_stated_in_the_report(self):
+        run = {"name": "x", "kind": "url", "width": 10, "height": 10,
+               "stability": {"match": 77.3, "pixels_changed": 3.27}}
+        text = so.feedback_text(run, 1, score("close"))
+        self.assertIn("does not hold still", text)
+        self.assertIn("77.3", text)
+
+    def test_a_still_page_gets_no_ceiling_warning(self):
+        run = {"name": "x", "kind": "url", "width": 10, "height": 10,
+               "stability": {"match": 99.6, "pixels_changed": 0.01}}
+        self.assertNotIn("hold still", so.feedback_text(run, 1, score("close")))
+
+
 class BestOfN(unittest.TestCase):
     """Several rewrites per round, in parallel; the highest scoring one wins."""
 
@@ -708,6 +749,15 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertIn("match", rec)
         with Image.open(self.tmp / run["slug"] / "attempts" / "001.png") as shot:
             self.assertEqual(shot.size, (400, 300))
+
+    def test_a_running_page_is_measured_for_stillness_once(self):
+        run = self.post("/runs", {"name": "still", "kind": "url",
+                                  "data_url": self.design_url(DESIGN)})
+        rec = self.post("/attempt", {"run": run["slug"], "code": self.base + "/"})
+        self.assertIn("stability", rec)
+        self.assertGreater(rec["stability"]["match"], 95)  # the tool's own page holds still
+        saved = json.loads((self.tmp / run["slug"] / "run.json").read_text(encoding="utf-8"))
+        self.assertIn("stability", saved)
 
     def test_running_page_is_not_iterated_by_the_server(self):
         run = self.post("/runs", {"name": "url-iter", "kind": "url",

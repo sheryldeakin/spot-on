@@ -18,6 +18,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -175,9 +176,12 @@ def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale
     out_size = out_size or (round(css_width * scale), round(css_height * scale))
     tmp = Path(tempfile.mkdtemp(prefix="spot-on-"))
     try:
+        flags = []
         if kind == "url":
             target = _check_url(code)
             settle_ms = settle_ms or 4000
+            # Apps that honour prefers-reduced-motion hold still for the screenshot.
+            flags.append("--force-prefers-reduced-motion")
         else:
             page = tmp / "attempt.html"
             page.write_text(_wrap(code, kind, css_width, css_height, ground), encoding="utf-8")
@@ -196,8 +200,9 @@ def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale
             "--window-size={},{}".format(css_width, css_height),
             "--virtual-time-budget={}".format(settle_ms),
             "--screenshot={}".format(shot),
-            target,
         ]
+        cmd += flags + shlex.split(os.environ.get("SPOT_ON_CHROME_FLAGS", ""))
+        cmd.append(target)
         proc = subprocess.run(cmd, capture_output=True, timeout=120)
         if not shot.exists():
             err = (proc.stderr or b"").decode("utf-8", "replace")[-600:]
@@ -857,6 +862,18 @@ def feedback_text(run, attempt, report):
         "  rmse {}   ssim {}   shape IoU {}".format(
             report["raw"]["rmse"], report["raw"]["ssim"], report["raw"]["shape_iou"]),
         "",
+    ]
+    st = run.get("stability") or {}
+    if st.get("match") is not None and st["match"] < 97:
+        lines += [
+            "this page does not hold still: two screenshots of it, with nothing changed,".format(),
+            "score {:.1f} against each other ({:.1f}% of pixels move). That is the ceiling for".format(
+                st["match"], st["pixels_changed"]),
+            "this page. Freeze animations, carousels and live data, or score a still section,",
+            "before chasing anything below it.",
+            "",
+        ]
+    lines += [
         "what to fix, in order:",
     ]
     for i, p in enumerate(report["problems"], 1):
@@ -1242,6 +1259,27 @@ def _parse_iteration(stdout):
 
 # ----------------------------------------------------------------- the attempt
 
+def measure_stability(run, code, tmp_dir):
+    """Screenshot the same target twice and score one against the other.
+
+    A running page with an animation, a carousel or a live clock never matches
+    itself. Without this the score looks like a gap in the build, and a loop
+    chases motion it cannot fix. The number it returns is the ceiling for
+    that page: nothing can score above it.
+    """
+    a = render_code(code, run["kind"], run.get("css_width", run["width"]),
+                    run.get("css_height", run["height"]), tmp_dir / "stability-a.png",
+                    out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
+                    ground=run.get("ground", "#FFFFFF"))
+    b = render_code(code, run["kind"], run.get("css_width", run["width"]),
+                    run.get("css_height", run["height"]), tmp_dir / "stability-b.png",
+                    out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
+                    ground=run.get("ground", "#FFFFFF"))
+    report, per_px, _ = score_images(a, b)
+    changed = float((per_px > 64).mean() * 100)
+    return {"match": report["match"], "pixels_changed": round(changed, 2)}
+
+
 def record_attempt(slug, code, source="manual", changes="", meta=None):
     """Render, score, store, and return the attempt record."""
     run = _load_run(slug)
@@ -1272,6 +1310,19 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
     record.update(meta or {})
     (d / "attempts" / "{:03d}.json".format(n)).write_text(
         json.dumps(record, indent=2), encoding="utf-8")
+
+    # A running page is measured for stillness once, on its first attempt.
+    if run["kind"] == "url" and "stability" not in run:
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix="spot-on-stability-"))
+            try:
+                run["stability"] = measure_stability(run, code, tmp)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        except Exception as e:
+            run["stability"] = {"error": str(e)[:200]}
+        _save_run(slug, run)
+    record["stability"] = run.get("stability")
 
     if report["match"] > run.get("best_match", -1):
         run["best_match"] = report["match"]
@@ -1993,7 +2044,10 @@ function renderRefMeta() {
     '<span class="meta-pill" title="Page size in CSS pixels that every attempt is screenshot at">' + (r.css_width || r.width) + ' x ' + (r.css_height || r.height) + '</span>' +
     '<span class="meta-pill" title="Display scale the design was captured at">' + (r.scale || 1) + 'x</span>' +
     '<span class="meta-pill" title="Page colour read from the border of the design, used as the render ground">' + r.ground + '</span>' +
-    '<span class="meta-pill" title="What the model writes for this run">' + r.kind + '</span>';
+    '<span class="meta-pill" title="What the model writes for this run">' + r.kind + '</span>' +
+    (r.stability && r.stability.match !== undefined && r.stability.match < 97
+      ? '<span class="meta-pill" style="background: rgba(194,112,63,0.14); color: #8A4B22;" title="Two screenshots of this page, with nothing changed, score this against each other. Motion on the page makes anything above it noise. Freeze animations or score a still section.">moves: ceiling ' + r.stability.match.toFixed(1) + '</span>'
+      : '');
 }
 
 function handleFile(file) {
