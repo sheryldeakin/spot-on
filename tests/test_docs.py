@@ -69,6 +69,15 @@ class EchoedNumbers(unittest.TestCase):
 
 
 class HouseRules(unittest.TestCase):
+    def test_assets_carry_no_embedded_provenance_manifest(self):
+        # The signature SVG once shipped with a C2PA manifest naming the tool that
+        # produced it. Re-exporting an asset can bring one back.
+        for path in (ROOT / "assets").rglob("*"):
+            if path.is_file():
+                data = path.read_bytes().lower()
+                self.assertNotIn(b"c2pa", data, path.name)
+                self.assertNotIn(b"jumbf", data, path.name)
+
     def test_no_em_dashes(self):
         self.assertNotIn("\u2014", README)
 
