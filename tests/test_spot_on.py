@@ -193,17 +193,73 @@ class ShiftDiagnosis(unittest.TestCase):
 
 
 class TypefaceHint(unittest.TestCase):
-    def test_wrong_font_is_named_when_everything_else_is_close(self):
-        # From the pricing demo: the design uses Segoe UI, the attempt Arial. Colour
-        # 98.6 and coverage 95.4, structure 44, and the old report never mentioned
-        # type, so the model spent rounds moving spacing instead.
+    """The font is named only on evidence: text in the right place with wrong letters."""
+
+    def test_wrong_font_is_named(self):
+        # The design uses Segoe UI, this attempt Arial.
         fx = HERE / "fixtures"
         r, _, _ = so.score_images(Image.open(fx / "pricing-design.png"),
                                   Image.open(fx / "pricing-wrong-font.png"))
-        self.assertTrue(any("font family" in p for p in r["problems"]), r["problems"])
+        self.assertTrue(any("font family or weight is wrong" in p for p in r["problems"]),
+                        r["problems"])
+
+    def test_right_font_with_small_misses_is_not_blamed_on_the_font(self):
+        # Regression: the old rule fired whenever colour was fine and structure low,
+        # so it kept telling the model to change a font that was already correct,
+        # and the loop stalled making sweeping type changes that lowered the score.
+        fx = HERE / "fixtures"
+        r, _, _ = so.score_images(Image.open(fx / "pricing-design.png"),
+                                  Image.open(fx / "pricing-right-font-near.png"))
+        self.assertFalse(any("font" in p and "wrong" in p for p in r["problems"]), r["problems"])
+        self.assertGreater(r["elements"]["glyph"]["median"], 0.85)
 
     def test_no_font_hint_for_shapes_with_the_wrong_colour(self):
         self.assertFalse(any("font family" in p for p in score("hue")["problems"]))
+
+
+class ElementFeedback(unittest.TestCase):
+    """Page-wide numbers stop helping when a page is close; name the element instead."""
+
+    def test_taller_boxes_are_named_with_their_size_and_place(self):
+        design = page(content_top=90)
+        attempt = page(content_top=90)
+        d = ImageDraw.Draw(attempt)
+        for i in range(3):  # redraw the cards 12px taller
+            x = 40 + i * 180
+            d.rectangle([x, 150, x + 160, 340], fill="#FFFFFF", outline="#FFFFFF", width=1)
+            d.rectangle([x, 150, x + 160, 352], outline="#CBD3CE", width=2,
+                        fill="#1F3A30" if i == 1 else "#FFFFFF")
+            d.rectangle([x + 20, 180, x + 90, 194], fill="#6A746F")
+        r, _, _ = so.score_images(design, attempt)
+        text = " ".join(r["problems"])
+        self.assertIn("taller", text)
+        self.assertRegex(text, r"boxes around y \d+px")
+
+    def test_a_missing_element_is_named_by_position(self):
+        design = page(top_label=True)
+        attempt = page(top_label=False, content_top=90)  # same layout, label gone
+        r, _, _ = so.score_images(design, attempt)
+        self.assertTrue(any("Nothing in the attempt matches" in p for p in r["problems"]),
+                        r["problems"])
+
+    def test_identical_pages_produce_no_element_findings(self):
+        r, _, _ = so.score_images(page(), page())
+        self.assertEqual(r["elements"]["groups"], [])
+
+    def test_a_page_wide_shift_is_not_repeated_on_every_element(self):
+        r, _, _ = so.score_images(page(top_label=True, content_top=90),
+                                  page(top_label=True, content_top=60))
+        moved = [g for g in r["elements"]["groups"] if "position" in g[0]["aspects"]]
+        self.assertLessEqual(len(moved), 1, [g[0] for g in moved])
+
+    def test_thin_borders_do_not_become_findings(self):
+        # Card outlines split into fragments that match nothing; they were reported
+        # as missing elements.
+        fx = HERE / "fixtures"
+        r, _, _ = so.score_images(Image.open(fx / "pricing-design.png"),
+                                  Image.open(fx / "pricing-right-font-near.png"))
+        self.assertFalse(any("Nothing in the attempt matches" in p for p in r["problems"]),
+                         r["problems"])
 
 
 class IterationGuards(unittest.TestCase):
@@ -273,6 +329,21 @@ class IterationBase(unittest.TestCase):
         self.assertEqual(base["n"], 2)
         self.assertIsNone(discarded)
 
+    def test_every_losing_change_is_listed_not_just_the_last(self):
+        # Regression: a round re-tried "switch the font stack to Arial first", which
+        # an earlier round had already proved lowered the score.
+        history = [{"n": 1, "match": 19.9, "changes": "first pass"},
+                   {"n": 2, "match": 73.6, "changes": "rebuilt the cards"},
+                   {"n": 3, "match": 48.0, "changes": "font stack Arial first"},
+                   {"n": 4, "match": 67.4, "changes": "line heights everywhere"}]
+        base, _ = so.iteration_base(history)
+        rejected = so.rejected_changes(history, base)
+        self.assertEqual([r["n"] for r in rejected], [4, 3, 1])
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  2, "<div></div>", score("close"), "", None, rejected)
+        self.assertIn("Arial first", text)
+        self.assertIn("line heights everywhere", text)
+
     def test_prompt_tells_the_model_what_was_discarded(self):
         run = {"name": "x", "kind": "html", "width": 10, "height": 10}
         report = score("close")
@@ -281,6 +352,166 @@ class IterationBase(unittest.TestCase):
         self.assertIn("discarded", text)
         self.assertIn("tightened card rhythm", text)
         self.assertIn("attempts/002.png", text)
+
+
+class AgentChoice(unittest.TestCase):
+    """The loop runs on whatever AI the machine has, not only on Claude Code."""
+
+    def setUp(self):
+        keys = ("SPOT_ON_AGENT", "SPOT_ON_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                "LOCALAPPDATA")
+        self.saved = {k: os.environ.get(k) for k in keys}
+        for k in keys:
+            os.environ.pop(k, None)
+        # The Gemini CLI is found at a fixed path, and Ollama by a request; keep both
+        # out of these tests so they check the choice, not this machine.
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-agents-"))
+        os.environ["LOCALAPPDATA"] = str(self.tmp)
+        self.which, self.urlopen = so.shutil.which, so.urllib.request.urlopen
+
+        def no_server(*a, **k):
+            raise OSError("no ollama")
+
+        so.urllib.request.urlopen = no_server
+
+    def tearDown(self):
+        so.shutil.which = self.which
+        so.urllib.request.urlopen = self.urlopen
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def only(self, *found):
+        so.shutil.which = lambda name: ("/usr/bin/" + name) if name in found else None
+
+    def test_cli_is_preferred_when_present(self):
+        self.only("claude", "codex")
+        self.assertEqual(so.pick_agent(), "claude")
+
+    def test_falls_through_to_the_next_available_agent(self):
+        self.only("codex")
+        self.assertEqual(so.pick_agent(), "codex")
+
+    def test_an_api_key_is_enough_without_any_cli(self):
+        self.only()
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        self.assertEqual(so.pick_agent(), "openai-api")
+
+    def test_explicit_choice_wins(self):
+        self.only("claude", "codex")
+        self.assertEqual(so.pick_agent("codex"), "codex")
+
+    def test_explicit_choice_that_is_not_installed_says_so(self):
+        self.only("claude")
+        with self.assertRaises(ValueError):
+            so.pick_agent("codex")
+
+    def test_no_agent_anywhere_explains_the_options(self):
+        self.only()
+        with self.assertRaises(ValueError) as e:
+            so.pick_agent()
+        self.assertIn("feedback packet", str(e.exception))
+
+
+class AgentRequests(unittest.TestCase):
+    """Each provider is sent the three images and the prompt in its own shape."""
+
+    def setUp(self):
+        self.sent = {}
+        self.saved_post = so._post_json
+        self.saved_run = so.subprocess.run
+        self.saved_which = so.shutil.which
+        def fake_post(url, payload, headers, timeout=600):
+            self.sent["call"] = {"url": url, "payload": payload, "headers": headers}
+            return self.reply(url)
+
+        so._post_json = fake_post
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-agent-"))
+        self.images = []
+        for name in ("design.png", "attempt.png", "diff.png"):
+            f = self.tmp / name
+            DESIGN.save(f)
+            self.images.append(f)
+
+    def tearDown(self):
+        so._post_json, so.subprocess.run = self.saved_post, self.saved_run
+        so.shutil.which = self.saved_which
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def reply(self, url):
+        if "anthropic" in url:
+            return {"content": [{"type": "text", "text": "<svg>from anthropic</svg>"}]}
+        if "openai" in url:
+            return {"choices": [{"message": {"content": "<svg>from openai</svg>"}}]}
+        return {"message": {"content": "<svg>from ollama</svg>"}}
+
+    def test_anthropic_gets_images_then_the_prompt(self):
+        os.environ["ANTHROPIC_API_KEY"] = "sk-test"
+        try:
+            out = so._run_api_agent("anthropic-api", "make it match", self.images)
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        content = self.sent["call"]["payload"]["messages"][0]["content"]
+        self.assertEqual([c["type"] for c in content], ["image", "image", "image", "text"])
+        self.assertEqual(self.sent["call"]["headers"]["anthropic-version"], "2023-06-01")
+        self.assertIn("from anthropic", out)
+
+    def test_openai_uses_image_url_blocks(self):
+        os.environ["OPENAI_API_KEY"] = "sk-test"
+        try:
+            out = so._run_api_agent("openai-api", "make it match", self.images)
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
+        content = self.sent["call"]["payload"]["messages"][0]["content"]
+        self.assertEqual([c["type"] for c in content], ["image_url", "image_url", "image_url", "text"])
+        self.assertTrue(content[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertIn("from openai", out)
+
+    def test_ollama_sends_images_alongside_the_text(self):
+        out = so._run_api_agent("ollama", "make it match", self.images)
+        msg = self.sent["call"]["payload"]["messages"][0]
+        self.assertEqual(len(msg["images"]), 3)
+        self.assertIn("from ollama", out)
+
+    def test_cli_agents_get_a_closed_stdin(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"], seen["kw"] = cmd, kw
+
+            class R:
+                returncode = 0
+                stdout = "```\n<svg>cli</svg>\n```"
+                stderr = ""
+            return R()
+
+        so.shutil.which = lambda name: "/usr/bin/" + name
+        so.subprocess.run = fake_run
+        out = so._run_cli_agent("codex", "make it match", self.tmp)
+        self.assertIn("exec", seen["cmd"])
+        self.assertIsNotNone(seen["kw"].get("stdin"))
+        self.assertEqual(seen["kw"].get("encoding"), "utf-8")
+        self.assertIn("cli", out)
+
+
+class PromptShape(unittest.TestCase):
+    def test_far_off_pages_are_told_to_fix_everything(self):
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  1, "<div></div>", score("wrong"), "")
+        self.assertIn("fix everything the report names", text)
+
+    def test_close_pages_are_held_to_three_changes(self):
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  1, "<div></div>", score("close"), "")
+        self.assertIn("at most three things", text)
+
+    def test_agents_that_cannot_open_files_are_told_the_images_are_attached(self):
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  1, "<div></div>", score("close"), "", None, (), False)
+        self.assertIn("attached", text)
 
 
 class BrowserLookup(unittest.TestCase):
@@ -399,6 +630,30 @@ class ServerAndScreenshots(unittest.TestCase):
         path.write_text(script, encoding="utf-8")
         proc = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr[-600:])
+
+    def test_prompt_endpoint_serves_a_round_for_an_in_page_model(self):
+        # Chrome's built-in model runs in the page, so the page asks for the same
+        # prompt the server loop would have used.
+        run = self.post("/runs", {"name": "browser", "kind": "svg",
+                                  "data_url": self.design_url(DESIGN)})
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"></svg>'
+        self.post("/attempt", {"run": run["slug"], "code": svg})
+        out = json.loads(urllib.request.urlopen(
+            self.base + "/prompt?run=" + run["slug"], timeout=30).read())
+        self.assertEqual(out["attempt"], 1)
+        self.assertEqual(out["images"],
+                         ["reference.png", "attempts/001.png", "attempts/001-diff.png"])
+        self.assertIn("attached", out["prompt"])
+        self.assertNotIn("Read reference.png", out["prompt"])
+
+    def test_an_attempt_can_record_who_wrote_it(self):
+        run = self.post("/runs", {"name": "browser-src", "kind": "svg",
+                                  "data_url": self.design_url(DESIGN)})
+        rec = self.post("/attempt", {
+            "run": run["slug"], "source": "chrome-builtin", "changes": "in-page model",
+            "code": '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"></svg>'})
+        self.assertEqual(rec["source"], "chrome-builtin")
+        self.assertEqual(rec["changes"], "in-page model")
 
     def test_page_script_is_served(self):
         html = urllib.request.urlopen(self.base + "/", timeout=30).read().decode()

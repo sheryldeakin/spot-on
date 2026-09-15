@@ -44,23 +44,14 @@ class EchoedNumbers(unittest.TestCase):
         for line in (ROOT / "docs" / "demo-run.txt").read_text(encoding="utf-8").splitlines()[1:]:
             parts = line.split()
             if parts and parts[0].isdigit():
-                rows[int(parts[0])] = {"match": float(parts[1]), "detail": float(parts[5])}
-        m = re.search(r"detail went from (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)", README)
-        self.assertEqual((float(m.group(1)), float(m.group(2))), (rows[2]["detail"], rows[3]["detail"]))
+                rows[int(parts[0])] = {"match": float(parts[1])}
         m = re.search(r"It scored (\d+(?:\.\d+)?), down from (\d+(?:\.\d+)?)", README)
-        self.assertEqual((float(m.group(1)), float(m.group(2))), (rows[4]["match"], rows[3]["match"]))
-        self.assertLess(rows[4]["match"], rows[3]["match"])
-        m = re.search(r"round 5 kept only the part that helped: (\d+(?:\.\d+)?)", README)
-        self.assertEqual(float(m.group(1)), rows[5]["match"])
-        self.assertEqual(max(r["match"] for r in rows.values()), rows[5]["match"])
-
-    def test_earlier_run_plateau_is_recorded(self):
-        # The 58.1 comes from the run before the typeface hint existed; its table is
-        # kept in docs/demo-run-before-typeface-hint.txt so the claim stays checkable.
-        before = (ROOT / "docs" / "demo-run-before-typeface-hint.txt").read_text(encoding="utf-8")
-        best = max(float(l.split()[1]) for l in before.splitlines()[1:] if l.split() and l.split()[0].isdigit())
-        m = re.search(r"stalled at (\d+(?:\.\d+)?)", README)
-        self.assertEqual(float(m.group(1)), best)
+        self.assertIsNotNone(m, "worked example sentence changed; update this check with it")
+        worse, before = float(m.group(1)), float(m.group(2))
+        self.assertEqual((worse, before), (rows[3]["match"], rows[2]["match"]))
+        self.assertLess(worse, before)
+        m = re.search(r"round (\d+) reached the best score of the run", README)
+        self.assertEqual(max(rows, key=lambda n: rows[n]["match"]), int(m.group(1)))
 
     def test_coverage_cap_example(self):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)

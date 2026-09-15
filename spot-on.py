@@ -23,6 +23,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -366,6 +368,224 @@ def _offsets(g_ref, g_att, bands=10, max_frac=0.15, min_px=4):
     return out
 
 
+def _elements(g):
+    """Text lines, buttons and boxes, found from edges, as bounding boxes in image pixels.
+
+    Edges rather than an ink mask, so light text on a dark card is found too.
+    Letters are joined into words and lines by a wide, short dilation.
+    """
+    from scipy import ndimage
+    e = np.maximum(np.abs(np.diff(g, axis=1, prepend=g[:, :1])),
+                   np.abs(np.diff(g, axis=0, prepend=g[:1, :])))
+    m = ndimage.binary_dilation(e > 24, structure=np.ones((3, 9), dtype=bool))
+    lab, _ = ndimage.label(m, structure=np.ones((3, 3), dtype=bool))
+    out = []
+    for i, sl in enumerate(ndimage.find_objects(lab), 1):
+        if sl is None:
+            continue
+        ys, xs = sl
+        h, w = ys.stop - ys.start, xs.stop - xs.start
+        if h * w < 60:
+            continue
+        if min(h, w) <= 12 and max(h, w) >= 60:
+            continue  # a border or rule: these split into fragments unpredictably
+        fill = float((lab[sl] == i).mean())
+        kind = "box" if (h > 30 and w > 60 and fill < 0.35) else "text"
+        out.append({"x": int(xs.start), "y": int(ys.start), "w": int(w), "h": int(h), "kind": kind})
+    return out
+
+
+def _match_elements(design, attempt):
+    """Pair each design element with its closest attempt element, one to one."""
+    pairs = []
+    for i, d in enumerate(design):
+        for j, a in enumerate(attempt):
+            cost = (abs(a["x"] - d["x"]) + abs(a["y"] - d["y"]) + abs(a["w"] - d["w"])
+                    + abs(a["h"] - d["h"]) + (40 if a["kind"] != d["kind"] else 0))
+            if cost <= 0.6 * (d["w"] + d["h"]) + 12:
+                pairs.append((cost, i, j))
+    pairs.sort()
+    used_d, used_a, matched = set(), set(), []
+    for cost, i, j in pairs:
+        if i in used_d or j in used_a:
+            continue
+        used_d.add(i)
+        used_a.add(j)
+        matched.append((design[i], attempt[j]))
+    missing = [d for i, d in enumerate(design) if i not in used_d]
+    return matched, missing
+
+
+def _where(el, size):
+    cx, cy = el["x"] + el["w"] / 2.0, el["y"] + el["h"] / 2.0
+    return _cell_name({"row": min(3, int(cy * 4 // max(1, size[1]))),
+                       "col": min(3, int(cx * 4 // max(1, size[0])))})
+
+
+def _ncc(a, b):
+    a, b = a - a.mean(), b - b.mean()
+    den = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    return float((a * b).sum() / den) if den > 1e-9 else 0.0
+
+
+def _glyph_check(g_ref, g_att, matched):
+    """Compare letter shapes on text lines that already sit in the right place.
+
+    Width alone does not reveal a wrong typeface: Arial and Segoe UI set the same
+    string to nearly the same width. Lining up a text line and comparing its pixels
+    does. Only well-aligned lines are used, so a broken layout cannot masquerade as
+    a font problem. Measured on a pricing page: right font, no line below 0.75;
+    wrong font, a fifth of lines below it.
+    """
+    scores = []
+    for d, a in matched:
+        if d["kind"] != "text" or d["h"] < 8:
+            continue
+        if (abs(a["w"] - d["w"]) > 0.08 * d["w"] + 2 or abs(a["h"] - d["h"]) > 0.25 * d["h"] + 2
+                or abs(a["x"] - d["x"]) > 8 or abs(a["y"] - d["y"]) > 8):
+            continue
+        cd = g_ref[d["y"]:d["y"] + d["h"], d["x"]:d["x"] + d["w"]]
+        ca = g_att[a["y"]:a["y"] + a["h"], a["x"]:a["x"] + a["w"]]
+        if cd.size == 0 or ca.size == 0:
+            continue
+        ca = np.asarray(Image.fromarray(ca.astype(np.uint8)).resize(
+            (cd.shape[1], cd.shape[0]), Image.BILINEAR), dtype=np.float64)
+        scores.append(_ncc(cd, ca))
+    if len(scores) < 8:
+        return {"lines": len(scores), "weak_share": 0.0, "median": None}
+    return {"lines": len(scores),
+            "weak_share": round(float(np.mean([v < 0.75 for v in scores])), 3),
+            "median": round(float(np.median(scores)), 3)}
+
+
+def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
+    """Element-level differences in CSS pixels, grouped and ordered by how much they matter.
+
+    Page-wide numbers stop helping once a page is close: they say the structure is
+    off but not where, so a model makes sweeping edits that break what already
+    works. This names the element, the direction and the size of each miss.
+    """
+    design, attempt = _elements(g_ref), _elements(g_att)
+    matched, missing = _match_elements(design, attempt)
+    size = (g_ref.shape[1], g_ref.shape[0])
+
+    def css(v):
+        return int(round(v / px_per_css))
+
+    items = []
+    for d, a in matched:
+        base = {"kind": d["kind"], "x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
+                "h": css(d["h"]), "aw": css(a["w"]), "where": _where(d, size),
+                "area": d["w"] * d["h"], "aspects": {}}
+        dw_pct = (a["w"] - d["w"]) * 100.0 / max(1, d["w"])
+        dh, dx, dy = css(a["h"] - d["h"]), css(a["x"] - d["x"]), css(a["y"] - d["y"])
+        if abs(dw_pct) >= 4 and abs(css(a["w"] - d["w"])) >= 3:
+            base["aspects"]["width"] = round(dw_pct, 1)
+        if abs(dh) >= 3:
+            base["aspects"]["height"] = dh
+        # A page-wide shift is reported once, on its own; do not repeat it per element.
+        tol = max(3, int(abs(shift_css) * 0.25))
+        covered = shift_css and abs(dy + shift_css) <= tol and abs(dx) < 4
+        if max(abs(dx), abs(dy)) >= 4 and not covered:
+            base["aspects"]["position"] = (dx, dy)
+        if base["aspects"]:
+            items.append(base)
+    for d in missing:
+        if d["w"] * d["h"] >= 150:
+            items.append({"kind": d["kind"], "x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
+                          "h": css(d["h"]), "where": _where(d, size), "area": d["w"] * d["h"],
+                          "aspects": {"missing": True}})
+
+    # Group the same miss repeated across siblings (three card titles, three buttons).
+    def alike(a, b):
+        if a["kind"] != b["kind"] or abs(a["y"] - b["y"]) > 8:
+            return False
+        if set(a["aspects"]) != set(b["aspects"]):
+            return False
+        for k, va in a["aspects"].items():
+            vb = b["aspects"][k]
+            if k == "width" and (va * vb <= 0 or abs(va - vb) > 5):
+                return False
+            if k == "height" and (va * vb <= 0 or abs(va - vb) > 3):
+                return False
+            if k == "position" and (abs(va[0] - vb[0]) > 3 or abs(va[1] - vb[1]) > 3):
+                return False
+        return True
+
+    groups = []
+    for it in items:
+        for g in groups:
+            if alike(g[0], it):
+                g.append(it)
+                break
+        else:
+            groups.append([it])
+
+    def weight(g):
+        asp = g[0]["aspects"]
+        mag = 0.0
+        if "width" in asp:
+            mag += abs(asp["width"]) / 10.0
+        if "height" in asp:
+            mag += abs(asp["height"]) / 6.0
+        if "position" in asp:
+            mag += max(abs(asp["position"][0]), abs(asp["position"][1])) / 6.0
+        if "missing" in asp:
+            mag += 1.5
+        return sum(x["area"] for x in g) * mag
+
+    groups.sort(key=weight, reverse=True)
+    return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
+            "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched)}
+
+
+def _element_sentence(g):
+    """One plain sentence per group of elements that miss in the same way."""
+    it, n = g[0], len(g)
+    asp = it["aspects"]
+    if n > 1:
+        lead = "{} {}".format(n, "text elements" if it["kind"] == "text" else "boxes")
+        at = "around y {}px (the {} of the page)".format(it["y"], it["where"])
+        verb, verb_sit, them = "are", "sit", "them"
+    else:
+        lead = "The text" if it["kind"] == "text" else "The box"
+        at = "at x {}, y {} ({}x{}px, the {} of the page)".format(
+            it["x"], it["y"], it["w"], it["h"], it["where"])
+        verb, verb_sit, them = "is", "sits", "it"
+
+    if "missing" in asp:
+        return "Nothing in the attempt matches {} {}.".format(
+            "these elements" if n > 1 else lead[0].lower() + lead[1:], at)
+
+    clauses = []
+    if "width" in asp:
+        clauses.append("{} about {:.0f}% {} ({}px against {}px)".format(
+            verb, abs(asp["width"]), "wider" if asp["width"] > 0 else "narrower",
+            it["aw"], it["w"]))
+    if "height" in asp:
+        clauses.append("{} {}px {}".format(
+            "" if clauses else verb, abs(asp["height"]),
+            "taller" if asp["height"] > 0 else "shorter").strip())
+    if "position" in asp:
+        dx, dy = asp["position"]
+        moves = []
+        if abs(dx) >= 4:
+            moves.append("{}px to the {}".format(abs(dx), "right" if dx > 0 else "left"))
+        if abs(dy) >= 4:
+            moves.append("{}px {}".format(abs(dy), "lower" if dy > 0 else "higher"))
+        clauses.append("{} {}".format(verb_sit, " and ".join(moves)))
+
+    if "position" in asp:
+        sentence = "{} {} {}, compared with the design.".format(lead, at, ", ".join(clauses))
+    else:
+        sentence = "{} {} {} than in the design.".format(lead, at, ", ".join(clauses))
+    if "width" in asp:
+        sentence += " Check font size, weight and letter spacing there."
+    elif "height" in asp:
+        sentence += " Check padding, line height and font size there."
+    return " ".join(sentence.split())
+
+
 def _region_grid(diff_sq, rows=4, cols=4):
     h, w = diff_sq.shape
     cells = []
@@ -499,6 +719,11 @@ def score_images(ref_img, att_img, px_per_css=1.0):
     if off["horizontal"]:
         off["horizontal"]["css_shift"] = int(round(off["horizontal"]["shift"] / px_per_css))
     report["offsets"] = off
+    shift_css = (off["vertical"] or {}).get("css_shift", 0)
+    try:
+        report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css)
+    except ImportError:
+        report["elements"] = None  # scipy missing: page-wide feedback only
     report["problems"] = _problems(report)
     return report, per_px, ground
 
@@ -549,18 +774,20 @@ def _problems(report):
         "detail": "Detail density does not match (edge correlation {:.2f}). {}",
     }
 
-    shifted = bool(off.get("vertical") or off.get("horizontal"))
-    typeface = (comp["colour"] >= 90 and comp.get("coverage", 100) >= 90
-                and comp["structure"] < 70 and not (shifted and abs(
-                    (off.get("vertical") or {}).get("css_shift", 0)) > 20))
+    els = report.get("elements") or {}
+    glyph = els.get("glyph") or {}
+    typeface = glyph.get("lines", 0) >= 8 and glyph.get("weak_share", 0) >= 0.15
     if typeface:
-        out.append("Colours and layout are close but edges do not line up. On a page that is "
-                   "usually the text: check the font family first, then size, weight, line height "
-                   "and letter spacing against the design, before moving any boxes.")
+        out.append("The letters themselves do not match: {:.0f}% of the text lines that are in the "
+                   "right place still differ in shape, so the font family or weight is wrong. Fix "
+                   "the font before moving any boxes.".format(glyph["weak_share"] * 100))
+
+    element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
+    out.extend(element_lines)
 
     for name, value in ranked[:2]:
-        if typeface and name in ("structure", "detail"):
-            continue
+        if element_lines or typeface:
+            break
         if value >= 92:
             continue
         if name == "shape":
@@ -582,7 +809,7 @@ def _problems(report):
         out.append("Close on every axis. What is left is antialiasing and sub-pixel placement, "
                    "which is not worth chasing.")
 
-    if report["worst_regions"]:
+    if report["worst_regions"] and not element_lines:
         w = report["worst_regions"][0]
         out.append("The worst area is the {} of the page (RMSE {:.0f}).".format(w["where"], w["rmse"]))
 
@@ -643,6 +870,161 @@ def feedback_text(run, attempt, report):
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------------- the agent
+#
+# The loop needs some model to rewrite the page. Any of these will do, and the
+# first one that is actually available is used unless SPOT_ON_AGENT names one.
+# CLI agents can open the three images themselves; the API ones are sent the
+# images inline. Raw HTTP on purpose: this tool stays installable with numpy,
+# pillow and scipy, rather than requiring every provider's SDK.
+
+AGENT_ORDER = ("claude", "codex", "gemini", "anthropic-api", "openai-api", "ollama")
+
+AGENT_LABELS = {
+    "claude": "Claude Code",
+    "codex": "Codex CLI",
+    "gemini": "Gemini CLI",
+    "anthropic-api": "Anthropic API",
+    "openai-api": "OpenAI API",
+    "ollama": "Ollama (local)",
+}
+
+DEFAULT_MODELS = {
+    "claude": "sonnet",
+    "anthropic-api": "claude-sonnet-5",
+    "openai-api": "gpt-4o",
+    "ollama": "llava",
+}
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+
+
+def _cli_for(agent):
+    return {"claude": "claude", "codex": "codex", "gemini": "agy"}.get(agent)
+
+
+def _agent_available(agent):
+    """Is this agent usable on this machine right now?"""
+    cli = _cli_for(agent)
+    if cli:
+        if agent == "gemini":
+            local = Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe"
+            if local.is_file():
+                return True
+        return shutil.which(cli) is not None
+    if agent == "anthropic-api":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if agent == "openai-api":
+        return bool(os.environ.get("OPENAI_API_KEY"))
+    if agent == "ollama":
+        try:
+            urllib.request.urlopen(OLLAMA_HOST + "/api/tags", timeout=1.5).read()
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def available_agents():
+    return [{"id": a, "label": AGENT_LABELS[a], "available": _agent_available(a)}
+            for a in AGENT_ORDER]
+
+
+def pick_agent(preferred=None):
+    wanted = preferred or os.environ.get("SPOT_ON_AGENT")
+    if wanted:
+        if wanted not in AGENT_ORDER:
+            raise ValueError("unknown agent {!r}; pick one of {}".format(
+                wanted, ", ".join(AGENT_ORDER)))
+        if not _agent_available(wanted):
+            raise ValueError("{} is not available here".format(AGENT_LABELS[wanted]))
+        return wanted
+    for a in AGENT_ORDER:
+        if _agent_available(a):
+            return a
+    raise ValueError(
+        "no AI is set up for the loop on this machine. Install a CLI (Claude Code, Codex or "
+        "Gemini), set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run Ollama. Scoring and the "
+        "feedback packet work without any of them: copy the packet to whatever you use.")
+
+
+def _model_for(agent):
+    return os.environ.get("SPOT_ON_MODEL") or DEFAULT_MODELS.get(agent)
+
+
+def _post_json(url, payload, headers, timeout=600):
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=dict(headers, **{
+        "Content-Type": "application/json"}))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:400]
+        raise RuntimeError("{} returned {}: {}".format(url, e.code, body))
+
+
+def _b64(path):
+    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
+
+def _run_cli_agent(agent, prompt, cwd, timeout=600):
+    cli = _cli_for(agent)
+    exe = shutil.which(cli)
+    if exe is None and agent == "gemini":
+        exe = str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
+    if agent == "claude":
+        cmd = [exe, "-p", prompt, "--output-format", "json",
+               "--model", _model_for("claude"),
+               "--json-schema", json.dumps(ITERATE_SCHEMA)]
+    elif agent == "codex":
+        cmd = [exe, "exec", "--skip-git-repo-check", prompt]
+    else:
+        cmd = [exe, "-p", prompt, "--print-timeout", "300s"]
+    # A CLI with an open stdin can wait forever for input that never comes.
+    with open(os.devnull, "rb") as devnull:
+        proc = subprocess.run(cmd, cwd=str(cwd), stdin=devnull, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    if proc.returncode != 0 and not (proc.stdout or "").strip():
+        raise RuntimeError("{} exited {}: {}".format(
+            AGENT_LABELS[agent], proc.returncode, (proc.stderr or "")[-400:]))
+    return proc.stdout
+
+
+def _run_api_agent(agent, prompt, images):
+    """Send the prompt and the three images to a provider that takes them inline."""
+    model = _model_for(agent)
+    if agent == "anthropic-api":
+        content = [{"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                "data": _b64(f)}} for f in images]
+        content.append({"type": "text", "text": prompt})
+        out = _post_json("https://api.anthropic.com/v1/messages",
+                         {"model": model, "max_tokens": 16000,
+                          "messages": [{"role": "user", "content": content}]},
+                         {"x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                          "anthropic-version": "2023-06-01"})
+        return "".join(b.get("text", "") for b in out.get("content", []))
+    if agent == "openai-api":
+        content = [{"type": "image_url",
+                    "image_url": {"url": "data:image/png;base64," + _b64(f)}} for f in images]
+        content.append({"type": "text", "text": prompt})
+        out = _post_json("https://api.openai.com/v1/chat/completions",
+                         {"model": model, "messages": [{"role": "user", "content": content}]},
+                         {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"]})
+        return out["choices"][0]["message"]["content"]
+    out = _post_json(OLLAMA_HOST + "/api/chat",
+                     {"model": model, "stream": False,
+                      "messages": [{"role": "user", "content": prompt,
+                                    "images": [_b64(f) for f in images]}]}, {})
+    return out.get("message", {}).get("content", "")
+
+
+def run_agent(agent, prompt, cwd, images):
+    if _cli_for(agent):
+        return _run_cli_agent(agent, prompt, cwd)
+    return _run_api_agent(agent, prompt, images)
+
+
 ITERATE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -651,6 +1033,24 @@ ITERATE_SCHEMA = {
     },
     "required": ["code", "changes"],
 }
+
+
+def rejected_changes(history, base, limit=6):
+    """Rounds that scored below the best, newest first, with what they changed.
+
+    Without this a round only knows about the attempt just discarded, so the same
+    losing idea comes back every few rounds.
+    """
+    out = []
+    for rec in reversed(history):
+        if rec["n"] == base["n"] or rec["match"] >= base["match"] - 0.05:
+            continue
+        if not (rec.get("changes") or "").strip():
+            continue
+        out.append({"n": rec["n"], "match": rec["match"], "changes": rec["changes"]})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def iteration_base(history):
@@ -664,17 +1064,21 @@ def iteration_base(history):
     return best, (latest if latest["n"] != best["n"] else None)
 
 
-def _iterate_prompt(run, n, code, report, extra, discarded=None):
+def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
+                    can_read_files=True):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
     parts = [
         "You are making {} code look exactly like a design.".format(run["kind"]),
         "",
-        "Look at all three images before you change anything:",
-        "  Read {} (the design)".format(ref),
-        "  Read {} (your last attempt, rendered)".format(att),
-        "  Read {} (the difference; bright red is where you missed)".format(dif),
+        ("Look at all three images before you change anything:" if can_read_files
+         else "Three images are attached, in this order:"),
+        ("  Read {} (the design)" if can_read_files else "  {} the design").format(ref),
+        ("  Read {} (your last attempt, rendered)" if can_read_files
+         else "  {} your last attempt, rendered").format(att),
+        ("  Read {} (the difference; bright red is where you missed)" if can_read_files
+         else "  {} the difference; bright red is where you missed").format(dif),
         "",
         "The page is {}x{} CSS pixels on a {} ground.".format(
             run.get("css_width", run["width"]), run.get("css_height", run["height"]),
@@ -691,6 +1095,12 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None):
                 discarded.get("changes") or "not recorded"),
             "",
         ]
+    if rejected:
+        parts.append("Changes already tried that lowered the score. Do not try any of these again:")
+        for r in rejected:
+            parts.append("  attempt {} scored {:.1f}: {}".format(
+                r["n"], r["match"], " ".join(r["changes"].split())[:400]))
+        parts.append("")
     parts += [
         "The attempt to improve is:",
         "-----",
@@ -700,7 +1110,19 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None):
         "Return improved {} code for the same canvas.".format(run["kind"]),
         "Change the things the report names, keep what already scores well, and do not",
         "restructure working parts for their own sake. Return the complete source, not a patch.",
+        "",
     ]
+    if report["match"] < 60:
+        parts += [
+            "The page is still far from the design, so fix everything the report names this round,",
+            "including whole elements that are missing or built the wrong way.",
+        ]
+    else:
+        parts += [
+            "The page is close now, so change at most three things, each on a specific element the",
+            "report names or the difference map shows. Never apply one rule to every element (for",
+            "example a line height on all text): at this distance that breaks what already matches.",
+        ]
     if run["kind"] == "canvas":
         parts.append("The code is a function body with ctx, W and H already in scope.")
     if extra:
@@ -708,7 +1130,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None):
     return "\n".join(parts)
 
 
-def run_iteration(slug, extra=""):
+def run_iteration(slug, extra="", agent=None):
     """One round: ask headless Claude Code for a better attempt, render it, score it."""
     run = _load_run(slug)
     if run["kind"] == "url":
@@ -725,26 +1147,24 @@ def run_iteration(slug, extra=""):
     code = (d / "attempts" / "{:03d}.code".format(n)).read_text(encoding="utf-8")
     report = base["report"]
 
-    prompt = _iterate_prompt(run, n, code, report, extra, discarded)
-    cmd = ["claude", "-p", prompt, "--output-format", "json",
-           "--model", os.environ.get("SPOT_ON_MODEL", "sonnet"),
-           "--json-schema", json.dumps(ITERATE_SCHEMA)]
-    # Explicit UTF-8: the Windows default codepage turns a model's arrows, quotes and
-    # dashes into mojibake, in its notes and in the generated page alike.
-    proc = subprocess.run(cmd, cwd=str(d), capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=600)
-    if proc.returncode != 0 and not proc.stdout.strip():
-        raise RuntimeError("claude exited {}: {}".format(proc.returncode, (proc.stderr or "")[-400:]))
+    chosen = pick_agent(agent)
+    can_read_files = bool(_cli_for(chosen))
+    prompt = _iterate_prompt(run, n, code, report, extra, discarded,
+                             rejected_changes(history, base), can_read_files)
+    images = [d / "reference.png",
+              d / "attempts" / "{:03d}.png".format(n),
+              d / "attempts" / "{:03d}-diff.png".format(n)]
+    raw = run_agent(chosen, prompt, d, images)
 
-    new_code, changes = _parse_iteration(proc.stdout)
+    new_code, changes = _parse_iteration(raw)
     if not new_code:
-        raise RuntimeError("no code came back from claude")
+        raise RuntimeError("no code came back from {}".format(AGENT_LABELS[chosen]))
     if not _looks_like(new_code, run["kind"]):
         # Usage limits, refusals and errors all come back as ordinary prose. Rendering
         # that as if it were code silently poisons the run, so stop and show it instead.
-        raise RuntimeError("claude did not return {} code. It said: {}".format(
-            run["kind"], " ".join(new_code.split())[:240]))
-    return record_attempt(slug, new_code, source="claude", changes=changes)
+        raise RuntimeError("{} did not return {} code. It said: {}".format(
+            AGENT_LABELS[chosen], run["kind"], " ".join(new_code.split())[:240]))
+    return record_attempt(slug, new_code, source=chosen, changes=changes)
 
 
 def _looks_like(code, kind):
@@ -1179,13 +1599,22 @@ PAGE_HTML = r"""<!doctype html>
         </div>
 
         <div class="rule22" style="margin-top: 20px;"></div>
+        <div id="no-agent" hidden style="padding-top: 14px; max-width: 580px;">
+          <div style="font-size: 13px; font-weight: 500;">No AI is set up here</div>
+          <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">The loop can use Chrome's own built-in model (no account, no cost), Claude Code, the Codex CLI, the Gemini CLI, an <span class="mono">ANTHROPIC_API_KEY</span> or <span class="mono">OPENAI_API_KEY</span>, or a local Ollama. None of those is here, so copy the feedback packet below into whatever you do use, and paste the result back.</div>
+        </div>
         <div id="url-loop-note" hidden style="padding-top: 14px; max-width: 580px;">
           <div style="font-size: 13px; font-weight: 500;">Letting the model iterate</div>
           <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">A running page's code lives in your repo, so the loop runs in the session that edits it. Ask that session to use <span class="mono">/spot-on</span>: it scores the page after each change, reads the difference map, and its attempts land in this history.</div>
         </div>
         <div id="iterate-wrap" style="padding-top: 14px;">
-          <div style="font-size: 13px; font-weight: 500;">Let Claude iterate</div>
+          <div style="font-size: 13px; font-weight: 500;">Let an AI iterate</div>
           <div style="font-size: 12px; color: var(--muted); margin-top: 2px; max-width: 560px;">Each round shows the model the design, its own render and the difference map, hands it the report below, and scores whatever comes back.</div>
+          <div id="agent-row" style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+            <span class="mono" style="font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);">using</span>
+            <select id="agent" class="text-input" style="height: 28px; font-size: 12px; width: 190px;" title="Whichever of these is installed or configured on this machine. Set SPOT_ON_MODEL to choose the model."></select>
+            <span id="agent-note" class="hint" style="margin-top: 0;"></span>
+          </div>
           <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap;">
             <button type="button" id="iterate" class="btn-fill" disabled><span id="iter-spin" hidden style="width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(82,121,111,0.3); border-top-color: var(--accent); animation: mlSpin .7s linear infinite; display: inline-block; margin-right: 7px; vertical-align: -1px;"></span><span id="iter-label">Run 3 rounds</span></button>
             <select id="rounds" class="text-input" style="width: 104px; height: 32px;">
@@ -1251,6 +1680,7 @@ PAGE_HTML = r"""<!doctype html>
               <div id="score-num" class="score-big">0</div>
               <div class="mono" style="font-size: 10px; color: var(--muted); letter-spacing: 0.16em; text-transform: uppercase; margin-top: 6px;">match / 100</div>
               <div id="score-delta" class="mono" style="font-size: 12px; margin-top: 6px; font-variant-numeric: tabular-nums;"></div>
+              <div id="score-best" class="mono" style="font-size: 11px; margin-top: 3px;"></div>
             </div>
             <div class="vrule" style="height: 108px;"></div>
             <div id="components" style="min-width: 0;"></div>
@@ -1363,6 +1793,94 @@ $("url-input").addEventListener("keydown", function (e) {
 });
 
 // ---- reference and runs ----
+// Chrome ships a small model (Gemini Nano) behind LanguageModel. It costs nothing
+// and needs no account, so it is offered whenever the browser has it ready.
+var BROWSER_AGENT = "chrome-builtin";
+function browserModel() { return (typeof LanguageModel !== "undefined") ? LanguageModel : null; }
+function browserAgentReady() {
+  var lm = browserModel();
+  if (!lm || !lm.availability) return Promise.resolve(null);
+  return lm.availability({ expectedInputs: [{ type: "image" }] })
+    .then(function (state) { return state === "unavailable" ? null : state; })
+    .catch(function () { return null; });
+}
+
+function extractCode(text) {
+  var fenced = /```(?:[a-zA-Z]+)?\s*([\s\S]*?)```/.exec(text || "");
+  return (fenced ? fenced[1] : (text || "")).trim();
+}
+
+function runBrowserRound(note) {
+  var lm = browserModel();
+  if (!lm) return Promise.reject(new Error("this browser has no built-in model"));
+  var payload;
+  return api("/prompt?run=" + encodeURIComponent(state.run.slug) +
+             (note ? "&instructions=" + encodeURIComponent(note) : ""))
+    .then(function (d) {
+      payload = d;
+      return Promise.all(d.images.map(function (f) {
+        return fetch(imgUrl(f)).then(function (r) { return r.blob(); });
+      }));
+    })
+    .then(function (blobs) {
+      return lm.create({
+        expectedInputs: [{ type: "text", languages: ["en"] }, { type: "image" }],
+        expectedOutputs: [{ type: "text", languages: ["en"] }],
+        monitor: function (m) {
+          m.addEventListener("downloadprogress", function (e) {
+            setStatus("Downloading the browser model, " + Math.round(e.loaded * 100) + "%. This happens once.");
+          });
+        }
+      }).then(function (session) {
+        var content = [{ type: "text", value: payload.prompt }];
+        blobs.forEach(function (b) { content.push({ type: "image", value: b }); });
+        return session.prompt([{ role: "user", content: content }]).then(function (answer) {
+          session.destroy && session.destroy();
+          return answer;
+        }, function (err) {
+          session.destroy && session.destroy();
+          throw err;
+        });
+      });
+    })
+    .then(function (answer) {
+      var code = extractCode(answer);
+      if (!code) throw new Error("the browser model returned no code");
+      return api("/attempt", { run: state.run.slug, code: code, source: BROWSER_AGENT,
+                               changes: "written by the browser's built-in model" });
+    });
+}
+
+function loadAgents() {
+  return Promise.all([api("/agents"), browserAgentReady()]).then(function (both) {
+    var agents = both[0], browserState = both[1];
+    var sel = $("agent");
+    sel.innerHTML = "";
+    var usable = agents.filter(function (a) { return a.available; });
+    if (browserState) {
+      usable.push({ id: BROWSER_AGENT, available: true,
+                    label: "Chrome built-in" + (browserState === "available" ? "" : ", downloads once") });
+    }
+    usable.forEach(function (a) {
+      var o = document.createElement("option");
+      o.value = a.id;
+      o.textContent = a.label;
+      sel.appendChild(o);
+    });
+    state.agents = usable.length;
+    $("agent-row").hidden = usable.length === 0;
+    $("iterate").hidden = usable.length === 0;
+    $("rounds").hidden = usable.length === 0;
+    $("iter-note").hidden = usable.length === 0;
+    $("agent-note").textContent = usable.length > 1 ? "others found: " +
+      usable.slice(1).map(function (a) { return a.label; }).join(", ") : "";
+    if (usable.length === 0) {
+      $("no-agent").hidden = false;
+    }
+    return usable;
+  });
+}
+
 function loadRuns() {
   return api("/runs").then(function (runs) {
     var list = $("runs-list");
@@ -1532,20 +2050,44 @@ $("render").addEventListener("click", function () {
 });
 
 // ---- iterate ----
+var roundTimer = null;
+function startRoundClock(round, total) {
+  var t0 = Date.now();
+  clearInterval(roundTimer);
+  function tick() {
+    var s = Math.round((Date.now() - t0) / 1000);
+    setStatus("Round " + round + " of " + total + ", " +
+      Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2) +
+      " elapsed. Claude is looking at the design, its own render and the difference map. " +
+      "A round usually takes two to five minutes.");
+  }
+  tick();
+  roundTimer = setInterval(tick, 1000);
+}
+function stopRoundClock() { clearInterval(roundTimer); roundTimer = null; }
+
 function iterateRounds(left, note) {
   if (left <= 0 || state.stopping) {
+    stopRoundClock();
     $("iter-spin").hidden = true;
     $("iter-stop").hidden = true;
     $("iter-label").textContent = "Run " + $("rounds").value + " rounds";
     $("iterate").disabled = !state.attempts.length;
     busy(false);
-    setStatus(state.stopping ? "Stopped." : "Iteration finished. Best so far: " + (state.run.best_match || 0).toFixed(1) + ".");
+    var best = state.run.best_match || 0;
+    var beat = state.startBest === undefined || best > state.startBest + 0.05;
+    setStatus(state.stopping ? "Stopped." : (beat
+      ? "Finished. Best is now " + best.toFixed(1) + " (attempt " + state.run.best_attempt + ")."
+      : "Finished. Nothing beat " + best.toFixed(1) + " (attempt " + state.run.best_attempt +
+        "), which is still the best. Try a steer naming what is still off, or fix one thing by hand and screenshot again."));
     state.stopping = false;
     return;
   }
   $("iter-label").textContent = left + " to go";
-  setStatus("Claude is looking at the design and the difference map...");
-  api("/iterate", { run: state.run.slug, instructions: note })
+  startRoundClock(state.rounds - left + 1, state.rounds);
+  ($("agent").value === BROWSER_AGENT
+    ? runBrowserRound(note)
+    : api("/iterate", { run: state.run.slug, instructions: note, agent: $("agent").value }))
     .then(function (rec) {
       state.attempts.push(rec);
       state.sel = rec.n;
@@ -1567,11 +2109,13 @@ function iterateRounds(left, note) {
 $("iterate").addEventListener("click", function () {
   if (!state.run || !state.attempts.length) return;
   state.stopping = false;
+  state.rounds = parseInt($("rounds").value, 10);
   $("iter-spin").hidden = false;
   $("iter-stop").hidden = false;
   $("iterate").disabled = true;
   busy(true, "Iterating");
-  iterateRounds(parseInt($("rounds").value, 10), $("iter-note").value.trim());
+  state.startBest = state.run.best_match || 0;
+  iterateRounds(state.rounds, $("iter-note").value.trim());
 });
 $("iter-stop").addEventListener("click", function () {
   state.stopping = true;
@@ -1660,6 +2204,18 @@ function renderScore() {
     d.textContent = (diff >= 0 ? "+" : "") + diff.toFixed(1) + " from " + prevRec.n;
     d.style.color = diff >= 0 ? "var(--accent)" : "#C2703F";
   } else { d.textContent = "first attempt"; d.style.color = "var(--faint)"; }
+
+  var bestEl = $("score-best");
+  var best = state.run && state.run.best_match >= 0 ? state.run.best_match : null;
+  if (best !== null && state.run.best_attempt !== rec.n) {
+    bestEl.textContent = "best " + best.toFixed(1) + " (attempt " + state.run.best_attempt + "), this one was not kept";
+    bestEl.style.color = "var(--muted)";
+  } else if (best !== null) {
+    bestEl.textContent = "best so far";
+    bestEl.style.color = "var(--accent)";
+  } else {
+    bestEl.textContent = "";
+  }
 
   var comp = $("components");
   comp.innerHTML = "";
@@ -1751,6 +2307,13 @@ function renderHistory() {
       badge.className = "best-badge";
       badge.textContent = "best";
       row.appendChild(badge);
+    } else if (state.run && state.run.best_match > rec.match && rec.source !== "manual") {
+      var skipped = document.createElement("span");
+      skipped.className = "best-badge";
+      skipped.style.cssText = "background: var(--fill); color: var(--muted);";
+      skipped.textContent = "not kept";
+      skipped.title = "Scored below the best attempt, so the next round started from the best instead";
+      row.appendChild(skipped);
     }
     var open = document.createElement("button");
     open.type = "button";
@@ -1905,6 +2468,7 @@ function renderAll() {
 
 renderTrack();
 syncKindUi();
+loadAgents();
 renderAll();
 loadRuns().then(function (runs) {
   if (runs.length) openRun(runs[0].slug);
@@ -1954,6 +2518,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_bytes(body.encode("utf-8"), "text/html; charset=utf-8")
             elif path == "/runs":
                 self._send_json(200, _list_runs())
+            elif path == "/agents":
+                self._send_json(200, available_agents())
+            elif path == "/prompt":
+                # The same round prompt the server loop uses, for an AI that runs in
+                # the page (Chrome's built-in model) instead of on this machine.
+                q = self._query()
+                run = _load_run(q["run"])
+                history = _attempts(q["run"])
+                if not history:
+                    raise ValueError("render a first attempt before iterating")
+                base, discarded = iteration_base(history)
+                d = _run_dir(q["run"])
+                code = (d / "attempts" / "{:03d}.code".format(base["n"])).read_text(encoding="utf-8")
+                self._send_json(200, {
+                    "attempt": base["n"],
+                    "match": base["match"],
+                    "prompt": _iterate_prompt(run, base["n"], code, base["report"],
+                                              q.get("instructions", ""), discarded,
+                                              rejected_changes(history, base), False),
+                    "images": ["reference.png",
+                               "attempts/{:03d}.png".format(base["n"]),
+                               "attempts/{:03d}-diff.png".format(base["n"])],
+                })
             elif path == "/run":
                 q = self._query()
                 run = _load_run(q["run"])
@@ -2007,9 +2594,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True})
             elif path == "/attempt":
                 self._send_json(200, record_attempt(payload["run"], payload["code"],
-                                                    source=payload.get("source", "manual")))
+                                                    source=payload.get("source", "manual"),
+                                                    changes=payload.get("changes", "")))
             elif path == "/iterate":
-                self._send_json(200, run_iteration(payload["run"], payload.get("instructions", "")))
+                self._send_json(200, run_iteration(payload["run"], payload.get("instructions", ""),
+                                                   payload.get("agent") or None))
             elif path == "/kind":
                 run = _load_run(payload["run"])
                 run["kind"] = payload["kind"] if payload["kind"] in KINDS else run["kind"]
