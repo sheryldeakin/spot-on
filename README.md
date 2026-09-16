@@ -92,22 +92,22 @@ A design with a circle and a square, and seven attempts at it, each rendered by 
 <!-- calibration:start -->
 ```
 case    match  structure  shape  colour  detail  coverage  what it is
-exact    97.7       95.6   99.1    99.8    98.1     100.0  identical to the design
-close    88.8       85.4   94.6    99.7    73.6     100.0  3px offset and a slight hue shift
-half     80.7       88.5   84.1    83.8    84.9      85.0  the square left out entirely
-hue      84.6       95.3   99.1    35.0    98.2     100.0  right geometry, wrong colour
-shift    51.2       65.3   46.7    99.8     0.0      71.8  right colours, 40px to the right
-wrong    32.8       62.8   42.7    24.0     0.0      52.0  one wrong shape in the wrong place
-blank    14.5       60.3    0.0     0.1     0.0       0.0  nothing drawn
+exact    97.7       95.9   99.0   100.0    97.7     100.0  identical to the design
+close    89.2       86.2   94.5    99.9    73.9     100.0  3px offset and a slight hue shift
+half     80.4       89.1   83.0    84.7    84.1      83.9  the square left out entirely
+hue      85.1       95.6   99.0    37.2    97.7     100.0  right geometry, wrong colour
+shift    52.2       66.9   47.6   100.0     0.0      72.4  right colours, 40px to the right
+wrong    33.8       64.8   42.9    26.0     0.0      51.9  one wrong shape in the wrong place
+blank    15.0       62.4    0.0     0.1     0.0       0.0  nothing drawn
 
 a page-like design: a full-bleed gradient with a card and text on it
 
 case    match  structure  shape  colour  detail  coverage  what it is
 same    100.0      100.0  100.0   100.0   100.0     100.0  identical to the design
-deeper   84.1       99.9   62.7    67.4   100.0     100.0  same content, gradient a little stronger
-strong   69.5       98.3   22.2    48.5    99.7     100.0  same content, gradient clearly stronger
-flatbg  100.0      100.0  100.0   100.0   100.0     100.0  same content, no gradient at all
-nocard   99.9       99.8  100.0   100.0    99.9     100.0  right gradient, the card left out
+deeper   95.8       99.4  100.0    80.3    99.9     100.0  same content, gradient a little stronger
+strong   91.7       98.2   99.8    62.3    99.7     100.0  same content, gradient clearly stronger
+flatbg   98.5       99.9  100.0    92.9   100.0     100.0  same content, no gradient at all
+nocard   58.2       97.3   21.6    93.7    99.7      36.6  right gradient, the card left out
 ```
 <!-- calibration:end -->
 

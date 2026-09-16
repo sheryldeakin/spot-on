@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 HOST = "127.0.0.1"
 PORT = 7265
@@ -57,7 +57,7 @@ KINDS = ("url", "html", "svg", "canvas")
 SCALES = (1.0, 1.25, 1.5, 2.0)
 MAX_PIXELS = 6_000_000   # designs bigger than this are scaled down before scoring
 SSIM_WINDOW = 7          # odd; box window for the structural term
-INK_THRESHOLD = 28       # colour distance from the page ground that counts as drawn
+INK_EDGE = 6.0           # local contrast that counts as the edge of drawn content
 
 
 # ---------------------------------------------------------------- run storage
@@ -343,8 +343,35 @@ def _ground_colour(rgb):
     return np.median(ring, axis=0)
 
 
-def _ink_mask(rgb, ground):
-    return np.sqrt(((rgb - ground) ** 2).sum(axis=2)) > INK_THRESHOLD
+def _ink_mask(rgb):
+    """The drawn content: what has local contrast, not what is far from one colour.
+
+    Measuring distance from a single page colour fails in both directions on a real
+    page, and the calibration cases show each one. A full-bleed gradient that is only
+    a little too saturated crosses the threshold everywhere, so a background nobody
+    would call content is measured as content: on one rebuilt page the design read as
+    8.6% drawn and the attempt as 70.3%, which pinned shape at 10.7 for a whole run
+    and sent the model to fix box geometry that was already right. In the other
+    direction a white card on an off-white page sits 19.5 from the ground, under the
+    threshold, so leaving out the largest element on the page cost 0.1 points.
+
+    Local contrast answers both. A smooth gradient has almost none however saturated
+    it is, so it never registers, and a pale panel still has an edge against whatever
+    it sits on, so filling what those edges enclose recovers the panel. A gradient
+    that is genuinely wrong is still reported, by colour, which is the part whose job
+    that is; shape no longer charges for it a second time.
+    """
+    from scipy import ndimage
+
+    im = Image.fromarray(rgb.astype(np.uint8)).convert("L")
+    g = np.asarray(im.filter(ImageFilter.GaussianBlur(0.6)), dtype=np.float64)
+    gx = np.zeros_like(g)
+    gy = np.zeros_like(g)
+    gx[:, 1:-1] = g[:, 2:] - g[:, :-2]
+    gy[1:-1, :] = g[2:, :] - g[:-2, :]
+    edges = np.hypot(gx, gy) > INK_EDGE
+    edges = ndimage.binary_closing(edges, structure=np.ones((3, 3)), iterations=2)
+    return ndimage.binary_fill_holes(edges)
 
 
 def _top_colours(rgb, mask, limit=6):
@@ -724,7 +751,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
     ssim_map = _ssim(g_ref, g_att)
 
     ground = _ground_colour(ref)
-    m_ref, m_att = _ink_mask(ref, ground), _ink_mask(att, ground)
+    m_ref, m_att = _ink_mask(ref), _ink_mask(att)
     m_union = np.logical_or(m_ref, m_att)
     union = m_union.sum()
     inter = np.logical_and(m_ref, m_att).sum()
@@ -750,7 +777,18 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
     ssim = float(ssim_map[near_ink].mean()) if near_ink.sum() >= 64 else float(ssim_map.mean())
 
     ref_cols, att_cols = _top_colours(ref, m_ref), _top_colours(att, m_att)
-    colour_dist = _palette_distance(ref_cols, att_cols)
+    palette_dist = _palette_distance(ref_cols, att_cols)
+
+    # The page behind the content is compared too, and separately. The palette is
+    # sampled inside the drawn content, and the content no longer includes the
+    # background now that the mask reads local contrast, so without this a rebuild
+    # could put the whole page on the wrong colour and pay nothing for it: a clearly
+    # over-saturated gradient scored 99.2. Whichever is worse governs, because a right
+    # background does not excuse wrong text and right text does not excuse a wrong page.
+    behind = ~m_union
+    background_dist = (float(np.sqrt(((ref[behind] - att[behind]) ** 2).sum(axis=1)).mean())
+                       if behind.sum() >= 64 else 0.0)
+    colour_dist = max(palette_dist, background_dist)
     both = np.logical_and(m_ref, m_att)
     overlap_dist = (float(np.sqrt(((ref[both] - att[both]) ** 2).sum(axis=1)).mean())
                     if both.sum() >= 16 else colour_dist)
