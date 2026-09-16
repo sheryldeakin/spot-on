@@ -72,11 +72,15 @@ Keys and accounts stay on your machine. The page never talks to any provider its
 |---|---|---|---|
 | structure | 40% | SSIM over 7px windows, on the drawn content | border radius, borders, shadows, font size or line height |
 | shape | 25% | overlap of the drawn area with the design's, as intersection over union | width, height, padding, gap or alignment |
-| colour | 20% | distance between the two palettes, in both directions | a background, text or button colour is wrong or missing |
+| colour | 20% | distance between the two palettes, in both directions, and between the pages behind them; whichever is worse | a background, text or button colour is wrong or missing |
 | detail | 15% | correlation of edge density over a 9px window | missing text, icons or borders, or the wrong font weight |
 | coverage | caps the total | share of the design with something drawn within 6px of it | an element that was never built |
 
+Four of those work on the **drawn content**, which means whatever has local contrast: an edge, and the region its edges enclose. A full-bleed background gradient has almost none however strong it is, so it is not content, and a gradient that is wrong is reported by colour instead.
+
 The four weighted parts make a subtotal, and coverage scales it: `match = subtotal x (0.6 + 0.4 x coverage)`. A page that leaves out a fifth of the design can reach at most 92% of what it would otherwise score.
+
+**The number is for comparing attempts with each other, not for reading as a percentage of visual similarity.** It says whether this attempt is closer than the last one and which part got worse. What a real page can reach depends on how much text it carries, whether the design's font is installed, and how much of it is photography or artwork the code cannot reproduce. There is no passing mark, and setting one is how a loop ends up buying rounds after it has stopped climbing.
 
 Each of these choices fixed a case where the score disagreed with what the eye sees:
 
@@ -84,10 +88,14 @@ Each of these choices fixed a case where the score disagreed with what the eye s
 - **Colour compares palettes, not pixels.** Per-pixel colour over the drawn area was really measuring position, so a three pixel offset was punished three times.
 - **Detail is blurred before it is compared.** Without that, one pixel of antialiasing difference read as badly as missing detail, and a near-identical copy scored in the fifties.
 - **Coverage caps the score.** Even with the three fixes above, a design with one element removed could still edge out a close copy of the whole thing.
+- **Content is found by local contrast, not by distance from one page colour.** Measuring distance from a single ground colour failed both ways on real pages: a background gradient a little too saturated crossed the threshold everywhere and was measured as content, which pinned shape near 10 for an entire run and sent the model to fix box geometry that was already right; and a white card on an off-white page fell under the threshold, so leaving out the largest element on the page cost a tenth of a point. The page-like calibration cases below hold each of those directions down.
+- **The page behind the content is compared separately.** Once the background was out of the mask it was out of the palette too, and a clearly over-saturated gradient scored 99.2. Colour now takes the worse of the content palette and the page behind it, so the background is charged once, to the part that means colour.
 
 ### Calibration
 
-A design with a circle and a square, and seven attempts at it, each rendered by Chrome. Regenerate with `python scripts/calibrate.py`.
+Two designs. The first is a circle and a square on flat white, with seven attempts at it. The second is closer to a real page, a card and some text on a full-bleed gradient, and each of its five cases changes one thing: the gradient gets stronger, the gradient goes away, or the card is left out. Both are rendered by Chrome. Regenerate with `python scripts/calibrate.py`.
+
+Flat shapes on flat white never exercise the background, and the background is where the measure decides what counts as content, which is why the second design exists. Its cases pull in opposite directions on purpose: `deeper` and `strong` change nothing a reader would call content, so they have to stay cheap, while `nocard` removes the largest element on the page, so it has to stay expensive. Any change to how content is found has to answer both at once.
 
 <!-- calibration:start -->
 ```
@@ -111,7 +119,7 @@ nocard   58.2       97.3   21.6    93.7    99.7      36.6  right gradient, the c
 ```
 <!-- calibration:end -->
 
-Do not chase 100. Text rendering and antialiasing leave a floor a few points below it, and the report says so when that is all that remains.
+Do not chase 100, and do not set a target at all. Those numbers come from designs built to be reproducible exactly; a real page carries text in a font that may not be installed, icons, photographs and artwork, and a close rebuild of one lands far lower than a close copy of a circle. Stop when the climb flattens, not when a number is reached.
 
 ## A worked example
 
@@ -119,23 +127,23 @@ Do not chase 100. Text rendering and antialiasing leave a floor a few points bel
 
 <!-- demo:start -->
 ```
-attempt  match  structure  shape  colour  detail  coverage  source   what changed
-      1   19.9       28.8   13.1    51.6     1.1      46.9  manual   hand-written first pass
-      2   56.1       41.3   67.2    98.4    24.5      97.6  claude   Rebuilt to match the actual design: added the missing "PRICING" eyebrow, pushed the header/cards block down (~28-38px) to fix the vertical offset, made the Team card a dark-green (#183830) featured panel with a gold "Most popular" pill and gold CTA button, switched price format to "$X / month", tightened card gap to ~12px, and grew card padding/line-height so card and button heights match the reported box sizes.
-      3   47.7       35.4   61.3    98.4     0.0      92.4  claude   Added 'Liberation Sans' to the font stack (metric-compatible with Arial) to fix the widespread ~4-13% text/box overwidth the report flagged, which points to a Linux font-fallback substitution; tightened header spacing (padding-top 44→36, title/subtitle margins 10→8, row margin-top 28→22) and card internals (padding 24→22, line-height 1.8→1.7, feature/button/price margins trimmed) to remove the ~14-23px vertical overage below the fold, especially in the Team card.
-      4   52.3       37.3   65.4    98.5    19.4      92.6  claude   Dropped font-weight 800→700 on the title and price numbers (800 has no real face in most fallback sans-serif fonts and was being synthesized as an over-wide, over-black faux-bold, the clearest visual difference vs the reference); trimmed price-block margin (14→10), feature-list margin (16→12) and line-height (1.8→1.6), and button margin-top (20→14) to remove the cumulative vertical excess inside each card that grows from ~6px near the price line to ~23px by the button, without touching header spacing (which already lines up correctly against the reference).
-      5   58.3       40.9   68.4    98.4    37.8      97.8  claude   Replaced flexbox `gap:12px` with per-card `margin-right:12px` (gap unsupported in the render engine would add ~8px extra width per card, matching the reported 186-vs-178 button width discrepancy exactly: 24px unswallowed gap / 3 cards); trimmed row margin-top 28→22 and internal card spacing (price margin 14→11, feature margin 16→13, line-height 1.8→1.65, button margin-top 20→15, feature font-size 13→12, Team badge padding 4/12→3/10) to remove the cumulative vertical excess without touching font-weight or the header block, which already score well.
-      6   54.2       39.2   66.8    98.5    23.2      93.7  claude   Fixed the vertical rhythm causing the 150px-down offset (padding-top 44→48, subtitle margin 10→4, card-row margin 22→32, tuned from measured pixel deltas in reference vs 005.png rather than the earlier all-at-once attempt-4 trims); switched title and all three price numbers from font-weight 800→700 in isolation (no accompanying margin cuts this time) since 800 has no real Arial face and was being synthesized into an over-wide faux-bold, which explains the reported overwidth on both the title and the price text; widened the card gap 12px→20px to shrink the two outlined buttons toward the reported 179px target and shift the Team/Business cards right by ~4px to correct their left-shift.
+attempt  match  structure  shape  colour  detail  coverage  round tried     source   what changed
+      1   48.3       51.7   60.0    79.3    13.4      75.5  -               manual   hand-written first pass
+      2   66.4       59.2   75.9    99.3    27.0      99.6  66.4/64.3/61.8  claude   Fixed the biggest miss: the middle "Team" card is dark green (#183830) with a gold "Most popular" badge and gold CTA button, not a white card with a green outline, matching the reference exactly. Also switched the outer two buttons from filled green to white/outlined (as in the design), changed "$9/mo" to "$9 / month", increased header spacing and card padding/line-height to push the card row and buttons down to match the design's vertical position, and added the missing "PRICING" eyebrow label.
+      6   71.1       58.6   88.2    99.3    39.1      99.5  71.1/67.5/67.3  claude   Raised top padding 36→43px to correct the 7px global downward shift; compacted the Team card's padding/margins/line-height to cut ~50-60px of excess height; narrowed Starter/Business card side padding (26→16px) and tightened their pre-button spacing/line-height so the "Choose" buttons widen toward the reported 178px and move up/left toward their design position.
+      8   74.7       61.4   90.9    99.4    51.3      99.5  74.7/71.0/66.5  claude   Cut Starter/Business "Choose" button margin-top 14→5px to lift those buttons the reported 9px; removed Team card's bottom padding (20→0px) to cut its reported 20px excess height without moving any content already positioned correctly.
+     11   69.4       56.7   85.5    99.6    40.3      97.9  69.4/67.1/64.9  claude   Set the title to a serif font-family only (isolated, addressing the total title mismatch); cut Starter/Business price-row margin-top 16→4px to lift that line ~13px toward its design position; cut Team's button margin-top 14→6px to shed most of its 11px excess card height and pull its button up toward its design position.
 ```
 <!-- demo:end -->
 
 What the run shows:
 
 - **The first report named the cause, not the symptom.** It did not say everything is wrong. It said content sits about 38px higher than the design from roughly 50px down, and that something above that point is missing. That something was the small PRICING label.
-- **A confident fix made it worse, and the number caught it.** Round 3 decided the text was in a substituted font and added `Liberation Sans` to the stack. It scored 47.7, down from 56.1. The loop discarded it, told the next round what had failed, and round 5 reached the best score of the run.
+- **Taking the best of three is not a formality.** The `round tried` column is what all three rewrites of that round scored. The third round drew 74.7, 71.0 and 66.5 from one prompt, more than eight points apart, and the loop kept the top one. No round in this run drew closer than 3.8 points apart.
+- **A confident fix made it worse, and the number caught it.** The last round decided the title was set in a serif face and changed it, on its own, to isolate the effect. Its best rewrite scored 69.4, below the best at 74.7, so the whole round was discarded, and attempt 8 reached the best score of the run.
 - **Later rounds work element by element**, because that is what the report gives them: which text is a few percent too wide, which card is too tall, what sits a few pixels off.
 
-**The numbers move between runs.** Rendering and scoring do not: the same code scores the same, and three renders of one page differed by zero pixels. The model does. Each round is a fresh sample, and the loop is a greedy climb, so the big rebuild in round 2 sets a ceiling that later rounds only nudge. Runs from this same starting point have finished anywhere from the high fifties to the low seventies. Taking the best of three rewrites per round is the lever against that, at three times the cost; the run above was one rewrite per round.
+**The numbers move between runs.** Rendering and scoring do not: the same code scores the same, and three renders of one page differed by zero pixels. The model does, and the spread inside a single round is the size of it. Each round is a fresh sample and the loop is a greedy climb, so the big rebuild in the first round sets a ceiling that later rounds only nudge. Taking the best of three rewrites per round is the lever against that, at three times the cost, and the spread column is what it is buying.
 
 ## Running it
 
@@ -160,6 +168,7 @@ It prints the report, the change from the previous attempt, the best score so fa
 
 ## Limits
 
+- **A rewrite can quietly put the render on the network.** Asked to match a typeface, a model will reach for a webfont and add an `@import` from a font host. The page then renders differently depending on whether that request succeeds, so a score can move without the code changing. If runs need to be reproducible offline, say so in the extra instruction, or install the font locally and name it.
 - **Fonts.** A model cannot reliably read a typeface off a screenshot. The report says the font is wrong only when text that sits in the right place still has the wrong letter shapes, which is the honest evidence for it, but if the design's font is known, say so up front and skip the guessing. If the font is not installed at all, text will never line up exactly and the ceiling drops with how much text the page has.
 - **Moving content is excluded, and the exclusion is measured.** Chrome renders on a virtual clock, so two captures of the same page at the same settle time land at the same point in an animation: a real app with a drifting hero and a 3D avatar scored 99.3 against itself with nothing excluded. What does move (random content, video, live data) is found on the first attempt of a running page, by screenshotting it three times and comparing the last two, and is then excluded from every score and painted slate blue in the difference map. On that app the moving area was 0.65% of the page and the ceiling 100.0. The first capture is thrown away on purpose: a cold page is still loading fonts and lazy chunks, and measuring that would mask out real content for the whole run.
 - **A page that moves everywhere cannot be scored.** If more than 60% of it changes between captures (a video background, a full-bleed animation), Spot On excludes nothing, says so, and tells you the number is mostly measuring motion. Excluding that much would leave nothing to compare and every attempt would come back a meaningless 100.

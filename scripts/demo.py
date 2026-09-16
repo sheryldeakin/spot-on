@@ -27,17 +27,35 @@ spec.loader.exec_module(so)
 
 RUN = "pricing demo"
 W, H = 760, 500
-HEADER = "attempt  match  structure  shape  colour  detail  coverage  source   what changed"
+HEADER = ("attempt  match  structure  shape  colour  detail  coverage  round tried     "
+          "source   what changed")
 
 
-def format_line(rec):
+def round_spread(rec, everything):
+    """What the other rewrites in this round scored, best first.
+
+    Only the winner of each round is listed in the table, so without this the
+    README has no evidence for what taking the best of three actually buys. Each
+    attempt records the attempt its round built on, which is enough to find its
+    siblings again from the run on disk.
+    """
+    base = rec.get("candidate_of")
+    if base is None:
+        return "-"
+    sibs = sorted((a["match"] for a in everything if a.get("candidate_of") == base),
+                  reverse=True)
+    return "/".join("{:.1f}".format(s) for s in sibs)
+
+
+def format_line(rec, everything=()):
     c = rec["report"]["components"]
     note = " ".join((rec.get("changes") or "hand-written first pass").split())
     # The model's notes are quoted in the README, which uses no em or en dashes.
     note = note.replace(" \u2014 ", ", ").replace("\u2014", ", ").replace("\u2013", "-")
-    return "{:>7}  {:>5.1f}  {:>9.1f}  {:>5.1f}  {:>6.1f}  {:>6.1f}  {:>8.1f}  {:<7}  {}".format(
+    return ("{:>7}  {:>5.1f}  {:>9.1f}  {:>5.1f}  {:>6.1f}  {:>6.1f}  {:>8.1f}  {:<14}  "
+            "{:<7}  {}").format(
         rec["n"], rec["match"], c["structure"], c["shape"], c["colour"], c["detail"],
-        c["coverage"], rec["source"], note)
+        c["coverage"], round_spread(rec, everything), rec["source"], note)
 
 
 def write(lines):
@@ -60,7 +78,14 @@ def main():
     a = ap.parse_args()
 
     if a.rebuild:
-        write([HEADER] + [format_line(rec) for rec in so._attempts(so._slugify(RUN))])
+        everything = so._attempts(so._slugify(RUN))
+        best = {}
+        for rec in everything:
+            key = rec.get("candidate_of", 0)
+            if key not in best or rec["match"] > best[key]["match"]:
+                best[key] = rec
+        kept = sorted(best.values(), key=lambda r: r["n"])
+        write([HEADER] + [format_line(rec, everything) for rec in kept])
         return
 
     demo = ROOT / "docs" / "demo"
@@ -77,7 +102,7 @@ def main():
     show(HEADER)
 
     def add(rec):
-        lines.append(format_line(rec))
+        lines.append(format_line(rec, so._attempts(so._slugify(RUN))))
         show(lines[-1])
 
     add(so.record_attempt(RUN, (demo / "first-attempt.html").read_text(encoding="utf-8")))

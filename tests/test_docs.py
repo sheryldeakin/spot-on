@@ -40,18 +40,32 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(2)), v["from_css_y"])
 
     def test_worked_example_round_numbers_match_the_demo_file(self):
-        rows = {}
+        # Keyed to what the table says rather than to which row it lands on: with
+        # several rewrites per round, the attempt numbers are no longer the round
+        # numbers, and the old version indexed rows 2 and 3 directly.
+        rows, spreads = {}, {}
         for line in (ROOT / "docs" / "demo-run.txt").read_text(encoding="utf-8").splitlines()[1:]:
             parts = line.split()
             if parts and parts[0].isdigit():
-                rows[int(parts[0])] = {"match": float(parts[1])}
-        m = re.search(r"It scored (\d+(?:\.\d+)?), down from (\d+(?:\.\d+)?)", README)
+                rows[int(parts[0])] = float(parts[1])
+                spreads[int(parts[0])] = parts[7]
+        best_n = max(rows, key=lambda n: rows[n])
+
+        m = re.search(r"scored (\d+(?:\.\d+)?), below the best at (\d+(?:\.\d+)?)", README)
         self.assertIsNotNone(m, "worked example sentence changed; update this check with it")
         worse, before = float(m.group(1)), float(m.group(2))
-        self.assertEqual((worse, before), (rows[3]["match"], rows[2]["match"]))
+        self.assertIn(worse, rows.values(), "the discarded score is not in the table")
+        self.assertEqual(before, rows[best_n], "the run's best score is quoted wrong")
         self.assertLess(worse, before)
-        m = re.search(r"round (\d+) reached the best score of the run", README)
-        self.assertEqual(max(rows, key=lambda n: rows[n]["match"]), int(m.group(1)))
+
+        m = re.search(r"attempt (\d+) reached the best score of the run", README)
+        self.assertIsNotNone(m, "worked example sentence changed; update this check with it")
+        self.assertEqual(best_n, int(m.group(1)))
+
+        # The spread quoted for best-of-three has to be a round that really happened.
+        m = re.search(r"drew (\d+\.\d+), (\d+\.\d+) and (\d+\.\d+) from one prompt", README)
+        self.assertIsNotNone(m, "worked example sentence changed; update this check with it")
+        self.assertIn("/".join(m.groups()), spreads.values())
 
     def test_coverage_cap_example(self):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)
