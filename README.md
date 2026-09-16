@@ -99,6 +99,15 @@ hue      84.6       95.3   99.1    35.0    98.2     100.0  right geometry, wrong
 shift    51.2       65.3   46.7    99.8     0.0      71.8  right colours, 40px to the right
 wrong    32.8       62.8   42.7    24.0     0.0      52.0  one wrong shape in the wrong place
 blank    14.5       60.3    0.0     0.1     0.0       0.0  nothing drawn
+
+a page-like design: a full-bleed gradient with a card and text on it
+
+case    match  structure  shape  colour  detail  coverage  what it is
+same    100.0      100.0  100.0   100.0   100.0     100.0  identical to the design
+deeper   84.1       99.9   62.7    67.4   100.0     100.0  same content, gradient a little stronger
+strong   69.5       98.3   22.2    48.5    99.7     100.0  same content, gradient clearly stronger
+flatbg  100.0      100.0  100.0   100.0   100.0     100.0  same content, no gradient at all
+nocard   99.9       99.8  100.0   100.0    99.9     100.0  right gradient, the card left out
 ```
 <!-- calibration:end -->
 
