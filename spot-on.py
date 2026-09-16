@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -87,6 +88,21 @@ def _save_run(slug, data):
     (d / "run.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+_RUN_LOCKS = {}
+_RUN_LOCKS_GUARD = threading.Lock()
+
+
+def _run_lock(slug):
+    """One lock per run, for the read-modify-write on its run.json."""
+    with _RUN_LOCKS_GUARD:
+        return _RUN_LOCKS.setdefault(_slugify(slug), threading.Lock())
+
+
+def _clean_source(source):
+    """Only a name the tool itself uses. Anything else is recorded as manual."""
+    return source if source in SOURCES else "manual"
+
+
 def _list_runs():
     out = []
     for d in sorted(RUNS_DIR.glob("*/run.json")):
@@ -115,10 +131,71 @@ def _attempts(slug):
 
 
 def _next_n(slug):
-    return len(_attempts(slug)) + 1
+    """Take the next attempt number, atomically.
+
+    Counting the files and adding one is a read-modify-write. Two attempts recorded
+    at the same moment (the server while a command-line score runs, or two candidates
+    of one round) both saw the same count, and the second quietly overwrote the first.
+    Creating the record file exclusively makes claiming the number the same act as
+    counting, across threads and across processes. A half-written placeholder does not
+    parse, and _attempts already skips what it cannot read.
+    """
+    d = _run_dir(slug) / "attempts"
+    d.mkdir(parents=True, exist_ok=True)
+    n = len(_attempts(slug)) + 1
+    while True:
+        try:
+            fd = os.open(str(d / "{:03d}.json".format(n)),
+                         os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            n += 1
+            continue
+        os.close(fd)
+        return n
 
 
 # ------------------------------------------------------------------ rendering
+
+def _kill_tree(proc):
+    """Kill a process and everything it started."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        import signal
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _run_tree(cmd, timeout, **kw):
+    """Run a command; on timeout kill its whole process tree, not just the top.
+
+    subprocess.run kills only the process it started. Chrome and every agent CLI
+    start children, so a timeout used to leave those children alive: they hold the
+    temporary profile open, which makes the cleanup fail silently, and an agent left
+    running goes on spending the account after the round that wanted it has gone.
+    """
+    kw.setdefault("stdout", subprocess.PIPE)
+    kw.setdefault("stderr", subprocess.PIPE)
+    if os.name != "nt":
+        kw.setdefault("start_new_session", True)
+    proc = subprocess.Popen(cmd, **kw)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out, err = None, None
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
 
 def _find_chrome():
     for c in CHROME_CANDIDATES:
@@ -203,18 +280,21 @@ def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale
         ]
         cmd += flags + shlex.split(os.environ.get("SPOT_ON_CHROME_FLAGS", ""))
         cmd.append(target)
-        proc = subprocess.run(cmd, capture_output=True, timeout=120)
+        proc = _run_tree(cmd, timeout=120)
         if not shot.exists():
             err = (proc.stderr or b"").decode("utf-8", "replace")[-600:]
             raise RuntimeError("the browser produced no screenshot. {}".format(err.strip()))
-        shot_img = Image.open(shot)
-        if shot_img.mode in ("RGBA", "LA", "P"):
-            # A page with no background colour is white in a real browser, not black.
-            flat = Image.new("RGB", shot_img.size, "#FFFFFF")
-            flat.paste(shot_img.convert("RGBA"), mask=shot_img.convert("RGBA").split()[3])
-            img = flat
-        else:
-            img = shot_img.convert("RGB")
+        # Closed before the cleanup below: an open handle on Windows keeps the whole
+        # temporary directory undeletable, and the cleanup ignores errors, so it leaks.
+        with Image.open(shot) as shot_img:
+            if shot_img.mode in ("RGBA", "LA", "P"):
+                # A page with no background colour is white in a real browser, not black.
+                rgba = shot_img.convert("RGBA")
+                flat = Image.new("RGB", shot_img.size, "#FFFFFF")
+                flat.paste(rgba, mask=rgba.split()[3])
+                img = flat
+            else:
+                img = shot_img.convert("RGB")
         if img.size != tuple(out_size):
             img = img.resize(tuple(out_size), Image.LANCZOS)
         out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -935,6 +1015,10 @@ AGENT_LABELS = {
     "ollama": "Ollama (local)",
 }
 
+# Who an attempt may claim to be from. The page shows this, and an endpoint that took
+# any string let a page in the browser store one through the loopback server.
+SOURCES = ("manual", "session", "starter", "chrome-builtin") + tuple(AGENT_LABELS)
+
 DEFAULT_MODELS = {
     "claude": "sonnet",
     "anthropic-api": "claude-sonnet-5",
@@ -1029,8 +1113,8 @@ def _run_cli_agent(agent, prompt, cwd, timeout=600):
         cmd = [exe, "-p", prompt, "--print-timeout", "300s"]
     # A CLI with an open stdin can wait forever for input that never comes.
     with open(os.devnull, "rb") as devnull:
-        proc = subprocess.run(cmd, cwd=str(cwd), stdin=devnull, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        proc = _run_tree(cmd, timeout, cwd=str(cwd), stdin=devnull,
+                         text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0 and not (proc.stdout or "").strip():
         raise RuntimeError("{} exited {}: {}".format(
             AGENT_LABELS[agent], proc.returncode, (proc.stderr or "")[-400:]))
@@ -1392,10 +1476,16 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
     # A running page is measured for stillness once, on its first attempt.
     record["stability"] = run.get("stability")
 
-    if report["match"] > run.get("best_match", -1):
-        run["best_match"] = report["match"]
-        run["best_attempt"] = n
-        _save_run(slug, run)
+    # Re-read under a lock rather than trusting the copy loaded at the top: rendering
+    # takes seconds, so that copy is stale by now, and two attempts finishing together
+    # each wrote their own view of the best score. The later write won whether or not
+    # it was the better attempt, leaving best_attempt pointing at the wrong one.
+    with _run_lock(slug):
+        latest = _load_run(slug)
+        if report["match"] > latest.get("best_match", -1):
+            latest["best_match"] = report["match"]
+            latest["best_attempt"] = n
+            _save_run(slug, latest)
     return record
 
 
@@ -2515,8 +2605,9 @@ function renderHistory() {
       '<span class="att-n">' + ("00" + rec.n).slice(-3) + '</span>' +
       '<span class="att-score">' + rec.match.toFixed(1) + '</span>' +
       deltaHtml +
-      '<span class="meta-pill" title="Who wrote this attempt">' + rec.source + '</span>' +
+      '<span class="meta-pill att-src" title="Who wrote this attempt"></span>' +
       '<span class="att-note"></span>';
+    row.querySelector(".att-src").textContent = rec.source || "";
     row.querySelector(".att-note").textContent = rec.changes || "";
     if (state.run && rec.n === state.run.best_attempt) {
       var badge = document.createElement("span");
@@ -2813,7 +2904,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True})
             elif path == "/attempt":
                 self._send_json(200, record_attempt(payload["run"], payload["code"],
-                                                    source=payload.get("source", "manual"),
+                                                    source=_clean_source(payload.get("source")),
                                                     changes=payload.get("changes", "")))
             elif path == "/iterate":
                 self._send_json(200, run_iteration(payload["run"], payload.get("instructions", ""),
@@ -2916,17 +3007,33 @@ def cli_score(argv):
     print("difference: " + record["files"]["difference"])
 
 
+USAGE = """Spot On: score a web page against a design.
+
+  python spot-on.py                 serve the page on http://{host}:{port}
+  python spot-on.py 7266            serve it on another port
+  python spot-on.py score ...       score one attempt from the command line
+
+The design is an image file or a link to a page to copy. Run
+`python spot-on.py score --help` for the scoring options."""
+
+
 def main():
     global PORT
     args = sys.argv[1:]
     if args and args[0] == "score":
         cli_score(args[1:])
         return
+    if args and args[0] in ("-h", "--help", "help"):
+        print(USAGE.format(host=HOST, port=PORT))
+        return
     if args:
         try:
             PORT = int(args[0])
         except ValueError:
-            print("ignoring invalid port argument: {!r}".format(args[0]))
+            # Anything unrecognised used to be shrugged off and the server started
+            # anyway, so a mistyped flag looked like a hang behind a buffered notice.
+            raise SystemExit("not a port number: {!r}\n\n{}".format(
+                args[0], USAGE.format(host=HOST, port=PORT)))
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print("ready on http://{}:{}".format(HOST, PORT))
     try:

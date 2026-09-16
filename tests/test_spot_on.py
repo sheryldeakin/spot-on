@@ -7,14 +7,18 @@ skipped without one.
     python -m unittest discover -s tests -v
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -297,12 +301,12 @@ class IterationGuards(unittest.TestCase):
         class Done(Exception):
             pass
 
-        def fake_run(cmd, **kw):
+        def fake_run(cmd, timeout=None, **kw):
             seen.update(kw)
             raise Done()
 
         tmp = Path(tempfile.mkdtemp(prefix="spot-on-enc-"))
-        saved_runs, saved_run = so.RUNS_DIR, so.subprocess.run
+        saved_runs, saved_run = so.RUNS_DIR, so._run_tree
         try:
             so.RUNS_DIR = tmp
             so.create_run("enc", "html", reference_bytes=_png_bytes(DESIGN))
@@ -310,11 +314,11 @@ class IterationGuards(unittest.TestCase):
             (d / "001.code").write_text("<div></div>", encoding="utf-8")
             (d / "001.json").write_text(json.dumps({"n": 1, "match": 10.0, "report": score("blank")}),
                                         encoding="utf-8")
-            so.subprocess.run = fake_run
+            so._run_tree = fake_run
             with self.assertRaises(Done):
                 so.run_iteration("enc")
         finally:
-            so.subprocess.run, so.RUNS_DIR = saved_run, saved_runs
+            so._run_tree, so.RUNS_DIR = saved_run, saved_runs
             shutil.rmtree(tmp, ignore_errors=True)
         self.assertEqual(seen.get("encoding"), "utf-8")
 
@@ -430,7 +434,7 @@ class AgentRequests(unittest.TestCase):
     def setUp(self):
         self.sent = {}
         self.saved_post = so._post_json
-        self.saved_run = so.subprocess.run
+        self.saved_run = so._run_tree
         self.saved_which = so.shutil.which
         def fake_post(url, payload, headers, timeout=600):
             self.sent["call"] = {"url": url, "payload": payload, "headers": headers}
@@ -445,7 +449,7 @@ class AgentRequests(unittest.TestCase):
             self.images.append(f)
 
     def tearDown(self):
-        so._post_json, so.subprocess.run = self.saved_post, self.saved_run
+        so._post_json, so._run_tree = self.saved_post, self.saved_run
         so.shutil.which = self.saved_which
         shutil.rmtree(self.tmp, ignore_errors=True)
 
@@ -487,7 +491,7 @@ class AgentRequests(unittest.TestCase):
     def test_cli_agents_get_a_closed_stdin(self):
         seen = {}
 
-        def fake_run(cmd, **kw):
+        def fake_run(cmd, timeout=None, **kw):
             seen["cmd"], seen["kw"] = cmd, kw
 
             class R:
@@ -497,7 +501,7 @@ class AgentRequests(unittest.TestCase):
             return R()
 
         so.shutil.which = lambda name: "/usr/bin/" + name
-        so.subprocess.run = fake_run
+        so._run_tree = fake_run
         out = so._run_cli_agent("codex", "make it match", self.tmp)
         self.assertIn("exec", seen["cmd"])
         self.assertIsNotNone(seen["kw"].get("stdin"))
@@ -729,6 +733,81 @@ class PageGeometry(unittest.TestCase):
     def test_url_without_scheme_is_rejected(self):
         with self.assertRaises(ValueError):
             so._check_url("localhost:5173/pricing")
+
+
+@contextlib.contextmanager
+def _argv(args):
+    saved = sys.argv
+    sys.argv = args
+    try:
+        yield
+    finally:
+        sys.argv = saved
+
+
+class DefectRegressions(unittest.TestCase):
+    """One test per defect found in the review and trials of 2026-09-16."""
+
+    def setUp(self):
+        self.saved_runs = so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-defect-"))
+        so.RUNS_DIR = self.tmp
+
+    def tearDown(self):
+        so.RUNS_DIR = self.saved_runs
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_attempt_numbers_claimed_at_once_are_all_different(self):
+        # Regression: the number was the file count plus one, so two attempts recorded
+        # at the same moment took the same number and the second overwrote the first.
+        so._save_run("race", {"slug": "race", "kind": "svg"})
+        seen, lock = [], threading.Lock()
+
+        def claim():
+            n = so._next_n("race")
+            with lock:
+                seen.append(n)
+
+        threads = [threading.Thread(target=claim) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(seen), list(range(1, 13)))
+
+    def test_an_invented_source_is_not_recorded(self):
+        # Regression: the attempt endpoint accepted any string for source and the page
+        # built that pill with innerHTML, so a page in the browser could store markup.
+        self.assertEqual(so._clean_source('<img src=x onerror=alert(1)>'), "manual")
+        self.assertEqual(so._clean_source(None), "manual")
+        self.assertEqual(so._clean_source("claude"), "claude")
+        self.assertEqual(so._clean_source("session"), "session")
+
+    def test_the_history_row_never_builds_the_source_as_markup(self):
+        self.assertNotIn("+ rec.source +", so.PAGE_HTML)
+        self.assertIn('.att-src").textContent = rec.source', so.PAGE_HTML)
+
+    def test_help_prints_usage_instead_of_starting_the_server(self):
+        # Regression: any flag fell through to "ignoring invalid port argument" and then
+        # served forever, which reads as a hang as soon as stdout is buffered.
+        for flag in ("-h", "--help", "help"):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), _argv(["spot-on.py", flag]):
+                so.main()
+            self.assertIn("python spot-on.py score", out.getvalue())
+
+    def test_an_unreadable_port_stops_instead_of_serving(self):
+        with _argv(["spot-on.py", "--porcelain"]):
+            with self.assertRaises(SystemExit):
+                so.main()
+
+    def test_a_timed_out_command_is_killed_rather_than_waited_out(self):
+        # Regression: only the top process was killed, so Chrome's children and agent
+        # CLIs outlived their timeout, holding the temp profile open and still spending.
+        started = time.time()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            so._run_tree([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+        self.assertLess(time.time() - started, 15)
 
 
 @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
