@@ -842,6 +842,34 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertEqual(rec["source"], "chrome-builtin")
         self.assertEqual(rec["changes"], "in-page model")
 
+    def test_a_link_can_be_the_design(self):
+        # Paste a page to copy (production, staging, anything you may match) and it
+        # is captured through the same renderer as every attempt.
+        # A static asset, not the tool's own page: that page lists the runs, so
+        # creating one changes it between the two captures.
+        target = self.base + "/signature.svg"
+        run = self.post("/runs", {"name": "from a link", "kind": "url",
+                                  "url": target, "capture_width": 800,
+                                  "capture_height": 600})
+        self.assertEqual(run["design_url"], target)
+        self.assertEqual((run["css_width"], run["css_height"]), (800, 600))
+        with Image.open(self.tmp / run["slug"] / "reference.png") as ref:
+            self.assertEqual(ref.size, (800, 600))
+        rec = self.post("/attempt", {"run": run["slug"], "code": target})
+        self.assertGreater(rec["match"], 95)  # the same page against itself
+
+    def test_the_command_line_takes_a_link_as_the_design(self):
+        saved = so.RUNS_DIR
+        try:
+            so.cli_score([self.base + "/signature.svg", self.base + "/signature.svg",
+                          "--run", "cli-link", "--json"])
+        except SystemExit as e:
+            self.fail("cli refused a link: {}".format(e))
+        finally:
+            so.RUNS_DIR = saved
+        run = json.loads((self.tmp / "cli-link" / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(run["design_url"], self.base + "/signature.svg")
+
     def test_page_script_is_served(self):
         html = urllib.request.urlopen(self.base + "/", timeout=30).read().decode()
         self.assertTrue("<title>Spot On</title>" in html, "title missing")

@@ -1399,6 +1399,16 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
     return record
 
 
+def capture_design(url, out_png, css_width=1440, css_height=900, scale=1.0):
+    """Screenshot a live page to use as the design.
+
+    Captured through the same renderer as every attempt, so both sit on the
+    browser's virtual clock and an animation lands in the same place in each.
+    """
+    return render_code(_check_url(url), "url", css_width, css_height, out_png,
+                       out_size=(round(css_width * scale), round(css_height * scale)), scale=scale)
+
+
 def load_design(reference_bytes=None, reference_path=None):
     if reference_bytes is not None:
         import io
@@ -1426,12 +1436,18 @@ def page_geometry(img, scale):
     return scale, css_w, css_h, w, h
 
 
-def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0):
+def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
+               reference_url=None, capture_width=1440, capture_height=900):
     slug = _slugify(name)
     d = _run_dir(slug)
     (d / "attempts").mkdir(parents=True, exist_ok=True)
 
-    img = load_design(reference_bytes, reference_path)
+    if reference_url:
+        capture_design(reference_url, d / "captured-design.png",
+                       int(capture_width), int(capture_height), scale)
+        img = load_design(reference_path=d / "captured-design.png")
+    else:
+        img = load_design(reference_bytes, reference_path)
     scale, css_w, css_h, w, h = page_geometry(img, scale)
     if (w, h) != img.size:
         img = img.resize((w, h), Image.LANCZOS)
@@ -1452,6 +1468,8 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0)
         "best_match": -1,
         "best_attempt": None,
     }
+    if reference_url:
+        run["design_url"] = reference_url
     _save_run(slug, run)
     return run
 
@@ -1691,6 +1709,17 @@ PAGE_HTML = r"""<!doctype html>
             <div id="drop" class="drop-zone">
               <div style="font-size: 13px; color: var(--deep);">Drop the design here: a Figma export or a screenshot.</div>
               <div class="hint" style="margin-top: 5px;">PNG, JPG, WEBP. Full-page screenshots are fine; very large ones are scaled down for scoring only.</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+              <span class="mono" style="font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); white-space: nowrap;">or a link</span>
+              <input type="text" id="design-url" class="text-input mono" spellcheck="false" placeholder="https://yoursite.com/pricing" style="flex: 1; min-width: 0; font-size: 12px;" title="A page to copy: your production site, a staging build, or any page you have the right to match. It is screenshot through the same renderer as the attempts, so both sit on the same clock.">
+              <select id="capture-size" class="text-input" style="width: 140px; font-size: 12px;" title="The page size to capture the link at. It becomes the size every attempt is screenshot at.">
+                <option value="1440x900">1440 x 900</option>
+                <option value="1280x800">1280 x 800</option>
+                <option value="1024x768">1024 x 768</option>
+                <option value="390x844">390 x 844 phone</option>
+              </select>
+              <button type="button" id="capture-design" class="btn-fill small">Capture</button>
             </div>
             <div style="display: flex; align-items: center; gap: 10px; margin-top: 14px;">
               <input type="text" id="run-name" class="text-input" placeholder="Name this run, for example pricing page" style="flex: 1; min-width: 0;">
@@ -2157,6 +2186,27 @@ drop.addEventListener("drop", function (e) {
   if (f) handleFile(f);
 });
 drop.addEventListener("click", function () { $("file-input").click(); });
+
+$("capture-design").addEventListener("click", function () {
+  var url = $("design-url").value.trim();
+  if (!url) return;
+  var name = $("run-name").value.trim();
+  if (!name) {
+    try { name = new URL(url).hostname.replace(/^www\./, "") + new URL(url).pathname.replace(/\/$/, "").replace(/\//g, " "); }
+    catch (e) { name = "captured design"; }
+    $("run-name").value = name;
+  }
+  var size = $("capture-size").value.split("x");
+  setStatus("Capturing " + url + "...");
+  $("capture-design").disabled = true;
+  api("/runs", { name: name, kind: $("run-kind").value, url: url,
+                 scale: parseFloat($("run-scale").value),
+                 capture_width: parseInt(size[0], 10), capture_height: parseInt(size[1], 10) })
+    .then(function (run) { return loadRuns().then(function () { return openRun(run.slug); }); })
+    .then(function () { setStatus("Design captured. Point the attempt at your own page and score it."); })
+    .catch(function (e) { setStatus("Could not capture that page: " + e.message); })
+    .then(function () { $("capture-design").disabled = false; });
+});
 
 $("create-run").addEventListener("click", function () {
   var name = $("run-name").value.trim();
@@ -2752,7 +2802,10 @@ class Handler(BaseHTTPRequestHandler):
                 raw = base64.b64decode(data.split(",", 1)[1]) if data else None
                 run = create_run(payload["name"], payload.get("kind", "url"),
                                  reference_bytes=raw, reference_path=payload.get("path"),
-                                 scale=payload.get("scale", 1.0))
+                                 scale=payload.get("scale", 1.0),
+                                 reference_url=payload.get("url"),
+                                 capture_width=payload.get("capture_width", 1440),
+                                 capture_height=payload.get("capture_height", 900))
                 run["starter"] = starter_code(run)
                 self._send_json(200, run)
             elif path == "/runs/delete":
@@ -2795,9 +2848,11 @@ def cli_score(argv):
     import argparse
     import hashlib
     ap = argparse.ArgumentParser(prog="spot-on.py score")
-    ap.add_argument("design", help="the design: a mockup export or screenshot")
+    ap.add_argument("design", help="the design: an image, or a link to a page to copy")
     ap.add_argument("target", help="a running page URL, or a .html / .svg / .js file")
     ap.add_argument("--kind", choices=KINDS, help="what the target is; guessed if omitted")
+    ap.add_argument("--width", type=int, default=1440, help="page width when the design is a link")
+    ap.add_argument("--height", type=int, default=900, help="page height when the design is a link")
     ap.add_argument("--scale", type=float, default=1.0,
                     help="display scale the design was captured at: 1, 1.25, 1.5 or 2")
     ap.add_argument("--run", help="run name; defaults to the design's file name")
@@ -2805,24 +2860,32 @@ def cli_score(argv):
     ap.add_argument("--json", action="store_true", help="print the record as JSON")
     a = ap.parse_args(argv)
 
-    design = Path(a.design)
+    from urllib.parse import urlparse
+    design_is_link = bool(re.match(r"^https?://", a.design))
+    design = None if design_is_link else Path(a.design)
     kind = a.kind or _guess_kind(a.target)
     code = a.target if kind == "url" else Path(a.target).read_text(encoding="utf-8")
-    slug = _slugify(a.run or design.stem)
-    sha = hashlib.sha256(design.read_bytes()).hexdigest()[:16]
+    default_name = (urlparse(a.design).netloc.replace(".", "-") if design_is_link else design.stem)
+    slug = _slugify(a.run or default_name)
+    sha = None if design_is_link else hashlib.sha256(design.read_bytes()).hexdigest()[:16]
 
     if (_run_dir(slug) / "run.json").exists():
         run = _load_run(slug)
-        if run.get("design_sha") and run["design_sha"] != sha:
+        # A captured design is kept as it was; only a file is checked for swaps.
+        if sha and run.get("design_sha") and run["design_sha"] != sha:
             raise SystemExit("run {!r} was started with a different design image; "
                              "pass --run with a new name".format(slug))
         if run["kind"] != kind:
             run["kind"] = kind
             _save_run(slug, run)
     else:
-        run = create_run(a.run or design.stem, kind, reference_path=design, scale=a.scale)
-        run["design_sha"] = sha
-        _save_run(slug, run)
+        run = create_run(a.run or default_name, kind, scale=a.scale,
+                         reference_path=None if design_is_link else design,
+                         reference_url=a.design if design_is_link else None,
+                         capture_width=a.width, capture_height=a.height)
+        if sha:
+            run["design_sha"] = sha
+            _save_run(slug, run)
 
     history = _attempts(slug)
     record = record_attempt(slug, code, source="session", changes=a.note)

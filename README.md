@@ -12,6 +12,7 @@ Spot On takes a screenshot of the page, scores it against the design out of 100,
 
 ## What it does
 
+- Takes the design as an image (a Figma export, a screenshot) **or as a link**: paste a page and Spot On captures it through the same renderer the attempts use, so both sit on the browser's virtual clock and an animation lands in the same place in each. That makes "does my rebuild still match production" a one-line check.
 - Screenshots a running page (`http://localhost:5173/pricing`), or pasted HTML, SVG or canvas code, with headless Chrome at the design's exact page size and display scale.
 - Scores the result out of 100, split into five parts that each fail for a different reason, so the report can say which kind of mistake was made.
 - Draws a difference map: bright red where the page misses the design, black where it matches.
@@ -30,6 +31,14 @@ Overlay extensions such as [PerfectPixel](https://www.welldonecode.com/perfectpi
 ```
 python spot-on.py score design.png http://localhost:5173/pricing --scale 2 --run pricing --note "fixed card padding"
 ```
+
+The design can be a link instead of a file, captured at whatever page size you ask for:
+
+```
+python spot-on.py score https://yoursite.com/pricing http://localhost:5173/pricing --width 1440 --height 900
+```
+
+Use that on pages you have the right to match: your own production or staging site, a page your team owns, a design system's own docs.
 
 **On a snippet.** For pasted HTML, an SVG or canvas code with no repo behind it, the page can run the loop by itself: render a first attempt, then press **Run 3 rounds**. Each round shows the AI the design, its best render so far and the difference map, hands it the report, and scores what comes back. It builds on the best attempt, not the latest, so a round that made things worse is discarded instead of compounded. Each round asks for **three rewrites at once and keeps the highest scoring one**, which evens out the luck of a single draw; the others stay in the history marked "not kept". Change it in the page (1 try each, best of 2, 3 or 5), with `--candidates` on the demo script, or with `SPOT_ON_CANDIDATES`. They run in parallel, so a round takes about as long as one rewrite and costs as much as that many.
 
