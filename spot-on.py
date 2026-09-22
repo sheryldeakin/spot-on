@@ -654,7 +654,8 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
             "spacing": _spacing_gaps(matched, css, size),
-            "type": _type_findings(matched, css, size)}
+            "type": _type_findings(matched, css, size),
+            "alignment": _alignment(matched, css)}
 
 
 def _type_metrics(g, el):
@@ -752,6 +753,143 @@ _TYPE_WORDING = {
 def _type_sentence(f):
     return _TYPE_WORDING[f["prop"]].format(
         heavier="heavier" if f["attempt"] > f["design"] else "lighter", **f)
+
+
+def problem_keys(report):
+    """A stable name for each thing the report is complaining about.
+
+    Sentences carry measurements, so their wording changes every round even when the
+    fault itself has not moved. These keys are what stays the same, so a problem can be
+    recognised as one that was already named and not fixed. Positions are bucketed,
+    because an element that shifted a few pixels is still the same element.
+    """
+    keys = set()
+    comp = report.get("components") or {}
+    off = report.get("offsets") or {}
+    for way in ("vertical", "horizontal"):
+        if off.get(way):
+            keys.add(("shift", way))
+    if comp.get("coverage", 100) < 97:
+        keys.add(("coverage",))
+    raw = report.get("raw") or {}
+    if comp.get("colour", 100) < 90:
+        keys.add(("colour", "background"
+                  if raw.get("background_distance", 0) >= raw.get("palette_only_distance", 0)
+                  else "palette"))
+    els = report.get("elements") or {}
+    glyph = els.get("glyph") or {}
+    if glyph.get("lines", 0) >= 8 and glyph.get("weak_share", 0) >= 0.15:
+        keys.add(("type", "family"))
+    for f in els.get("type") or []:
+        keys.add(("type", f["prop"], f["y"] // 50))
+    for f in els.get("alignment") or []:
+        keys.add(("align", f["design"] // 20))
+    for s in els.get("spacing") or []:
+        keys.add(("spacing", s["y"] // 50))
+    for g in (els.get("groups") or [])[:4]:
+        it = g[0]
+        keys.add(("element", it["kind"], it["y"] // 50, tuple(sorted(it["aspects"]))))
+    return keys
+
+
+def stuck_problems(history, base):
+    """Faults on the best attempt that the best attempts before it also had.
+
+    A round that leaves the first problem exactly where it was has spent its money for
+    nothing, and the next round gets the same list and often makes the same choice.
+    Counting how many rounds each fault has survived lets the prompt say which ones
+    have already been asked for and skipped.
+    """
+    climb, best = [], -1.0
+    for rec in sorted(history, key=lambda r: r["n"]):
+        if rec["match"] > best:
+            best = rec["match"]
+            climb.append(rec)
+    chain = [r for r in climb if r["n"] <= base["n"]]
+    if len(chain) < 2:
+        return []
+    earlier = [problem_keys(r["report"]) for r in chain[:-1]]
+    out = []
+    for key in problem_keys(base["report"]):
+        rounds = 0
+        for keys in reversed(earlier):
+            if key in keys:
+                rounds += 1
+            else:
+                break
+        if rounds:
+            out.append({"key": list(key), "rounds": rounds})
+    out.sort(key=lambda s: -s["rounds"])
+    return out
+
+
+def stuck_phrase(key):
+    """Name a stuck problem in the words the report used for it."""
+    kind = key[0]
+    if kind == "shift":
+        return "the page-wide {} shift".format(key[1])
+    if kind == "coverage":
+        return "the part of the design with nothing drawn near it"
+    if kind == "colour":
+        return ("the page background colour" if key[1] == "background"
+                else "the colours the design uses")
+    if kind == "type":
+        if key[1] == "family":
+            return "the typeface"
+        return "the font {} around y {}px".format(key[1], key[2] * 50)
+    if kind == "align":
+        return "the left edge alignment near x {}px".format(key[1] * 20)
+    if kind == "spacing":
+        return "the spacing around y {}px".format(key[1] * 50)
+    if kind == "element":
+        what = ", ".join(key[3]) or "position"
+        return "the {} around y {}px ({})".format(key[1], key[2] * 50, what)
+    return str(key)
+
+
+def _alignment(matched, css, limit=2):
+    """Left edges that line up in the design, checked in the attempt.
+
+    Worth its own sentence because one container fixes all of it. A column of elements
+    that share a left edge is a single padding or margin, so when they come out ragged
+    the report would otherwise say the same thing about each element separately and the
+    model would move each one on its own.
+    """
+    by_edge = {}
+    for d, a in matched:
+        by_edge.setdefault(round(d["x"] / 4.0), []).append((d, a))
+    out = []
+    for group in by_edge.values():
+        if len(group) < 3:
+            continue
+        design_edges = [d["x"] for d, _ in group]
+        if max(design_edges) - min(design_edges) > 4:
+            continue                      # not actually aligned in the design
+        attempt_edges = [a["x"] for _, a in group]
+        spread = max(attempt_edges) - min(attempt_edges)
+        offset = int(round(sum(attempt_edges) / len(attempt_edges))) - design_edges[0]
+        if spread >= 8:
+            out.append({"kind": "ragged", "n": len(group), "design": css(design_edges[0]),
+                        "low": css(min(attempt_edges)), "high": css(max(attempt_edges)),
+                        "y": css(min(d["y"] for d, _ in group)), "score": spread * len(group)})
+        elif abs(offset) >= 6:
+            out.append({"kind": "shifted", "n": len(group), "design": css(design_edges[0]),
+                        "attempt": css(design_edges[0] + offset), "offset": css(offset),
+                        "y": css(min(d["y"] for d, _ in group)), "score": abs(offset) * len(group)})
+    out.sort(key=lambda f: -f["score"])
+    return out[:limit]
+
+
+def _alignment_sentence(f):
+    if f["kind"] == "ragged":
+        return ("{} elements share a left edge at x {}px in the design; in the attempt they start "
+                "anywhere between x {}px and x {}px. They belong to one container, so align them "
+                "there rather than moving each one.".format(
+                    f["n"], f["design"], f["low"], f["high"]))
+    return ("{} elements share a left edge in the design at x {}px, but sit at x {}px in the "
+            "attempt, {}px to the {}. That is one container's padding or margin, not {} separate "
+            "moves.".format(f["n"], f["design"], f["attempt"], abs(f["offset"]),
+                            "right" if f["offset"] > 0 else "left", f["n"]))
 
 
 def _spacing_gaps(matched, css, size, limit=3):
@@ -1153,6 +1291,9 @@ def _problems(report):
     # around it as a wrong width and a wrong height, so fixing it first removes several
     # of the complaints below rather than adding to them.
     out.extend(_type_sentence(f) for f in (els.get("type") or []))
+    # Alignment before the individual elements too: a ragged column is one container,
+    # and naming it here stops the list below repeating it once per element.
+    out.extend(_alignment_sentence(f) for f in (els.get("alignment") or []))
 
     element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
     out.extend(element_lines)
@@ -1469,8 +1610,33 @@ def iteration_base(history):
     return best, (latest if latest["n"] != best["n"] else None)
 
 
+def _stuck_section(stuck):
+    """Tell the round which faults it has already been asked to fix and has not.
+
+    Without it a stuck problem is handed over in the same words every round, and the
+    round keeps making the same choice: the first problem stays first, untouched, while
+    smaller things get tidied around it. The escape hatch matters as much as the
+    demand. Some faults genuinely cannot be closed in code, and a loop that insists on
+    those forever is worse than one that moves on, so saying so is an allowed answer
+    and the counting stops asking once it has been said.
+    """
+    if not stuck:
+        return []
+    lines = ["Already named in an earlier round and still not fixed:"]
+    for s in stuck[:3]:
+        lines.append("  {} (asked for {} round{} ago and unchanged)".format(
+            stuck_phrase(tuple(s["key"])), s["rounds"], "" if s["rounds"] == 1 else "s"))
+    lines += [
+        "Start with these. If one of them cannot be fixed in code, a typeface that is not",
+        "installed, a logo or photograph you do not have, or real data that differs from the",
+        "design's, say exactly that in your note and spend the round on something else.",
+        "",
+    ]
+    return lines
+
+
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    can_read_files=True):
+                    can_read_files=True, stuck=()):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
@@ -1492,6 +1658,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         feedback_text(run, n, report),
         "",
     ]
+    parts += _stuck_section(stuck)
     if discarded:
         parts += [
             "Your most recent attempt ({}) scored {:.1f}, below this one at {:.1f}, so it was "
@@ -1562,8 +1729,17 @@ def gather_candidates(agent, prompt, cwd, images, count, kind):
     return out, refusals
 
 
-def run_iteration(slug, extra="", agent=None, candidates=None):
-    """One round: ask headless Claude Code for a better attempt, render it, score it."""
+GIVE_UP_AFTER = 3
+
+
+def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
+    """One round: ask headless Claude Code for a better attempt, render it, score it.
+
+    The round is also told which faults it has already been asked to fix and has not,
+    so a problem that survives is pressed rather than restated. It stops pressing after
+    GIVE_UP_AFTER rounds: past that the honest reading is that the thing cannot be
+    fixed in code, and spending every remaining round on it is worse than saying so.
+    """
     run = _load_run(slug)
     if run["kind"] == "url":
         # The code behind a running page lives in someone's repo, which this process
@@ -1583,8 +1759,9 @@ def run_iteration(slug, extra="", agent=None, candidates=None):
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
     count = max(1, min(5, int(count)))
     can_read_files = bool(_cli_for(chosen))
+    stuck = [s for s in stuck_problems(history, base) if s["rounds"] < GIVE_UP_AFTER]
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
-                             rejected_changes(history, base), can_read_files)
+                             rejected_changes(history, base), can_read_files, stuck)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -1602,6 +1779,29 @@ def run_iteration(slug, extra="", agent=None, candidates=None):
                for c, ch in drafts]
     best = max(records, key=lambda r: r["match"])
     best["candidate_scores"] = [r["match"] for r in records]
+    # What the round was pressed on, and whether it moved. This is the part the page
+    # and the command line show: a fault that survives a round it was named in is the
+    # reason a run stops climbing, and it used to be invisible.
+    before = {tuple(s["key"]) for s in stuck}
+    best["was_pressed"] = [stuck_phrase(k) for k in sorted(before, key=str)]
+    best["still_stuck"] = [stuck_phrase(k) for k in sorted(before & problem_keys(best["report"]),
+                                                           key=str)]
+    best["given_up"] = [stuck_phrase(tuple(s["key"]))
+                        for s in stuck_problems(history, base) if s["rounds"] >= GIVE_UP_AFTER]
+
+    # A round that was asked for something and did not do it has spent the person's
+    # time and their usage for nothing, so take one more swing before handing back.
+    # Exactly one: insist is not passed down, so this cannot recurse, and a fault that
+    # has already survived GIVE_UP_AFTER rounds is not pressed at all. The retry reads
+    # the history again, so it presses on whatever is still wrong rather than repeating
+    # this prompt, and it is recorded like any other attempt.
+    if insist and best["still_stuck"]:
+        again = run_iteration(slug, extra=extra, agent=agent, candidates=candidates,
+                              insist=False)
+        again["insisted_on"] = best["still_stuck"]
+        if again["match"] >= best["match"]:
+            return again
+        best["insisting_did_not_help"] = True
     return best
 
 
@@ -3184,7 +3384,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/iterate":
                 self._send_json(200, run_iteration(payload["run"], payload.get("instructions", ""),
                                                    payload.get("agent") or None,
-                                                   payload.get("candidates")))
+                                                   payload.get("candidates"),
+                                                   insist=payload.get("insist", True)))
             elif path == "/kind":
                 run = _load_run(payload["run"])
                 run["kind"] = payload["kind"] if payload["kind"] in KINDS else run["kind"]

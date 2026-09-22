@@ -880,6 +880,138 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertEqual(spacing, [])
 
 
+class AlignmentIsOneContainer(unittest.TestCase):
+    """Left edges that line up in the design are one fix, not one fix per element."""
+
+    def column(self, offsets):
+        img = Image.new("RGB", (360, 320), "#F5F8FF")
+        d = ImageDraw.Draw(img)
+        for i, dx in enumerate(offsets):
+            y = 40 + i * 50
+            d.rectangle([40 + dx, y, 40 + dx + 200, y + 26], fill="#1B2A3A")
+        return img
+
+    def finds(self, design, attempt):
+        return so.score_images(design, attempt)[0]["elements"]["alignment"]
+
+    def test_a_ragged_column_is_reported_once(self):
+        found = self.finds(self.column([0, 0, 0, 0]), self.column([0, 26, 0, 22]))
+        self.assertTrue(found, "ragged left edges were not noticed")
+        self.assertEqual(found[0]["kind"], "ragged")
+        problems = so.score_images(self.column([0, 0, 0, 0]),
+                                   self.column([0, 26, 0, 22]))[0]["problems"]
+        self.assertEqual(sum(1 for p in problems if "share a left edge" in p), 1)
+
+    def test_a_whole_column_moved_is_reported_as_one_container(self):
+        found = self.finds(self.column([0, 0, 0, 0]), self.column([20, 20, 20, 20]))
+        self.assertTrue(found)
+        self.assertEqual(found[0]["kind"], "shifted")
+
+    def test_a_column_that_lines_up_is_not_reported(self):
+        self.assertEqual(self.finds(self.column([0, 0, 0, 0]), self.column([0, 0, 0, 0])), [])
+
+    def test_a_column_ragged_in_the_design_too_is_not_reported(self):
+        # Only edges the design actually aligns are worth aligning.
+        self.assertEqual(self.finds(self.column([0, 30, 0, 30]), self.column([0, 26, 0, 22])), [])
+
+
+class PressingUnfixedProblems(unittest.TestCase):
+    """A fault the round was asked to fix and did not is the reason a run stalls."""
+
+    def record(self, n, match, **report):
+        base = {"components": {"coverage": 100, "colour": 100}, "offsets": {},
+                "elements": {}, "raw": {}}
+        base.update(report)
+        return {"n": n, "match": match, "report": base}
+
+    def test_a_fault_present_in_every_earlier_best_is_counted(self):
+        shift = {"offsets": {"vertical": {"css_shift": -8, "from_css_y": 50, "where": "top"}}}
+        history = [self.record(1, 10.0, **shift), self.record(2, 20.0, **shift),
+                   self.record(3, 30.0, **shift)]
+        stuck = so.stuck_problems(history, history[-1])
+        self.assertEqual([s["key"] for s in stuck], [["shift", "vertical"]])
+        self.assertEqual(stuck[0]["rounds"], 2)
+
+    def test_a_fault_that_was_fixed_is_not_counted(self):
+        shift = {"offsets": {"vertical": {"css_shift": -8, "from_css_y": 50, "where": "top"}}}
+        history = [self.record(1, 10.0, **shift), self.record(2, 20.0)]
+        self.assertEqual(so.stuck_problems(history, history[-1]), [])
+
+    def test_only_the_climb_counts_not_discarded_attempts(self):
+        # Rounds that scored worse are thrown away, so a fault they happened to have
+        # says nothing about whether the run is stuck on it.
+        shift = {"offsets": {"vertical": {"css_shift": -8, "from_css_y": 50, "where": "top"}}}
+        history = [self.record(1, 30.0), self.record(2, 5.0, **shift),
+                   self.record(3, 40.0, **shift)]
+        self.assertEqual(so.stuck_problems(history, history[-1]), [])
+
+    def test_the_prompt_names_what_was_asked_for_and_skipped(self):
+        run = {"kind": "html", "width": 10, "height": 10, "ground": "#FFFFFF"}
+        text = so._iterate_prompt(run, 1, "<div></div>", score("close"), "",
+                                  stuck=[{"key": ["colour", "background"], "rounds": 2}])
+        self.assertIn("still not fixed", text)
+        self.assertIn("the page background colour", text)
+        self.assertIn("asked for 2 rounds ago", text)
+
+    def test_the_prompt_allows_saying_it_cannot_be_fixed(self):
+        # Without this the loop presses forever on a typeface that is not installed.
+        run = {"kind": "html", "width": 10, "height": 10, "ground": "#FFFFFF"}
+        text = so._iterate_prompt(run, 1, "<div></div>", score("close"), "",
+                                  stuck=[{"key": ["type", "family"], "rounds": 1}])
+        self.assertIn("cannot be fixed in code", text)
+
+    def test_nothing_is_said_when_nothing_is_stuck(self):
+        run = {"kind": "html", "width": 10, "height": 10, "ground": "#FFFFFF"}
+        self.assertNotIn("still not fixed",
+                         so._iterate_prompt(run, 1, "<div></div>", score("close"), ""))
+
+    def test_a_fault_pressed_too_long_stops_being_pressed(self):
+        shift = {"offsets": {"vertical": {"css_shift": -8, "from_css_y": 50, "where": "top"}}}
+        history = [self.record(i, i * 10.0, **shift) for i in range(1, 7)]
+        stuck = so.stuck_problems(history, history[-1])
+        self.assertGreaterEqual(stuck[0]["rounds"], so.GIVE_UP_AFTER)
+        # run_iteration filters on exactly this, so a fault that cannot be fixed in code
+        # stops consuming every remaining round.
+        self.assertEqual([s for s in stuck if s["rounds"] < so.GIVE_UP_AFTER], [])
+
+
+@unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+class InsistingOnce(unittest.TestCase):
+    """A round that ignored what it was asked for gets one more go, and only one."""
+
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">'
+           '<rect width="400" height="300" fill="#FFFFFF"/>'
+           '<circle cx="200" cy="150" r="{}" fill="#52796F"/></svg>')
+
+    def setUp(self):
+        self.saved_agent, self.saved_runs = so.run_agent, so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-insist-"))
+        so.RUNS_DIR = self.tmp
+        self.calls = []
+
+    def tearDown(self):
+        so.run_agent, so.RUNS_DIR = self.saved_agent, self.saved_runs
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def answer_with(self, radius):
+        def fake(agent, prompt, cwd, images):
+            self.calls.append(prompt)
+            return "```\n" + self.SVG.format(radius) + "\n```"
+        so.run_agent = fake
+
+    def seed(self):
+        so.create_run("insist", "svg", reference_bytes=_png_bytes(DESIGN))
+        so.record_attempt("insist", self.SVG.format(20))
+        so.record_attempt("insist", self.SVG.format(22))
+
+    def test_it_does_not_press_twice(self):
+        # The stand-in never fixes anything, so without a cap this would not return.
+        self.seed()
+        self.answer_with(24)
+        so.run_iteration("insist", candidates=1)
+        self.assertLessEqual(len(self.calls), 2)
+
+
 @contextlib.contextmanager
 def _argv(args):
     saved = sys.argv
