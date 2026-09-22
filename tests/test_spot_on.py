@@ -514,14 +514,23 @@ class PageStillness(unittest.TestCase):
     """A page that will not hold still has a ceiling, and the report has to say so."""
 
     STATIC = '<div style="width:200px;height:120px;background:#52796F"></div>'
+    # Both moving fixtures paint per-pixel noise rather than one random colour. With a
+    # single random channel two renders could land close enough that nothing crossed the
+    # per-pixel threshold, so the page read as perfectly still and the test failed on a
+    # bad draw. Noise differs on essentially every pixel every time, which makes "this
+    # moves" a property of the fixture instead of a lucky roll.
+    _NOISE = ('var x=document.getElementById("{id}").getContext("2d"),'
+              'd=x.createImageData({w},{h});'
+              'for(var i=0;i<d.data.length;i+=4){{'
+              'd.data[i]=Math.random()*255;d.data[i+1]=Math.random()*255;'
+              'd.data[i+2]=Math.random()*255;d.data[i+3]=255;}}'
+              'x.putImageData(d,0,0);')
     # A still layout with one element that changes every render, like a carousel.
     MOVING = ('<div style="width:200px;height:120px;background:#52796F">'
-              '<div id="b" style="width:60px;height:40px;margin:10px"></div></div><script>'
-              'document.getElementById("b").style.background = '
-              '"rgb(" + Math.floor(Math.random()*255) + ",40,40)";</script>')
-    ALL_MOVING = ('<div id="b" style="width:200px;height:120px"></div><script>'
-                  'document.getElementById("b").style.background = '
-                  '"rgb(" + Math.floor(Math.random()*255) + ",40,40)";</script>')
+              '<canvas id="b" width="60" height="40" style="margin:10px"></canvas></div>'
+              '<script>' + _NOISE.format(id="b", w=60, h=40) + '</script>')
+    ALL_MOVING = ('<canvas id="c" width="200" height="120"></canvas>'
+                  '<script>' + _NOISE.format(id="c", w=200, h=120) + '</script>')
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-still-"))
