@@ -2324,7 +2324,7 @@ PAGE_HTML = r"""<!doctype html>
 
     <div class="rule20"></div>
 
-    <div style="position: relative; display: grid; grid-template-columns: minmax(0,1fr) 1px 560px; align-items: stretch;">
+    <div style="position: relative; display: grid; grid-template-columns: minmax(0,1fr) 1px minmax(0,1fr); align-items: stretch;">
 
       <div id="sec-attempt" style="grid-column: 1; grid-row: 1; padding: 26px 34px 28px 0; min-width: 0; position: relative;">
         <div class="wash wash-cream" aria-hidden="true" style="left: -32px; right: -10px;"></div>
@@ -2385,29 +2385,40 @@ PAGE_HTML = r"""<!doctype html>
         </div>
       </div>
 
-      <div class="vrule" style="grid-column: 2; grid-row: 1 / 3;"></div>
+      <div class="vrule" style="grid-column: 2; grid-row: 1;"></div>
 
-      <div id="sec-compare" style="grid-column: 3; grid-row: 1 / 3; display: flex; flex-direction: column; padding: 11px 18px 18px; margin: 14px 0 18px 30px; min-width: 0; background: linear-gradient(180deg, #52796F 0%, #3E5D53 40%, #2A4237 74%, #1F3029 100%); border-radius: 14px; color: #D6E1D8; -webkit-mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%); mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%);">
+      <div id="sec-compare" style="grid-column: 1 / -1; grid-row: 2; display: flex; flex-direction: column; padding: 11px 22px 20px; margin: 4px 0 18px; min-width: 0; background: linear-gradient(180deg, #52796F 0%, #3E5D53 40%, #2A4237 74%, #1F3029 100%); border-radius: 14px; color: #D6E1D8; -webkit-mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%); mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%);">
         <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 0 0 12px;">
           <div style="flex: 1; min-width: 0;">
             <h2 class="sec-title" style="color: #EDF2ED;">Comparison</h2>
-            <div style="font-size: 13px; color: #E2EAE3; margin-top: 2px;">Where the page and the design disagree.</div>
+            <div style="font-size: 13px; color: #E2EAE3; margin-top: 2px;">The design on the left, what was built on the right, at the same size.</div>
           </div>
           <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.16em; text-transform: uppercase;">live</span>
         </div>
         <div style="height: 1px; background: linear-gradient(90deg, rgba(255,255,255,0.13), rgba(255,255,255,0.13) 94%, transparent); margin-bottom: 12px;"></div>
 
         <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 11px; flex-wrap: wrap;">
-          <button type="button" class="dark-chip" data-view="reference">design</button>
+          <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase; margin-right: 3px;">on the right</span>
           <button type="button" class="dark-chip active" data-view="attempt">attempt</button>
           <button type="button" class="dark-chip" data-view="difference">difference</button>
           <button type="button" class="dark-chip" data-view="overlay">overlay</button>
         </div>
 
-        <div id="stage" style="position: relative; flex: 1; min-height: 340px; border-radius: 8px; overflow: hidden; background: rgba(10,18,13,0.30); display: flex; align-items: center; justify-content: center;">
-          <img id="stage-base" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain;">
-          <img id="stage-over" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain;">
-          <span id="stage-empty" class="mono" style="font-size: 11px; color: #A9AFAB;">Nothing rendered yet.</span>
+        <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; flex: 1;">
+          <div style="display: flex; flex-direction: column; min-width: 0;">
+            <span class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px;">design</span>
+            <div style="position: relative; flex: 1; min-height: 420px; border-radius: 8px; overflow: hidden; background: rgba(10,18,13,0.30);">
+              <img id="stage-design" alt="the design" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain; object-position: top;">
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; min-width: 0;">
+            <span id="stage-label" class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px;">attempt</span>
+            <div id="stage" style="position: relative; flex: 1; min-height: 420px; border-radius: 8px; overflow: hidden; background: rgba(10,18,13,0.30); display: flex; align-items: center; justify-content: center;">
+              <img id="stage-base" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain; object-position: top;">
+              <img id="stage-over" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain; object-position: top;">
+              <span id="stage-empty" class="mono" style="font-size: 11px; color: #A9AFAB;">Nothing rendered yet.</span>
+            </div>
+          </div>
         </div>
 
         <div id="onion-row" hidden style="display: flex; align-items: center; gap: 10px; margin-top: 11px;">
@@ -2418,7 +2429,7 @@ PAGE_HTML = r"""<!doctype html>
         <div style="color: #E2EAE3; font-size: 11px; margin-top: 9px;">In the difference view, bright red is a big miss and black is an exact match. Antialiasing always leaves a faint outline.</div>
       </div>
 
-      <div id="sec-score" style="grid-column: 1; grid-row: 2; padding: 26px 34px 30px 0; min-width: 0; position: relative;">
+      <div id="sec-score" style="grid-column: 3; grid-row: 1; padding: 26px 0 30px 30px; min-width: 0; position: relative;">
         <div class="wash wash-cream" aria-hidden="true" style="left: -32px; right: -10px;"></div>
         <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
           <div>
@@ -2925,27 +2936,33 @@ function current() {
   return null;
 }
 
+// The design keeps the left pane whatever is chosen, so the two are always side by
+// side at the same size. The chips change the right one only.
+var STAGE_LABELS = {attempt: "attempt", difference: "difference", overlay: "overlay"};
+
 function renderStage() {
   var rec = current();
-  var base = $("stage-base"), over = $("stage-over");
-  if (!state.run) { base.hidden = true; over.hidden = true; $("stage-empty").hidden = false; $("onion-row").hidden = true; return; }
-  var pad = function (n) { return ("00" + n).slice(-3); };
-  $("onion-row").hidden = state.view !== "overlay";
-  if (state.view === "reference") {
-    base.src = imgUrl("reference.png"); base.style.opacity = 1; base.hidden = false; over.hidden = true;
-    $("stage-empty").hidden = true;
+  var base = $("stage-base"), over = $("stage-over"), design = $("stage-design");
+  $("stage-label").textContent = STAGE_LABELS[state.view] || "attempt";
+  if (!state.run) {
+    design.hidden = true; base.hidden = true; over.hidden = true;
+    $("stage-empty").hidden = false; $("onion-row").hidden = true;
     return;
   }
+  design.src = imgUrl("reference.png");
+  design.hidden = false;
+  var pad = function (n) { return ("00" + n).slice(-3); };
+  $("onion-row").hidden = state.view !== "overlay";
   if (!rec) { base.hidden = true; over.hidden = true; $("stage-empty").hidden = false; return; }
   $("stage-empty").hidden = true;
-  if (state.view === "attempt") {
-    base.src = imgUrl("attempts/" + pad(rec.n) + ".png"); base.style.opacity = 1; base.hidden = false; over.hidden = true;
-  } else if (state.view === "difference") {
+  if (state.view === "difference") {
     base.src = imgUrl("attempts/" + pad(rec.n) + "-diff.png"); base.style.opacity = 1; base.hidden = false; over.hidden = true;
-  } else {
+  } else if (state.view === "overlay") {
     base.src = imgUrl("reference.png"); base.style.opacity = 1; base.hidden = false;
     over.src = imgUrl("attempts/" + pad(rec.n) + ".png"); over.hidden = false;
     over.style.opacity = parseInt($("onion").value, 10) / 100;
+  } else {
+    base.src = imgUrl("attempts/" + pad(rec.n) + ".png"); base.style.opacity = 1; base.hidden = false; over.hidden = true;
   }
 }
 Array.prototype.forEach.call(document.querySelectorAll("[data-view]"), function (b) {
