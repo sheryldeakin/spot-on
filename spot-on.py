@@ -58,6 +58,7 @@ SCALES = (1.0, 1.25, 1.5, 2.0)
 MAX_PIXELS = 6_000_000   # designs bigger than this are scaled down before scoring
 SSIM_WINDOW = 7          # odd; box window for the structural term
 INK_EDGE = 6.0           # local contrast that counts as the edge of drawn content
+PRESS_LIMIT = 3          # stuck faults one round is asked to fix; ten is the same as none
 
 
 # ---------------------------------------------------------------- run storage
@@ -1623,7 +1624,7 @@ def _stuck_section(stuck):
     if not stuck:
         return []
     lines = ["Already named in an earlier round and still not fixed:"]
-    for s in stuck[:3]:
+    for s in stuck[:PRESS_LIMIT]:
         lines.append("  {} (asked for {} round{} ago and unchanged)".format(
             stuck_phrase(tuple(s["key"])), s["rounds"], "" if s["rounds"] == 1 else "s"))
     lines += [
@@ -1782,7 +1783,10 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
     # What the round was pressed on, and whether it moved. This is the part the page
     # and the command line show: a fault that survives a round it was named in is the
     # reason a run stops climbing, and it used to be invisible.
-    before = {tuple(s["key"]) for s in stuck}
+    # Only what the prompt actually named, not everything that carried over: the
+    # prompt asks for PRESS_LIMIT of them, so reporting all ten as "pressed" would
+    # claim the round ignored things it was never asked about.
+    before = {tuple(s["key"]) for s in stuck[:PRESS_LIMIT]}
     best["was_pressed"] = [stuck_phrase(k) for k in sorted(before, key=str)]
     best["still_stuck"] = [stuck_phrase(k) for k in sorted(before & problem_keys(best["report"]),
                                                            key=str)]
