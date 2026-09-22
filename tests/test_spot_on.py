@@ -735,6 +735,80 @@ class PageGeometry(unittest.TestCase):
             so._check_url("localhost:5173/pricing")
 
 
+def stack(bg="#F5F8FF", gaps=(24, 24), bar_h=26, top=40):
+    """A page-like scene: a column of dark bars on a tinted ground.
+
+    Bars stand in for text. They give the element matcher something to match and the
+    gaps between them something to measure.
+    """
+    img = Image.new("RGB", (360, 320), bg)
+    d = ImageDraw.Draw(img)
+    y = top
+    for i, gap in enumerate((0,) + tuple(gaps)):
+        y += gap
+        d.rectangle([40, y, 300, y + bar_h - 1], fill="#1B2A3A")
+        y += bar_h
+    return img
+
+
+class ReportNamesColourAndSpacing(unittest.TestCase):
+    """The two things the report could never say, found by judging real pages."""
+
+    def problems(self, design, attempt):
+        return so.score_images(design, attempt)[0]["problems"]
+
+    def test_a_wrong_page_colour_is_reported_even_when_elements_also_miss(self):
+        # Regression: component problems were reached through a loop that broke as soon
+        # as there were element lines, and a real page always has element lines. A page
+        # could score 64.5 on colour and be told nothing about colour, round after round.
+        problems = self.problems(stack(), stack(bg="#D2E0F6", gaps=(24, 30)))
+        self.assertTrue(any("page behind the content" in p for p in problems), problems)
+
+    def test_a_matching_page_colour_is_not_reported(self):
+        self.assertFalse(any("page behind the content" in p
+                             for p in self.problems(stack(), stack(gaps=(24, 30)))))
+
+    def test_the_colour_named_is_where_it_is_worst_not_at_the_border(self):
+        # A gradient can match at the edge the ground is read from and be far off in the
+        # middle. Naming the two border colours would send the next round chasing nothing.
+        design = stack()
+        attempt = stack()
+        px = attempt.load()
+        for y in range(160, 320):          # only the lower half is wrong
+            for x in range(360):
+                if px[x, y] == (245, 248, 255):
+                    px[x, y] = (200, 216, 244)
+        report = so.score_images(design, attempt)[0]
+        self.assertLess(report["components"]["colour"], 95)
+        self.assertIn((report["raw"]["background_where"] or "").split(",")[0],
+                      ("lower middle", "bottom"))
+        self.assertNotEqual(report["raw"]["background_reference_hex"],
+                            report["raw"]["background_attempt_hex"])
+
+    def test_a_gap_that_is_too_big_is_named_with_both_numbers(self):
+        report = so.score_images(stack(gaps=(20, 20)), stack(gaps=(20, 60)))[0]
+        spacing = report["elements"]["spacing"]
+        self.assertTrue(spacing, "the 40px wider gap was not found")
+        s = spacing[0]
+        # The measured gap runs between detected edges, a little tighter than the drawn
+        # one, so the difference is what is checked rather than the absolute pixels.
+        self.assertAlmostEqual(s["diff"], 40, delta=5)
+        self.assertGreater(s["attempt"], s["design"])
+        line = [p for p in report["problems"] if "gap above" in p][0]
+        self.assertIn("is {}px".format(s["attempt"]), line)
+        self.assertIn("the design has {}px".format(s["design"]), line)
+        self.assertIn("too big", line)
+
+    def test_a_page_wide_shift_is_not_reported_as_a_spacing_problem(self):
+        # A gap is the distance between two elements, so shifting everything down
+        # together leaves every gap identical. Reporting those would be noise on top
+        # of the one shift sentence that already explains it.
+        design = stack(gaps=(20, 20), top=40)
+        shifted = stack(gaps=(20, 20), top=70)
+        spacing = so.score_images(design, shifted)[0]["elements"]["spacing"]
+        self.assertEqual(spacing, [])
+
+
 @contextlib.contextmanager
 def _argv(args):
     saved = sys.argv

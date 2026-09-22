@@ -18,6 +18,8 @@ Spot On takes a screenshot of the page, scores it against the design out of 100,
 - Draws a difference map: bright red where the page misses the design, black where it matches.
 - Notices when content is shifted rather than wrong. One missing label near the top pushes the whole page down, and a plain pixel comparison then reports everything below it as broken. Spot On reports the shift and where it starts instead.
 - Names the elements that miss, in CSS pixels: which text is 9% wider, which boxes are 4px shorter, what sits 7px to the right, what is missing entirely. Page-wide numbers stop being useful once a page is close, and a model given only them starts making sweeping changes that break what already matched.
+- Names the page colour when it is wrong, and says where it is most wrong: "the design is #F9FBFE there and the attempt is #D4E0F8". A gradient can match at the edges and be far off in the middle, so pointing at the border colour would send the next round chasing nothing.
+- Names the spacing, not just the positions: "the gap above this text is 113px, the design has 22px". A gap is the distance between two elements, so it does not move when the whole page shifts, and it is the number that maps onto the margin being edited.
 - Says when the font is wrong, and only when it is: text lines that sit in the right place are lined up and compared letter by letter, since the same string in Arial and in Segoe UI is nearly the same width.
 - Keeps every attempt with its score and a note on what changed.
 - Writes a feedback packet to paste back to whatever wrote the code, or runs the loop itself.
@@ -90,6 +92,7 @@ Each of these choices fixed a case where the score disagreed with what the eye s
 - **Coverage caps the score.** Even with the three fixes above, a design with one element removed could still edge out a close copy of the whole thing.
 - **Content is found by local contrast, not by distance from one page colour.** Measuring distance from a single ground colour failed both ways on real pages: a background gradient a little too saturated crossed the threshold everywhere and was measured as content, which pinned shape near 10 for an entire run and sent the model to fix box geometry that was already right; and a white card on an off-white page fell under the threshold, so leaving out the largest element on the page cost a tenth of a point. The page-like calibration cases below hold each of those directions down.
 - **The page behind the content is compared separately.** Once the background was out of the mask it was out of the palette too, and a clearly over-saturated gradient scored 99.2. Colour now takes the worse of the content palette and the page behind it, so the background is charged once, to the part that means colour.
+- **A component that scores badly is always named.** Colour, structure and detail used to be reported only when there was nothing more specific to say, and on a real page there is always something more specific, so they were never reported at all. A rebuild scored 64.5 on colour and was told nothing about colour for an entire run, while every round nudged text instead. Whatever else is wrong, a wrong page colour now gets its own sentence, first, because it is also among the cheapest things to fix.
 
 ### Calibration
 

@@ -648,7 +648,62 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
 
     groups.sort(key=weight, reverse=True)
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
-            "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched)}
+            "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
+            "spacing": _spacing_gaps(matched, css, size)}
+
+
+def _spacing_gaps(matched, css, size, limit=3):
+    """Vertical gaps between stacked elements, design against attempt.
+
+    The report could say where every element sits and how big it is, and still never
+    say the one thing a person looking at the page says first: the spacing is wrong.
+    A gap is the distance between the bottom of one element and the top of the next,
+    so unlike a position it does not move when the whole page shifts, and it is the
+    number that maps onto the margin or padding actually being edited.
+    """
+    stacked = sorted(matched, key=lambda pair: pair[0]["y"])
+    out, seen = [], set()
+    for i, (d0, a0) in enumerate(stacked):
+        # The nearest element below this one that shares a column, not simply the next
+        # one by y. Three cards side by side interleave when sorted, so comparing only
+        # neighbours in that order skips most of the gaps a person would actually see.
+        best = None
+        for d1, a1 in stacked[i + 1:]:
+            if d1["y"] < d0["y"] + d0["h"]:
+                continue
+            overlap = min(d0["x"] + d0["w"], d1["x"] + d1["w"]) - max(d0["x"], d1["x"])
+            if overlap < 0.4 * min(d0["w"], d1["w"]):
+                continue
+            if best is None or d1["y"] < best[0]["y"]:
+                best = (d1, a1)
+        if best is None:
+            continue
+        d1, a1 = best
+        gap_ref, gap_att = d1["y"] - (d0["y"] + d0["h"]), a1["y"] - (a0["y"] + a0["h"])
+        if gap_ref < 0 or gap_att < 0:
+            continue
+        diff = css(gap_att - gap_ref)
+        if abs(diff) < 5:
+            continue
+        # Siblings on one row (three cards) each find the same element below them and
+        # would each report the same gap. Report it once.
+        key = (css(d0["y"] + d0["h"]), css(gap_ref), css(gap_att))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"y": css(d0["y"] + d0["h"]), "where": _where(d0, size),
+                    "design": css(gap_ref), "attempt": css(gap_att), "diff": diff,
+                    "kind": d1["kind"]})
+    out.sort(key=lambda s: -abs(s["diff"]))
+    return out[:limit]
+
+
+def _spacing_sentence(s):
+    return ("The gap above the {} at y {}px (the {} of the page) is {}px; the design has {}px, "
+            "so it is {}px too {}. Change the margin or padding there, not the element "
+            "itself.".format("text" if s["kind"] == "text" else "box", s["y"], s["where"],
+                             s["attempt"], s["design"], abs(s["diff"]),
+                             "big" if s["diff"] > 0 else "small"))
 
 
 def _element_sentence(g):
@@ -789,6 +844,33 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
     background_dist = (float(np.sqrt(((ref[behind] - att[behind]) ** 2).sum(axis=1)).mean())
                        if behind.sum() >= 64 else 0.0)
     colour_dist = max(palette_dist, background_dist)
+
+    # Where the background is most wrong, and what colour each page is there. The two
+    # border colours are not enough on their own: a gradient can match at the edge the
+    # ground is read from and be far off in the middle, and naming two near-identical
+    # hexes would send the next round chasing a difference of two.
+    background_where, background_ref_hex, background_att_hex = None, None, None
+    if behind.sum() >= 256:
+        per_px_rgb = np.sqrt(((ref - att) ** 2).sum(axis=2))
+        h, w = behind.shape
+        worst, worst_cell = -1.0, None
+        for r in range(4):
+            for c in range(4):
+                y0, y1 = h * r // 4, h * (r + 1) // 4
+                x0, x1 = w * c // 4, w * (c + 1) // 4
+                sel = behind[y0:y1, x0:x1]
+                if sel.sum() < 64:
+                    continue
+                mean = float(per_px_rgb[y0:y1, x0:x1][sel].mean())
+                if mean > worst:
+                    worst, worst_cell = mean, (r, c, y0, y1, x0, x1, sel)
+        if worst_cell is not None:
+            r, c, y0, y1, x0, x1, sel = worst_cell
+            background_where = _cell_name({"row": r, "col": c})
+            background_ref_hex = "#{:02X}{:02X}{:02X}".format(
+                *[int(v) for v in ref[y0:y1, x0:x1][sel].mean(axis=0)])
+            background_att_hex = "#{:02X}{:02X}{:02X}".format(
+                *[int(v) for v in att[y0:y1, x0:x1][sel].mean(axis=0)])
     both = np.logical_and(m_ref, m_att)
     overlap_dist = (float(np.sqrt(((ref[both] - att[both]) ** 2).sum(axis=1)).mean())
                     if both.sum() >= 16 else colour_dist)
@@ -834,6 +916,14 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
             "ssim": round(ssim, 4),
             "shape_iou": round(iou, 4),
             "palette_distance": round(colour_dist, 2),
+            # Kept apart so the report can say which of the two is wrong. A page whose
+            # content colours are right but whose background is off needs a different
+            # sentence from one that invented a colour, and the model can act on both.
+            "palette_only_distance": round(palette_dist, 2),
+            "background_distance": round(background_dist, 2),
+            "background_where": background_where,
+            "background_reference_hex": background_ref_hex,
+            "background_attempt_hex": background_att_hex,
             "colour_distance_where_both_drew": round(overlap_dist, 2),
             "edge_correlation": round(edge_corr, 4),
             "ink_coverage_reference": round(coverage_ref * 100, 2),
@@ -844,6 +934,8 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
         "size": [int(ref.shape[1]), int(ref.shape[0])],
         "ignored_pct": round(ignored_share, 2),
         "ground": ["#{:02X}{:02X}{:02X}".format(*[int(v) for v in ground])],
+        "ground_attempt": "#{:02X}{:02X}{:02X}".format(
+            *[int(v) for v in _ground_colour(att)]),
         "colours": {"reference": ref_cols, "attempt": att_cols},
         "regions": cells,
         "worst_regions": [{"where": _cell_name(c), "rmse": c["rmse"]} for c in worst],
@@ -912,6 +1004,24 @@ def _problems(report):
         "detail": "Detail density does not match (edge correlation {:.2f}). {}",
     }
 
+    # Colour is reported whatever else is wrong. It used to be reached only through the
+    # ranked loop below, which breaks as soon as there are element lines, and on a real
+    # page there are always element lines. So a page could score 64.5 on colour and be
+    # told nothing about colour at all, round after round, while the loop nudged text.
+    # A wrong page colour is also one of the cheapest things to fix, so it goes early.
+    if comp.get("colour", 100) < 90:
+        bg = raw.get("background_distance", 0.0)
+        pal = raw.get("palette_only_distance", 0.0)
+        if bg >= max(pal, 8.0) and raw.get("background_where"):
+            out.append(
+                "The page behind the content is the wrong colour. Where it is furthest off, the {} "
+                "of the page, the design is {} and the attempt is {}. Fix the page background, "
+                "gradient or body colour before the elements sitting on it.".format(
+                    raw["background_where"], raw["background_reference_hex"],
+                    raw["background_attempt_hex"]))
+        elif pal >= 8.0:
+            out.append(wording["colour"].format(pal))
+
     els = report.get("elements") or {}
     glyph = els.get("glyph") or {}
     typeface = glyph.get("lines", 0) >= 8 and glyph.get("weak_share", 0) >= 0.15
@@ -922,6 +1032,9 @@ def _problems(report):
 
     element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
     out.extend(element_lines)
+    # Spacing after the elements themselves: a gap is only worth changing once the
+    # things on either side of it are the right size.
+    out.extend(_spacing_sentence(s) for s in (els.get("spacing") or [])[:2])
 
     for name, value in ranked[:2]:
         if element_lines or typeface:
