@@ -222,8 +222,15 @@ class TypefaceHint(unittest.TestCase):
         fx = HERE / "fixtures"
         r, _, _ = so.score_images(Image.open(fx / "pricing-design.png"),
                                   Image.open(fx / "pricing-right-font-near.png"))
-        self.assertFalse(any("font" in p and "wrong" in p for p in r["problems"]), r["problems"])
+        # Narrowed to the one sentence this guards, the same one the wrong-font test
+        # above asserts is present. A measured font-size difference is a different
+        # claim: the glyph check here confirms the family is right, so "right family,
+        # wrong size" is a useful decomposition rather than a relapse into blaming the
+        # typeface. The added weak_share check makes the guard stricter, not looser.
+        self.assertFalse(any("font family or weight is wrong" in p for p in r["problems"]),
+                         r["problems"])
         self.assertGreater(r["elements"]["glyph"]["median"], 0.85)
+        self.assertEqual(r["elements"]["glyph"]["weak_share"], 0.0)
 
     def test_no_font_hint_for_shapes_with_the_wrong_colour(self):
         self.assertFalse(any("font family" in p for p in score("hue")["problems"]))
@@ -744,7 +751,25 @@ class PageGeometry(unittest.TestCase):
             so._check_url("localhost:5173/pricing")
 
 
-def stack(bg="#F5F8FF", gaps=(24, 24), bar_h=26, top=40):
+def typeset(stroke=2, bar_h=26, gaps=(24, 24), bg="#F5F8FF"):
+    """Rows of vertical strokes: a stand-in for text whose weight can be varied.
+
+    Solid bars cannot express weight, and horizontal stripes break the row-band
+    reading that measures height. Strokes of a given thickness on a fixed pitch change
+    how much of the box is ink while leaving the box itself the same size.
+    """
+    img = Image.new("RGB", (360, 320), bg)
+    d = ImageDraw.Draw(img)
+    y = 40
+    for gap in (0,) + tuple(gaps):
+        y += gap
+        for x in range(40, 300, 8):
+            d.rectangle([x, y, x + stroke - 1, y + bar_h - 1], fill="#1B2A3A")
+        y += bar_h
+    return img
+
+
+def stack(bg="#F5F8FF", gaps=(24, 24), bar_h=26, top=40, indent=0):
     """A page-like scene: a column of dark bars on a tinted ground.
 
     Bars stand in for text. They give the element matcher something to match and the
@@ -755,7 +780,8 @@ def stack(bg="#F5F8FF", gaps=(24, 24), bar_h=26, top=40):
     y = top
     for i, gap in enumerate((0,) + tuple(gaps)):
         y += gap
-        d.rectangle([40, y, 300, y + bar_h - 1], fill="#1B2A3A")
+        x0 = 40 + (indent if i % 2 else 0)
+        d.rectangle([x0, y, x0 + 260, y + bar_h - 1], fill="#1B2A3A")
         y += bar_h
     return img
 
@@ -795,7 +821,10 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
                             report["raw"]["background_attempt_hex"])
 
     def test_a_gap_that_is_too_big_is_named_with_both_numbers(self):
-        report = so.score_images(stack(gaps=(20, 20)), stack(gaps=(20, 60)))[0]
+        # Indented, so these read as separate blocks rather than lines of one, which
+        # would be reported as line-height instead.
+        report = so.score_images(stack(gaps=(20, 20), indent=40),
+                                 stack(gaps=(20, 60), indent=40))[0]
         spacing = report["elements"]["spacing"]
         self.assertTrue(spacing, "the 40px wider gap was not found")
         s = spacing[0]
@@ -807,6 +836,39 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertIn("is {}px".format(s["attempt"]), line)
         self.assertIn("the design has {}px".format(s["design"]), line)
         self.assertIn("too big", line)
+
+    def test_bigger_text_is_reported_as_font_size(self):
+        problems = self.problems(typeset(bar_h=20), typeset(bar_h=32))
+        line = [p for p in problems if "font-size" in p]
+        self.assertTrue(line, problems)
+        self.assertIn("px tall", line[0])
+
+    def test_heavier_text_is_reported_as_font_weight(self):
+        # Same boxes on the same pitch, thicker strokes inside them: weight, not size.
+        problems = self.problems(typeset(stroke=2), typeset(stroke=5))
+        line = [p for p in problems if "font-weight" in p]
+        self.assertTrue(line, problems)
+        self.assertIn("% of its box is ink", line[0])
+        self.assertIn("heavier", line[0])
+
+    def test_type_is_silent_when_the_type_matches(self):
+        # The typeface hint used to fire on a page whose font was already right and
+        # cost a round every time it did. Silence here is the whole point.
+        problems = self.problems(typeset(gaps=(24, 24)), typeset(gaps=(24, 40)))
+        self.assertFalse([p for p in problems if "font-size" in p or "font-weight" in p],
+                         problems)
+
+    def test_lines_of_one_block_are_reported_as_line_height(self):
+        problems = self.problems(stack(gaps=(8, 8), bar_h=22), stack(gaps=(18, 18), bar_h=22))
+        self.assertTrue([p for p in problems if "line-height" in p], problems)
+
+    def test_a_gap_far_too_large_is_not_called_line_height(self):
+        # A design gap of 8px that became 90px is not a line height eleven times too
+        # big; it is something inserted. Saying line-height would set the wrong property.
+        report = so.score_images(stack(gaps=(8, 8), bar_h=22), stack(gaps=(90, 8), bar_h=22))[0]
+        self.assertTrue(report["elements"]["spacing"])
+        self.assertFalse(any(s.get("leading") and s["attempt"] > 60
+                             for s in report["elements"]["spacing"]))
 
     def test_a_page_wide_shift_is_not_reported_as_a_spacing_problem(self):
         # A gap is the distance between two elements, so shifting everything down

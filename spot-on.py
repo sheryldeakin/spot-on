@@ -647,9 +647,111 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
         return sum(x["area"] for x in g) * mag
 
     groups.sort(key=weight, reverse=True)
+    for d, a in matched:
+        if d["kind"] == "text":
+            d["type"], a["type"] = _type_metrics(g_ref, d), _type_metrics(g_att, a)
+
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
-            "spacing": _spacing_gaps(matched, css, size)}
+            "spacing": _spacing_gaps(matched, css, size),
+            "type": _type_findings(matched, css, size)}
+
+
+def _type_metrics(g, el):
+    """Measure the type inside one element box: how tall, how heavy, how far apart.
+
+    The report could only say a text element was "about 17% wider" and then hedge
+    between font size, weight and letter spacing, leaving the model to pick. These are
+    the three it can set directly, read off the rows of ink inside the box: the height
+    of a row band is the size, how much of the box is ink is the weight, and the step
+    from one band to the next is the line height.
+    """
+    crop = g[el["y"]:el["y"] + el["h"], el["x"]:el["x"] + el["w"]]
+    if crop.size < 60:
+        return None
+    ink = np.abs(crop - np.median(crop)) > 24
+    rows = ink.mean(axis=1) > 0.02
+    if not rows.any():
+        return None
+
+    bands, start = [], None
+    for i, on in enumerate(rows):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            bands.append((start, i))
+            start = None
+    if start is not None:
+        bands.append((start, len(rows)))
+    bands = [b for b in bands if b[1] - b[0] >= 3]
+    if not bands:
+        return None
+
+    heights = sorted(b[1] - b[0] for b in bands)
+    spacing = None
+    if len(bands) >= 2:
+        steps = [bands[i + 1][0] - bands[i][0] for i in range(len(bands) - 1)]
+        spacing = float(np.median(steps))
+    return {"height": float(heights[len(heights) // 2]), "density": float(ink.mean()),
+            "spacing": spacing, "lines": len(bands)}
+
+
+def _type_findings(matched, css, size, limit=2):
+    """Where the type itself differs, named as the property that sets it."""
+    out = []
+    for d, a in matched:
+        if d["kind"] != "text":
+            continue
+        md, ma = d.get("type"), a.get("type")
+        if not md or not ma:
+            continue
+        common = {"x": css(d["x"]), "y": css(d["y"]), "where": _where(d, size),
+                  "area": d["w"] * d["h"]}
+        # Deliberately hard to trigger. The old typeface hint fired on pages whose font
+        # was already right and cost a round every time, so the bar is set above what
+        # antialiasing and band-edge rounding can produce on their own: a 2px difference
+        # on a 23px line is noise, and every real miss measured on actual rebuilds was
+        # 4px or more. Silence on a page that is already right is worth more here than
+        # catching the smallest true difference.
+        dh = ma["height"] - md["height"]
+        if abs(dh) >= 3 and abs(dh) >= 0.12 * md["height"]:
+            out.append(dict(common, prop="size", design=css(md["height"]),
+                            attempt=css(ma["height"])))
+        dd = ma["density"] - md["density"]
+        if abs(dd) >= 0.08 and abs(dd) >= 0.25 * md["density"]:
+            out.append(dict(common, prop="weight", design=int(round(md["density"] * 100)),
+                            attempt=int(round(ma["density"] * 100))))
+        # Line height is deliberately not measured here. The element finder already
+        # splits a paragraph into one element per line, so every text box holds a single
+        # band and this is the wrong level to look at it. It is the gap between
+        # consecutive lines of a block instead, which _spacing_gaps reports.
+    out.sort(key=lambda f: -f["area"])
+    seen, kept = set(), []
+    for f in out:
+        # One sentence per property, on the biggest element that shows it. Three
+        # headings all a size too small is one mistake, not three.
+        if f["prop"] in seen:
+            continue
+        seen.add(f["prop"])
+        kept.append(f)
+    return kept[:limit]
+
+
+_TYPE_WORDING = {
+    "size": ("The text at x {x}, y {y} (the {where} of the page) is {attempt}px tall; the design's "
+             "is {design}px. That is font-size, and getting it wrong also makes the width and the "
+             "spacing around it read as wrong."),
+    "weight": ("The text at x {x}, y {y} (the {where} of the page) is {heavier} than the design: "
+               "{attempt}% of its box is ink against {design}%. That is font-weight."),
+    "leading": ("The lines of text at x {x}, y {y} (the {where} of the page) sit {attempt}px apart; "
+                "the design has {design}px. That is line-height on that block alone, never on "
+                "every text element."),
+}
+
+
+def _type_sentence(f):
+    return _TYPE_WORDING[f["prop"]].format(
+        heavier="heavier" if f["attempt"] > f["design"] else "lighter", **f)
 
 
 def _spacing_gaps(matched, css, size, limit=3):
@@ -691,14 +793,31 @@ def _spacing_gaps(matched, css, size, limit=3):
         if key in seen:
             continue
         seen.add(key)
+        # Two text lines that start at the same left edge and sit close together are
+        # consecutive lines of one block, so their gap is line-height rather than a
+        # margin. Worth saying, because it is the one property a model reaches for
+        # globally, and doing that has repeatedly broken pages that already matched.
+        # Both gaps have to look like line spacing, not just the design's. A design gap
+        # of 22px that became 113px is not a line height five times too big, it is
+        # something inserted between the lines or a pair that should not have matched,
+        # and calling it line-height would send the next round to set exactly the wrong
+        # property. That falls through to the plain gap sentence, which stays true.
+        line_h = min(d0["h"], d1["h"])
+        leading = (d0["kind"] == "text" and d1["kind"] == "text"
+                   and abs(d0["x"] - d1["x"]) <= 8
+                   and gap_ref <= 1.5 * line_h and gap_att <= 2.5 * line_h)
         out.append({"y": css(d0["y"] + d0["h"]), "where": _where(d0, size),
                     "design": css(gap_ref), "attempt": css(gap_att), "diff": diff,
-                    "kind": d1["kind"]})
+                    "kind": d1["kind"], "leading": leading})
     out.sort(key=lambda s: -abs(s["diff"]))
     return out[:limit]
 
 
 def _spacing_sentence(s):
+    if s.get("leading"):
+        return ("The lines of text at y {}px (the {} of the page) sit {}px apart; the design has "
+                "{}px. That is line-height on that block alone, never on every text "
+                "element.".format(s["y"], s["where"], s["attempt"], s["design"]))
     return ("The gap above the {} at y {}px (the {} of the page) is {}px; the design has {}px, "
             "so it is {}px too {}. Change the margin or padding there, not the element "
             "itself.".format("text" if s["kind"] == "text" else "box", s["y"], s["where"],
@@ -1029,6 +1148,11 @@ def _problems(report):
         out.append("The letters themselves do not match: {:.0f}% of the text lines that are in the "
                    "right place still differ in shape, so the font family or weight is wrong. Fix "
                    "the font before moving any boxes.".format(glyph["weak_share"] * 100))
+
+    # Type before the element boxes: a wrong font-size is reported again by every box
+    # around it as a wrong width and a wrong height, so fixing it first removes several
+    # of the complaints below rather than adding to them.
+    out.extend(_type_sentence(f) for f in (els.get("type") or []))
 
     element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
     out.extend(element_lines)
