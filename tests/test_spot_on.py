@@ -1354,8 +1354,12 @@ class ArtworkIsNamedAsUnreachable(unittest.TestCase):
         # three.js, on exactly the element most worth building in 3D.
         report = so.score_images(self.picture(), self.flat_ui())[0]
         line = [p for p in report["problems"] if "artwork rather than layout" in p][0]
-        self.assertIn("cannot tell a photograph from a rendered object", line)
-        self.assertIn("can be built as one", line)
+        # Measured: a three.js globe reads correctly to a person and moves the score
+        # barely at all, so the line tells it to build the object and warns that the
+        # number will not reward it, rather than implying the area is hopeless.
+        self.assertIn("build it as one with three.js", line)
+        self.assertIn("score may barely move", line)
+        self.assertNotIn("will not be reached by any amount of code", line)
 
     def test_artwork_that_was_reproduced_is_not_named(self):
         art = self.picture()

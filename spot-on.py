@@ -1789,14 +1789,15 @@ def _problems(report):
     if art:
         out.append(
             "About {:.0f}% of the design is artwork rather than layout, around the {} of the "
-            "page: {} distinct colours and dense detail. This measurement cannot tell a "
-            "photograph from a rendered object, so decide which it is. A photograph or an "
-            "illustration will not be reached by any amount of code: export it and place it as "
-            "an image. A 3D object can be built as one, and should be, but do not expect it to "
-            "match a rendered image exactly. It covers roughly x {} to {}, y {} to {}, so that "
-            "is the region to crop from the design if you export it. Either way, stop nudging "
-            "it round after round, and read the rest of the report as being about everything "
-            "else.".format(art["share"], art["where"], art["colours"],
+            "page: {} distinct colours and dense detail. If it is a 3D object, a globe, a device, "
+            "a product, build it as one with three.js rather than faking it flat: it will read "
+            "correctly even though the score may barely move, because what separates a render "
+            "from a picture of one is fine low-contrast detail, and that is the part this "
+            "measurement sees least well. If it is a photograph or an illustration, no code "
+            "reaches it: export it and place it as an image. It covers roughly x {} to {}, y {} "
+            "to {}, so that is the region to crop. Match its brightness to the design rather "
+            "than assuming detailed means bright, and either way do not spend round after round "
+            "nudging it.".format(art["share"], art["where"], art["colours"],
                            art["box"][0], art["box"][2], art["box"][1], art["box"][3]))
         said.add("artwork")
 
