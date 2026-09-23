@@ -880,6 +880,38 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertEqual(spacing, [])
 
 
+class FontFromTheSource(unittest.TestCase):
+    """Pixels cannot name a typeface, but a live design's own markup can."""
+
+    DOM = ('<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700">'
+           "<style>body{font-family:'Poppins',Inter,sans-serif} .a{font-family:Georgia,serif}"
+           " .b{font-family:var(--theme-font)} .c{font-family:sans-serif}</style>")
+
+    def test_a_loaded_webfont_outranks_a_fallback_stack(self):
+        self.assertEqual(so.fonts_in_source(self.DOM)[0], "Poppins")
+
+    def test_generic_families_and_variables_are_not_typefaces(self):
+        found = so.fonts_in_source(self.DOM)
+        for junk in ("sans-serif", "serif", "var(--theme-font)", "--theme-font"):
+            self.assertNotIn(junk, found)
+
+    def test_nothing_is_invented_when_the_page_names_nothing(self):
+        self.assertEqual(so.fonts_in_source("<p>no styles here</p>"), [])
+
+    def test_the_name_is_given_only_when_the_typeface_is_wrong(self):
+        fx = HERE / "fixtures"
+        design = Image.open(fx / "pricing-design.png")
+
+        def named(attempt, fonts):
+            r, _, _ = so.score_images(design, Image.open(fx / attempt), design_fonts=fonts)
+            return any("own source asks for" in p for p in r["problems"])
+
+        self.assertTrue(named("pricing-wrong-font.png", ["Poppins"]))
+        self.assertFalse(named("pricing-wrong-font.png", None))
+        # Already correct: naming a font here is what used to cost a whole round.
+        self.assertFalse(named("pricing-right-font-near.png", ["Poppins"]))
+
+
 class RowSpacing(unittest.TestCase):
     """A row of links is spaced along the other axis, and nothing measured it."""
 

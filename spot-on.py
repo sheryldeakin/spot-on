@@ -1082,7 +1082,7 @@ def _cell_name(cell):
     return "{}, {}".format(_ROW_WORDS[cell["row"]], _COL_WORDS[cell["col"]])
 
 
-def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
+def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None):
     """Compare two same-size RGB images and return the full score report.
 
     px_per_css converts image pixels back to CSS pixels for the sentences in the
@@ -1262,6 +1262,8 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
         report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css)
     except ImportError:
         report["elements"] = None  # scipy missing: page-wide feedback only
+    # Known only when the design is a live page, and only used to name the typeface.
+    report["design_fonts"] = list(design_fonts or [])
     report["problems"] = _problems(report)
     return report, per_px, ground
 
@@ -1345,6 +1347,11 @@ def _problems(report):
                    "right place still differ in shape, so the font family or weight is wrong. Fix "
                    "the font before moving any boxes.".format(glyph["weak_share"] * 100))
         said.add("type")
+        fonts = report.get("design_fonts") or []
+        if fonts:
+            out.append("The design's own source asks for {}. Use that rather than guessing from "
+                       "the letter shapes; if it is not installed, say so instead of "
+                       "substituting.".format(", ".join(fonts)))
 
     # Type before the element boxes: a wrong font-size is reported again by every box
     # around it as a wrong width and a wrong height, so fixing it first removes several
@@ -2050,7 +2057,8 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
                           scale=run.get("scale", 1.0), ground=run.get("ground", "#FFFFFF"))
     px_per_css = run["width"] / float(run.get("css_width", run["width"]))
     ignore = _unstable_mask(slug, run, code)
-    report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css, ignore=ignore)
+    report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css, ignore=ignore,
+                                     design_fonts=run.get("design_fonts"))
     diff_heatmap(per_px, d / "attempts" / "{:03d}-diff.png".format(n), ignore=ignore)
     (d / "attempts" / "{:03d}.code".format(n)).write_text(code, encoding="utf-8")
 
@@ -2091,6 +2099,63 @@ def capture_design(url, out_png, css_width=1440, css_height=900, scale=1.0):
     """
     return render_code(_check_url(url), "url", css_width, css_height, out_png,
                        out_size=(round(css_width * scale), round(css_height * scale)), scale=scale)
+
+
+_GENERIC_FAMILIES = {
+    "inherit", "initial", "unset", "revert", "serif", "sans-serif", "monospace", "cursive",
+    "fantasy", "system-ui", "-apple-system", "blinkmacsystemfont", "ui-monospace",
+    "ui-sans-serif", "ui-serif", "ui-rounded", "emoji", "math", "fangsong", "var",
+}
+
+
+def read_page_fonts(url, limit=3):
+    """The typefaces a live page actually asks for, read from its own source.
+
+    No amount of looking at pixels will name a typeface, so the report can only say the
+    letter shapes differ and leave the model to guess, and a wrong guess costs a round.
+    When the design is a link the answer is simply available: the page says what it
+    wants. The DOM is dumped after scripts have run, so a font a bundler injects at
+    runtime counts too, which a plain fetch of the HTML would miss.
+    """
+    chrome = _find_chrome()
+    if chrome is None:
+        return []
+    tmp = Path(tempfile.mkdtemp(prefix="spot-on-fonts-"))
+    try:
+        proc = _run_tree([str(chrome), "--headless=new", "--disable-gpu", "--no-first-run",
+                          "--user-data-dir={}".format(tmp / "profile"),
+                          "--virtual-time-budget=4000", "--dump-dom", _check_url(url)],
+                         timeout=60)
+        dom = (proc.stdout or b"").decode("utf-8", "replace")
+    except Exception:
+        return []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return fonts_in_source(dom, limit)
+
+
+def fonts_in_source(dom, limit=3):
+    """Rank the typefaces named in a page's markup and styles."""
+    counts = {}
+
+    def note(name, weight):
+        name = name.strip().strip("\"'").strip()
+        if not name or name.lower() in _GENERIC_FAMILIES or len(name) > 40:
+            return
+        if name.startswith("--") or "(" in name:
+            return
+        counts[name] = counts.get(name, 0) + weight
+
+    # A webfont the page loads on purpose outranks a name inside a stack, which is
+    # mostly a fallback chain listing faces the page is not using.
+    for m in re.finditer(r"fonts\.googleapis\.com/css2?\?([^\"'>]+)", dom):
+        for fam in re.findall(r"family=([^&:]+)", m.group(1)):
+            note(fam.replace("+", " "), 10)
+    for m in re.finditer(r"@font-face[^}]*?font-family\s*:\s*([^;}]+)", dom, re.I):
+        note(m.group(1), 6)
+    for m in re.finditer(r"font-family\s*:\s*([^;}]+)", dom, re.I):
+        note(m.group(1).split(",")[0], 1)   # first face only; the rest are fallbacks
+    return [n for n, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:limit]]
 
 
 def load_design(reference_bytes=None, reference_path=None):
@@ -2154,6 +2219,12 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
     }
     if reference_url:
         run["design_url"] = reference_url
+        # Read once, when the design is captured: the page is up now, and the answer
+        # does not change between rounds.
+        try:
+            run["design_fonts"] = read_page_fonts(reference_url)
+        except Exception:
+            run["design_fonts"] = []
     _save_run(slug, run)
     return run
 
