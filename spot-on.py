@@ -2326,7 +2326,7 @@ PAGE_HTML = r"""<!doctype html>
 
     <div style="position: relative; display: grid; grid-template-columns: minmax(0,1fr) 1px minmax(0,1fr); align-items: stretch;">
 
-      <div id="sec-attempt" style="grid-column: 1; grid-row: 1; padding: 26px 34px 28px 0; min-width: 0; position: relative;">
+      <div id="sec-attempt" style="grid-column: 1; grid-row: 2; padding: 26px 34px 28px 0; min-width: 0; position: relative;">
         <div class="wash wash-cream" aria-hidden="true" style="left: -32px; right: -10px;"></div>
         <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
           <div>
@@ -2385,9 +2385,9 @@ PAGE_HTML = r"""<!doctype html>
         </div>
       </div>
 
-      <div class="vrule" style="grid-column: 2; grid-row: 1;"></div>
+      <div class="vrule" style="grid-column: 2; grid-row: 2;"></div>
 
-      <div id="sec-compare" style="grid-column: 1 / -1; grid-row: 2; display: flex; flex-direction: column; padding: 11px 22px 20px; margin: 4px 0 18px; min-width: 0; background: linear-gradient(180deg, #52796F 0%, #3E5D53 40%, #2A4237 74%, #1F3029 100%); border-radius: 14px; color: #D6E1D8; -webkit-mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%); mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%);">
+      <div id="sec-compare" style="grid-column: 1 / -1; grid-row: 1; display: flex; flex-direction: column; padding: 11px 22px 20px; margin: 18px 0 8px; min-width: 0; background: linear-gradient(180deg, #52796F 0%, #3E5D53 40%, #2A4237 74%, #1F3029 100%); border-radius: 14px; color: #D6E1D8; -webkit-mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%); mask-image: radial-gradient(126% 118% at 50% 42%, #000 62%, rgba(0,0,0,0.55) 84%, rgba(0,0,0,0) 100%);">
         <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 0 0 12px;">
           <div style="flex: 1; min-width: 0;">
             <h2 class="sec-title" style="color: #EDF2ED;">Comparison</h2>
@@ -2429,7 +2429,7 @@ PAGE_HTML = r"""<!doctype html>
         <div style="color: #E2EAE3; font-size: 11px; margin-top: 9px;">In the difference view, bright red is a big miss and black is an exact match. Antialiasing always leaves a faint outline.</div>
       </div>
 
-      <div id="sec-score" style="grid-column: 3; grid-row: 1; padding: 26px 0 30px 30px; min-width: 0; position: relative;">
+      <div id="sec-score" style="grid-column: 3; grid-row: 2; padding: 26px 0 30px 30px; min-width: 0; position: relative;">
         <div class="wash wash-cream" aria-hidden="true" style="left: -32px; right: -10px;"></div>
         <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 0 0 12px;">
           <div>
