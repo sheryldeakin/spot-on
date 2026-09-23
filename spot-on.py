@@ -2176,8 +2176,10 @@ PAGE_HTML = r"""<!doctype html>
   .text-input { color: var(--ink); background: #FFFFFF; border: 1px solid var(--border); border-radius: 10px; height: 32px; padding: 0 12px; font-size: 13px; }
 
   .score-big { font-family: 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 52px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; background: linear-gradient(96deg, #22372B, #52796F); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
-  .bar-track { height: 6px; border-radius: 999px; background: rgba(120,120,128,0.16); overflow: hidden; }
-  .bar-fill { height: 6px; border-radius: 999px; background: var(--accent); }
+  /* Both display:block. As inline spans the fill had no width or height at all, so
+     every bar drew an empty track whatever the score was. */
+  .bar-track { display: block; height: 8px; border-radius: 999px; background: rgba(34,55,43,0.12); overflow: hidden; }
+  .bar-fill { display: block; height: 8px; border-radius: 999px; background: var(--deep); transition: width 180ms ease; }
   .comp-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 12px; align-items: center; min-height: 30px; }
   .comp-name { font-size: 13px; font-weight: 500; }
   .comp-val { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; color: var(--deep); font-variant-numeric: tabular-nums; }
@@ -2453,9 +2455,10 @@ PAGE_HTML = r"""<!doctype html>
             <div class="vrule" style="height: 108px;"></div>
             <div id="components" style="min-width: 0;"></div>
             <div class="vrule" style="height: 108px;"></div>
-            <div>
+            <div title="The page divided into sixteen areas. The darker the square, the further that part of the page is from the design.">
+              <div class="mono" style="font-size: 10px; color: var(--muted); letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px;">where the miss is</div>
               <div id="region-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; width: 120px;"></div>
-              <div class="mono" style="font-size: 10px; color: var(--muted); letter-spacing: 0.14em; text-transform: uppercase; margin-top: 8px;">where the miss is</div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 7px; max-width: 150px; line-height: 1.35;">The page in sixteen areas. Darker is further from the design.</div>
             </div>
           </div>
 
