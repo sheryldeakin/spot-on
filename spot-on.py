@@ -651,13 +651,16 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
     for d, a in matched:
         if d["kind"] == "text":
             d["type"], a["type"] = _type_metrics(g_ref, d), _type_metrics(g_att, a)
+            d["emphasis"] = _emphasis_metrics(g_ref, d)
+            a["emphasis"] = _emphasis_metrics(g_att, a)
 
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
             "spacing": _spacing_gaps(matched, css, size),
             "row_spacing": _row_gaps(matched, css, size),
             "type": _type_findings(matched, css, size),
-            "alignment": _alignment(matched, css)}
+            "alignment": _alignment(matched, css),
+            "emphasis": _emphasis_findings(matched, css, size)}
 
 
 def _type_metrics(g, el):
@@ -697,6 +700,133 @@ def _type_metrics(g, el):
         spacing = float(np.median(steps))
     return {"height": float(heights[len(heights) // 2]), "density": float(ink.mean()),
             "spacing": spacing, "lines": len(bands)}
+
+
+def _emphasis_metrics(g, el):
+    """Underline, slant and the weight along the line, for one text element.
+
+    Emphasis is a real design instruction that the measurements so far walked past: a
+    word set in bold, a link underlined, a phrase in italic. The score feels it, as a
+    little less ink or a slightly different edge, and no sentence ever said what it was.
+    """
+    crop = g[el["y"]:el["y"] + el["h"], el["x"]:el["x"] + el["w"]]
+    if crop.size < 200:
+        return None
+    ink = np.abs(crop - np.median(crop)) > 24
+    rows = np.where(ink.mean(axis=1) > 0.005)[0]
+    cols = np.where(ink.any(axis=0))[0]
+    if rows.size < 6 or cols.size < 24:
+        return None
+    band = ink[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+    width = band.shape[1]
+
+    # A row inked across nearly the whole width of the text is a rule, not letters.
+    bottom = band[int(band.shape[0] * 0.78):]
+    underline = float(max((r.sum() / float(width) for r in bottom), default=0.0))
+
+    # Stroke angle from the gradients, with any underline row dropped first: a long
+    # horizontal rule swamps the statistics and makes underlined text read as italic.
+    keep = band[:int(band.shape[0] * 0.78)] if underline > 0.9 else band
+    patch = crop[rows.min():rows.min() + keep.shape[0], cols.min():cols.max() + 1]
+    gx = np.zeros_like(patch); gy = np.zeros_like(patch)
+    gx[:, 1:-1] = patch[:, 2:] - patch[:, :-2]
+    gy[1:-1, :] = patch[2:, :] - patch[:-2, :]
+    mag = np.hypot(gx, gy)
+    strong = mag > 40
+    if strong.sum() >= 50:
+        ang = np.arctan2(gy[strong], gx[strong])
+        slant = float(np.degrees(0.5 * np.arctan2(np.sin(2 * ang).mean(),
+                                                  np.cos(2 * ang).mean())))
+    else:
+        slant = 0.0
+
+    cells = 12
+    profile = [float(c.mean()) for c in np.array_split(keep, cells, axis=1)]
+    return {"underline": underline, "slant": slant, "profile": profile,
+            "density": float(band.mean()), "x": el["x"], "w": el["w"]}
+
+
+def _emphasis_findings(matched, css, size, limit=2):
+    """Where the design emphasises text and the attempt does not, or the reverse."""
+    out = []
+    for d, a in matched:
+        if d["kind"] != "text":
+            continue
+        md, ma = d.get("emphasis"), a.get("emphasis")
+        if not md or not ma:
+            continue
+        # Only lines that already sit in the right place and hold the same amount of
+        # text. A one-line box in the design matched against a box holding three
+        # wrapped lines in the attempt compared the design's only line against the
+        # attempt's last one, and reported an underline and an italic that were
+        # neither. The test is a ratio, not a percentage, because an underline
+        # legitimately makes a line about a quarter taller while a wrapped paragraph
+        # is a multiple of it.
+        taller = max(d["h"], a["h"]) / float(max(min(d["h"], a["h"]), 1))
+        if (abs(d["w"] - a["w"]) > 0.08 * max(d["w"], 1) or taller > 1.6
+                or abs(d["x"] - a["x"]) > 6):
+            continue
+        # A mostly-filled box is a shape, not a line of type. A pill button's rounded
+        # ends tilt the measured stroke angle (-8.6 degrees on one, which read as
+        # italic), and a solid rectangle's bottom row is a perfect underline. Neither
+        # has any emphasis to report, so shapes are left out of all three checks.
+        if md["density"] > 0.6 or ma["density"] > 0.6:
+            continue
+        # And only on something shaped like a line of text. The element finder calls a
+        # 57x49 logo "text", and when the attempt drew a plain dark circle in its place
+        # the circle's fully inked bottom rows scored a perfect underline. A line of
+        # type is several times wider than it is tall; a glyph or an icon is not.
+        if min(d["w"], a["w"]) < 2.5 * max(d["h"], a["h"]):
+            continue
+        common = {"x": css(d["x"]), "y": css(d["y"]), "where": _where(d, size),
+                  "area": d["w"] * d["h"]}
+        if md["underline"] > 0.9 and ma["underline"] < 0.7:
+            out.append(dict(common, prop="underline", design="underlined",
+                            attempt="not underlined"))
+        elif ma["underline"] > 0.9 and md["underline"] < 0.7:
+            out.append(dict(common, prop="underline", design="not underlined",
+                            attempt="underlined"))
+        # 12 degrees, not 8: a genuine italic measures about 18 against an upright 0,
+        # while curves and antialiasing on ordinary text drift a few degrees on their own.
+        if abs(md["slant"] - ma["slant"]) >= 12:
+            leaning = md["slant"] > ma["slant"]
+            out.append(dict(common, prop="italic",
+                            design="italic" if leaning else "upright",
+                            attempt="upright" if leaning else "italic"))
+        gaps = [x - y for x, y in zip(md["profile"], ma["profile"])]
+        if gaps:
+            spread = sorted(abs(g) for g in gaps)[len(gaps) // 2]
+            worst = max(gaps)
+            # A spike in one part of the line is a word set differently. A rise across
+            # the whole line is the weight of the line, which font-weight already says.
+            if worst >= 0.04 and worst >= 3 * max(spread, 0.008):
+                at = gaps.index(worst)
+                out.append(dict(common, prop="part-weight",
+                                part=int(round(100.0 * at / len(gaps)))))
+    out.sort(key=lambda f: -f["area"])
+    seen, kept = set(), []
+    for f in out:
+        if f["prop"] in seen:
+            continue
+        seen.add(f["prop"])
+        kept.append(f)
+    return kept[:limit]
+
+
+_EMPHASIS_WORDING = {
+    "underline": ("The text at x {x}, y {y} (the {where} of the page) is {design} in the design "
+                  "and {attempt} in the attempt. That is text-decoration."),
+    "italic": ("The text at x {x}, y {y} (the {where} of the page) is {design} in the design and "
+               "{attempt} in the attempt. That is font-style."),
+    "part-weight": ("Part of the text at x {x}, y {y} (the {where} of the page) is set heavier in "
+                    "the design than in the attempt, starting about {part}% along the line. A word "
+                    "or phrase there is bold in the design and is not here. That is a span, not "
+                    "the weight of the whole line."),
+}
+
+
+def _emphasis_sentence(f):
+    return _EMPHASIS_WORDING[f["prop"]].format(**f)
 
 
 def _type_findings(matched, css, size, limit=2):
@@ -1358,7 +1488,9 @@ def _problems(report):
     # of the complaints below rather than adding to them.
     type_findings = els.get("type") or []
     out.extend(_type_sentence(f) for f in type_findings)
-    if type_findings:
+    emphasis_findings = els.get("emphasis") or []
+    out.extend(_emphasis_sentence(f) for f in emphasis_findings)
+    if type_findings or emphasis_findings:
         said.add("type")
     # Alignment before the individual elements too: a ragged column is one container,
     # and naming it here stops the list below repeating it once per element.

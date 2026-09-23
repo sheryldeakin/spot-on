@@ -25,7 +25,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 HERE = Path(__file__).resolve().parent
 TOOL = HERE.parent / "spot-on.py"
@@ -1024,6 +1024,98 @@ class FontFromTheSource(unittest.TestCase):
         self.assertFalse(named("pricing-wrong-font.png", None))
         # Already correct: naming a font here is what used to cost a whole round.
         self.assertFalse(named("pricing-right-font-near.png", ["Poppins"]))
+
+
+def typed(font="arial.ttf", underline=False, bold_word=None, size=22,
+          text="Understand how we protect your data"):
+    """Real text from a real font file, so bold, italic and underline are genuine."""
+    img = Image.new("RGB", (520, 70), "#FFFFFF")
+    d = ImageDraw.Draw(img)
+    f = ImageFont.truetype("C:/Windows/Fonts/" + font, size)
+    d.text((20, 20), text, font=f, fill="#1B2A3A")
+    if bold_word is not None:
+        fb = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", size)
+        words = text.split()
+        before = " ".join(words[:bold_word]) + (" " if bold_word else "")
+        x = 20 + d.textlength(before, font=f)
+        d.rectangle([x - 1, 18, x + d.textlength(words[bold_word], font=f) + 1, 18 + size + 8],
+                    fill="#FFFFFF")
+        d.text((x, 20), words[bold_word], font=fb, fill="#1B2A3A")
+    if underline:
+        d.rectangle([20, 20 + size + 4, 20 + d.textlength(text, font=f), 20 + size + 5],
+                    fill="#1B2A3A")
+    return img
+
+
+@unittest.skipUnless(Path("C:/Windows/Fonts/ariali.ttf").exists(), "needs the Arial family")
+class EmphasisIsMeasured(unittest.TestCase):
+    """Bold, italic and underline are design instructions the report walked past."""
+
+    def finds(self, design, attempt):
+        return so.score_images(design, attempt)[0]["elements"]["emphasis"]
+
+    def props(self, design, attempt):
+        return {f["prop"] for f in self.finds(design, attempt)}
+
+    def test_an_underline_that_is_missing_is_named(self):
+        self.assertIn("underline", self.props(typed(underline=True), typed()))
+
+    def test_an_underline_that_should_not_be_there_is_named(self):
+        self.assertIn("underline", self.props(typed(), typed(underline=True)))
+
+    def test_italic_against_upright_is_named(self):
+        self.assertIn("italic", self.props(typed("ariali.ttf"), typed()))
+
+    def test_one_word_left_unbolded_is_named(self):
+        # The case that started this: most of the line matches and one word in the
+        # design is set heavier. A whole-line weight check cannot see it.
+        self.assertIn("part-weight", self.props(typed(bold_word=3), typed()))
+
+    def test_identical_text_says_nothing(self):
+        self.assertEqual(self.finds(typed(), typed()), [])
+
+    def test_a_whole_line_in_bold_is_not_called_a_part(self):
+        # That is the weight of the line, which font-weight already reports; calling it
+        # a span would send the next round hunting a word that is not there.
+        self.assertNotIn("part-weight", self.props(typed("arialbd.ttf"), typed()))
+
+    def shape(self, kind):
+        """Not text: a filled pill, a solid circle, a wrapped paragraph."""
+        img = Image.new("RGB", (520, 90), "#FFFFFF")
+        d = ImageDraw.Draw(img)
+        if kind == "pill":
+            d.rounded_rectangle([20, 20, 200, 62], radius=21, fill="#1B2A3A")
+        elif kind == "circle":
+            d.ellipse([20, 18, 78, 76], fill="#1B2A3A")
+        else:
+            f = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 18)
+            for i in range(3):
+                d.text((20, 18 + i * 24), "wrapped line of body copy here", font=f,
+                       fill="#1B2A3A")
+        return img
+
+    def test_a_solid_shape_is_not_reported_as_underlined(self):
+        # Regression: the attempt drew a plain dark circle where the design had a logo,
+        # and the circle's fully inked bottom rows scored a perfect underline.
+        self.assertEqual(self.finds(typed(), self.shape("circle")), [])
+        self.assertEqual(self.finds(self.shape("circle"), typed()), [])
+
+    def test_a_pill_button_is_not_reported_as_italic(self):
+        # Regression: a rounded button's ends tilt the measured stroke angle to about
+        # -8.6 degrees, which read as italic. Setting font-style on a button is exactly
+        # the wrong instruction.
+        self.assertNotIn("italic", self.props(self.shape("pill"), typed()))
+
+    def test_a_wrapped_paragraph_is_not_compared_with_a_single_line(self):
+        # Regression: a 597x21 one-line design box matched a 604x66 three-line attempt
+        # box, and the design's only line was compared against the attempt's last one,
+        # producing an underline and an italic that were neither.
+        self.assertEqual(self.finds(typed(), self.shape("paragraph")), [])
+
+    def test_an_underline_is_not_mistaken_for_italic(self):
+        # A long horizontal rule dominates the gradients, so underlined text read as
+        # slanted until the rule was dropped before measuring the angle.
+        self.assertNotIn("italic", self.props(typed(underline=True), typed()))
 
 
 class RowSpacing(unittest.TestCase):
