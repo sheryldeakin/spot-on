@@ -1704,6 +1704,17 @@ def _cli_for(agent):
     return {"claude": "claude", "codex": "codex", "gemini": "agy"}.get(agent)
 
 
+# Some CLIs reach for a tool unprompted and stall when headless mode auto-denies the
+# permission, answering with nothing at all and an explanation only on stderr. Asking
+# them to answer directly is enough, and it does not weaken anyone's permissions: the
+# alternative the CLI suggests is --dangerously-skip-permissions, which auto-approves
+# every tool on the machine to make one page of HTML come back.
+NO_TOOLS_PREFACE = {
+    "gemini": ("Answer directly from the text below. Do not use any tools, do not run any "
+               "commands, and do not read or write any files. Reply with the code only.\n\n"),
+}
+
+
 # Whether a CLI can actually open the three images in headless mode. Gemini's cannot
 # without a permission rule it has no way to ask for: it auto-denies the read and
 # returns nothing at all, so telling it to look at reference.png produced an empty
@@ -1806,6 +1817,7 @@ def _run_cli_agent(agent, prompt, cwd, timeout=600):
     exe = shutil.which(cli)
     if exe is None and agent == "gemini":
         exe = str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
+    prompt = NO_TOOLS_PREFACE.get(agent, "") + prompt
     if len(prompt) > ARG_SAFE_CHARS and str(exe or "").lower().endswith((".cmd", ".bat")):
         prompt = _prompt_on_disk(prompt, cwd)
     if agent == "claude":

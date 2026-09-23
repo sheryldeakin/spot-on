@@ -938,6 +938,21 @@ class LongPromptsSurviveWindowsShims(unittest.TestCase):
         self.assertIn("make it match", " ".join(str(c) for c in self.seen["cmd"]))
         self.assertFalse((self.tmp / "prompt.txt").exists())
 
+    def test_gemini_is_asked_to_answer_without_tools(self):
+        # Regression: it reached for a tool unprompted, headless mode auto-denied the
+        # permission, and it returned nothing at all with the reason only on stderr.
+        # Every round silently came back a draft short.
+        so.shutil.which = lambda name: "C:\bin\agy.exe"
+        so._run_cli_agent("gemini", "make it match", self.tmp)
+        sent = " ".join(str(c) for c in self.seen["cmd"])
+        self.assertIn("Do not use any tools", sent)
+        self.assertIn("make it match", sent)
+
+    def test_the_others_are_not_told_that(self):
+        so.shutil.which = lambda name: "C:\bin\claude.exe"
+        so._run_cli_agent("claude", "make it match", self.tmp)
+        self.assertNotIn("Do not use any tools", " ".join(str(c) for c in self.seen["cmd"]))
+
     def test_a_real_executable_keeps_the_whole_prompt(self):
         # claude.exe is not a shim, so it is not subject to the cmd.exe limit.
         so.shutil.which = lambda name: "C:\\bin\\claude.exe"
