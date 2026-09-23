@@ -668,7 +668,7 @@ class BestOfN(unittest.TestCase):
     def test_count_is_clamped_and_defaults_to_three(self):
         seen = {"n": 0}
 
-        def counting(agent, prompt, cwd, images, count, kind):
+        def counting(agent, prompt, cwd, images, count, kind, panel=False):
             seen["n"] = count
             return [], ["nothing"]
 
@@ -908,6 +908,12 @@ class PanelOfModels(unittest.TestCase):
 
     def test_it_spreads_across_the_models_the_machine_has(self):
         self.assertEqual(self.panel(3, "1"), ["claude", "codex", "gemini"])
+
+    def test_the_page_can_ask_for_it_without_an_environment_variable(self):
+        # The picker sends a flag; nobody should have to know an env var exists.
+        self.assertEqual(so.panel_agents("claude", 3, panel=True),
+                         ["claude", "codex", "gemini"])
+        self.assertEqual(so.panel_agents("claude", 3, panel=False), ["claude"] * 3)
 
     def test_the_preferred_agent_goes_first(self):
         self.assertEqual(self.panel(1, "1"), ["claude"])

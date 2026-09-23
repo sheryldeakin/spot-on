@@ -1825,7 +1825,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     return "\n".join(parts)
 
 
-def panel_agents(preferred, count):
+def panel_agents(preferred, count, panel=False):
     """Which agent writes each rewrite in a round.
 
     Three draws from one model are three samples of the same habits. Three draws from
@@ -1838,14 +1838,14 @@ def panel_agents(preferred, count):
     and the list wraps if fewer are installed than the round asks for, so a machine
     with one agent behaves exactly as before.
     """
-    if not os.environ.get("SPOT_ON_PANEL"):
+    if not (panel or os.environ.get("SPOT_ON_PANEL")):
         return [preferred] * count
     others = [a for a in AGENT_ORDER if a != preferred and _agent_available(a)]
     order = [preferred] + others
     return [order[i % len(order)] for i in range(count)]
 
 
-def gather_candidates(agent, prompt, cwd, images, count, kind):
+def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
     """Ask for `count` independent rewrites at once and return the usable ones.
 
     Each round is a fresh sample, so the spread between draws is wide: keeping the
@@ -1856,7 +1856,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind):
     """
     import concurrent.futures
 
-    panel = panel_agents(agent, count)
+    chosen_panel = panel_agents(agent, count, panel)
 
     def one(which):
         raw = run_agent(which, prompt, cwd, images)
@@ -1867,7 +1867,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind):
 
     out, refusals = [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
-        for which, code, changes in pool.map(one, panel):
+        for which, code, changes in pool.map(one, chosen_panel):
             if code:
                 out.append((code, changes, which))
             else:
@@ -1878,7 +1878,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind):
 GIVE_UP_AFTER = 3
 
 
-def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
+def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, panel=False):
     """One round: ask headless Claude Code for a better attempt, render it, score it.
 
     The round is also told which faults it has already been asked to fix and has not,
@@ -1912,7 +1912,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
 
-    drafts, refusals = gather_candidates(chosen, prompt, d, images, count, run["kind"])
+    drafts, refusals = gather_candidates(chosen, prompt, d, images, count, run["kind"], panel)
     if not drafts:
         # Usage limits, refusals and errors all come back as ordinary prose. Rendering
         # that as if it were code silently poisons the run, so stop and show it instead.
@@ -1948,7 +1948,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
     # this prompt, and it is recorded like any other attempt.
     if insist and best["still_stuck"]:
         again = run_iteration(slug, extra=extra, agent=agent, candidates=candidates,
-                              insist=False)
+                              insist=False, panel=panel)
         again["insisted_on"] = best["still_stuck"]
         if again["match"] >= best["match"]:
             return again
@@ -2780,11 +2780,10 @@ function syncKindUi() {
   var url = isUrlKind();
   $("url-wrap").hidden = !url;
   $("code").hidden = url;
-  // The fold hides the whole thing on a running page, where the code lives in a repo.
-  // On a snippet run it opens itself while there is nothing to screenshot yet, because
-  // then the textarea is the only way in; once there is code it folds away again.
+  // Hidden entirely on a running page, where the code lives in a repo. On a snippet
+  // run it stays folded until asked for: the loop writes the code, and the summary
+  // line says it is there.
   $("code-fold").hidden = url;
-  if (!url && !$("code").value.trim()) $("code-fold").open = true;
   $("url-loop-note").hidden = !url;
   $("iterate-wrap").hidden = url;
   $("starter").textContent = url ? "Use localhost" : "Insert starter";
@@ -2852,6 +2851,8 @@ function runBrowserRound(note) {
     });
 }
 
+var PANEL_AGENT = "__panel__";
+
 function loadAgents() {
   return Promise.all([api("/agents"), browserAgentReady()]).then(function (both) {
     var agents = both[0], browserState = both[1];
@@ -2868,6 +2869,14 @@ function loadAgents() {
       o.textContent = a.label;
       sel.appendChild(o);
     });
+    // Only offered when there is more than one model to spread across; on a machine
+    // with a single agent it would be the same thing under a different name.
+    if (usable.length > 1) {
+      var mix = document.createElement("option");
+      mix.value = PANEL_AGENT;
+      mix.textContent = "all of them, one rewrite each";
+      sel.appendChild(mix);
+    }
     state.agents = usable.length;
     $("agent-row").hidden = usable.length === 0;
     $("iterate").hidden = usable.length === 0;
@@ -3115,7 +3124,9 @@ function iterateRounds(left, note) {
   startRoundClock(state.rounds - left + 1, state.rounds);
   ($("agent").value === BROWSER_AGENT
     ? runBrowserRound(note)
-    : api("/iterate", { run: state.run.slug, instructions: note, agent: $("agent").value,
+    : api("/iterate", { run: state.run.slug, instructions: note,
+                        agent: $("agent").value === PANEL_AGENT ? null : $("agent").value,
+                        panel: $("agent").value === PANEL_AGENT,
                         candidates: parseInt($("candidates").value, 10) }))
     .then(function (rec) {
       state.attempts.push(rec);
@@ -3639,7 +3650,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, run_iteration(payload["run"], payload.get("instructions", ""),
                                                    payload.get("agent") or None,
                                                    payload.get("candidates"),
-                                                   insist=payload.get("insist", True)))
+                                                   insist=payload.get("insist", True),
+                                                   panel=payload.get("panel", False)))
             elif path == "/kind":
                 run = _load_run(payload["run"])
                 run["kind"] = payload["kind"] if payload["kind"] in KINDS else run["kind"]
