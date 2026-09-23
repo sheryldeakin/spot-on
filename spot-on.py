@@ -1637,11 +1637,30 @@ def _b64(path):
     return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
 
+# Windows passes a command line through cmd.exe when the executable is a .cmd or .bat
+# shim, and cmd.exe truncates at 8191 characters. Both the Codex and Gemini CLIs are
+# installed as shims here, and the prompt carries the whole page source, so a real
+# rebuild goes over and the CLI dies with "The command line is too long." A trivial
+# prompt works, which is why this only showed up on a real page.
+ARG_SAFE_CHARS = 6000
+
+
+def _prompt_on_disk(prompt, cwd):
+    """Hand a long prompt over as a file, with a short argument pointing at it."""
+    path = Path(cwd) / "prompt.txt"
+    path.write_text(prompt, encoding="utf-8")
+    return ("Read the file prompt.txt in this directory. It contains your full "
+            "instructions, including the report you must act on. Follow it exactly and "
+            "answer in the format it asks for.")
+
+
 def _run_cli_agent(agent, prompt, cwd, timeout=600):
     cli = _cli_for(agent)
     exe = shutil.which(cli)
     if exe is None and agent == "gemini":
         exe = str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
+    if len(prompt) > ARG_SAFE_CHARS and str(exe or "").lower().endswith((".cmd", ".bat")):
+        prompt = _prompt_on_disk(prompt, cwd)
     if agent == "claude":
         cmd = [exe, "-p", prompt, "--output-format", "json",
                "--model", _model_for("claude"),

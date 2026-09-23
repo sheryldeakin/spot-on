@@ -880,6 +880,57 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertEqual(spacing, [])
 
 
+class LongPromptsSurviveWindowsShims(unittest.TestCase):
+    """A prompt carrying a real page is longer than cmd.exe will pass as an argument."""
+
+    def setUp(self):
+        self.saved_run, self.saved_which = so._run_tree, so.shutil.which
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-arg-"))
+        self.seen = {}
+
+        def fake(cmd, timeout=None, **kw):
+            self.seen["cmd"] = cmd
+
+            class R:
+                returncode = 0
+                stdout = "```\n<svg>ok</svg>\n```"
+                stderr = ""
+            return R()
+
+        so._run_tree = fake
+
+    def tearDown(self):
+        so._run_tree, so.shutil.which = self.saved_run, self.saved_which
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_long_prompt_to_a_cmd_shim_goes_through_a_file(self):
+        # Regression: codex and gemini are installed as .cmd shims, so their command
+        # line runs through cmd.exe and truncates at 8191 characters. A real rebuild
+        # died with "The command line is too long"; a trivial prompt did not, which is
+        # why it only appeared when the panel was run on an actual page.
+        so.shutil.which = lambda name: "C:\\npm\\codex.CMD"
+        long_prompt = "do the thing\n" + ("filler " * 2000)
+        so._run_cli_agent("codex", long_prompt, self.tmp)
+        passed = " ".join(str(c) for c in self.seen["cmd"])
+        self.assertLess(len(passed), so.ARG_SAFE_CHARS)
+        self.assertIn("prompt.txt", passed)
+        self.assertEqual((self.tmp / "prompt.txt").read_text(encoding="utf-8"), long_prompt)
+
+    def test_a_short_prompt_is_still_passed_directly(self):
+        so.shutil.which = lambda name: "C:\\npm\\codex.CMD"
+        so._run_cli_agent("codex", "make it match", self.tmp)
+        self.assertIn("make it match", " ".join(str(c) for c in self.seen["cmd"]))
+        self.assertFalse((self.tmp / "prompt.txt").exists())
+
+    def test_a_real_executable_keeps_the_whole_prompt(self):
+        # claude.exe is not a shim, so it is not subject to the cmd.exe limit.
+        so.shutil.which = lambda name: "C:\\bin\\claude.exe"
+        long_prompt = "do the thing\n" + ("filler " * 2000)
+        so._run_cli_agent("claude", long_prompt, self.tmp)
+        self.assertIn(long_prompt, self.seen["cmd"])
+        self.assertFalse((self.tmp / "prompt.txt").exists())
+
+
 class PanelOfModels(unittest.TestCase):
     """A round can draw from several models instead of sampling one three times."""
 
