@@ -1207,6 +1207,48 @@ class WebglRendersAndHoldsStill(unittest.TestCase):
         self.assertEqual(int((np.abs(a - b).sum(axis=2) > 8).sum()), 0)
 
 
+class EmptyContainersAreNamed(unittest.TestCase):
+    """A container the right size in the right place, with nothing drawn inside it."""
+
+    def page(self, filled):
+        # Circular wells in a row, with or without a glyph drawn inside each.
+        img = Image.new("RGB", (420, 160), "#08121A")
+        d = ImageDraw.Draw(img)
+        for i in range(5):
+            x = 30 + i * 74
+            d.ellipse([x, 40, x + 54, 94], outline="#4FC3F7", width=2)
+            if filled:
+                d.rectangle([x + 16, 56, x + 38, 78], fill="#9FE4FF")
+                d.line([x + 16, 67, x + 38, 67], fill="#08121A", width=3)
+        return img
+
+    def finds(self, design, attempt):
+        return so.score_images(design, attempt)[0]["elements"]["hollow"]
+
+    def test_containers_drawn_empty_are_found(self):
+        # Every geometric check passes here: the wells are the right size in the right
+        # place. Only what is inside them differs, and nothing used to look at that.
+        self.assertTrue(self.finds(self.page(True), self.page(False)))
+
+    def test_containers_with_their_contents_are_not_reported(self):
+        self.assertEqual(self.finds(self.page(True), self.page(True)), [])
+
+    def test_repeats_are_one_finding_not_five(self):
+        found = self.finds(self.page(True), self.page(False))
+        self.assertEqual(sum(f.get("n", 1) for f in found), 5)
+        self.assertEqual(len(found), 1)
+
+    def test_many_sets_are_summarised_as_one_job(self):
+        many = [{"w": 70, "h": 73, "y": 100, "x": 10, "where": "top, left", "kind": "box",
+                 "n": 3, "score": 1}] * 4
+        line = so._hollow_summary(many)
+        self.assertIn("one job", line)
+        self.assertIn("12 boxes in all", line)
+
+    def test_a_couple_of_sets_are_named_individually(self):
+        self.assertIsNone(so._hollow_summary([{"w": 1, "h": 1, "n": 1, "score": 1}]))
+
+
 class MaterialsReachThePrompt(unittest.TestCase):
     """What the rebuild may reach for, carried on the run and sent every round."""
 

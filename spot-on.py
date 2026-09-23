@@ -657,6 +657,8 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
             d["type"], a["type"] = _type_metrics(g_ref, d), _type_metrics(g_att, a)
             d["emphasis"] = _emphasis_metrics(g_ref, d)
             a["emphasis"] = _emphasis_metrics(g_att, a)
+        d["inside"] = _interior_detail(g_ref, d)
+        a["inside"] = _interior_detail(g_att, a)
 
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
@@ -664,7 +666,8 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
             "row_spacing": _row_gaps(matched, css, size),
             "type": _type_findings(matched, css, size),
             "alignment": _alignment(matched, css),
-            "emphasis": _emphasis_findings(matched, css, size)}
+            "emphasis": _emphasis_findings(matched, css, size),
+            "hollow": _hollow(matched, css, size, limit=8)}
 
 
 def _type_metrics(g, el):
@@ -704,6 +707,92 @@ def _type_metrics(g, el):
         spacing = float(np.median(steps))
     return {"height": float(heights[len(heights) // 2]), "density": float(ink.mean()),
             "spacing": spacing, "lines": len(bands)}
+
+
+def _interior_detail(g, el, inset=0.22):
+    """How much is drawn inside an element, ignoring its own edge."""
+    iy, ix = int(el["h"] * inset), int(el["w"] * inset)
+    crop = g[el["y"] + iy:el["y"] + el["h"] - iy, el["x"] + ix:el["x"] + el["w"] - ix]
+    if crop.size < 40 or crop.shape[0] < 3 or crop.shape[1] < 3:
+        return None
+    return float(np.abs(np.diff(crop, axis=1)).mean() + np.abs(np.diff(crop, axis=0)).mean())
+
+
+def _hollow(matched, css, size, limit=2):
+    """Elements drawn as an empty container where the design has something inside.
+
+    A button, a nav chip or an icon well matches on geometry because the container is
+    the right size in the right place, so every geometric check passes and nothing is
+    reported, while the glyph that belongs inside it is simply absent. On one rebuild
+    the whole top bar came out as empty circles and the report said nothing about it.
+    """
+    out = []
+    for d, a in matched:
+        if min(d["w"], d["h"]) < 12:
+            continue
+        di, ai = d.get("inside"), a.get("inside")
+        if di is None or ai is None:
+            continue
+        # Something clearly drawn in the design, and clearly less in the attempt.
+        if di >= 8.0 and ai < 0.45 * di:
+            out.append({"x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
+                        "h": css(d["h"]), "where": _where(d, size), "kind": d["kind"],
+                        "cx": d["x"] + d["w"] // 2, "cy": d["y"] + d["h"] // 2,
+                        "score": di * d["w"] * d["h"]})
+
+    groups = []
+    for f in sorted(out, key=lambda g: (g["y"], g["x"])):
+        for g in groups:
+            like = (abs(g[0]["y"] - f["y"]) <= 12
+                    and abs(g[0]["w"] - f["w"]) <= max(6, 0.25 * g[0]["w"])
+                    and abs(g[0]["h"] - f["h"]) <= max(6, 0.25 * g[0]["h"]))
+            if like:
+                g.append(f)
+                break
+        else:
+            groups.append([f])
+    merged = []
+    for g in groups:
+        first = dict(g[0])
+        first["n"] = len(g)
+        first["score"] = sum(x["score"] for x in g)
+        merged.append(first)
+    merged.sort(key=lambda f: -f["score"])
+    return merged[:limit]
+
+
+def _hollow_summary(found):
+    """One sentence when empties are everywhere, rather than two arbitrary examples.
+
+    A rebuild that leaves out its icons leaves out all of them: on one page the top
+    bar, the quick-access grid and three bottom panels were every one of them an empty
+    container. Naming two of those sets describes the symptom; naming the pattern is
+    what a person or a model can act on in a single pass.
+    """
+    if len(found) < 3:
+        return None
+    boxes = sum(f.get("n", 1) for f in found)
+    biggest = max(found, key=lambda f: f["w"] * f["h"])
+    return ("{} places on the page draw a container the right size in the right place and "
+            "leave it empty, {} boxes in all, from {}x{}px down to {}x{}px. The design puts an "
+            "icon or a glyph in each. This is one job, not {} separate ones: pick an icon set or "
+            "draw them as inline SVG and fill them all.".format(
+                len(found), boxes, biggest["w"], biggest["h"],
+                min(f["w"] for f in found), min(f["h"] for f in found), boxes))
+
+
+def _hollow_sentence(f):
+    if f.get("n", 1) > 1:
+        return ("{} boxes about {}x{}px around y {}px (the {} of the page) are the right size in "
+                "the right place but empty: the design draws an icon or a glyph inside each one "
+                "and the attempt has the containers only. They are one set, so draw them "
+                "together.".format(f["n"], f["w"], f["h"], f["y"], f["where"]))
+    return ("The {} at x {}, y {} ({}x{}px, the {} of the page) is the right size in the right "
+            "place but empty: the design has something drawn inside it, an icon, a glyph or a "
+            "small chart, and the attempt has the container only. Draw the contents; the box "
+            "itself already matches.".format(
+                "box" if f["kind"] != "text" else "element", f["x"], f["y"], f["w"], f["h"],
+                f["where"]))
 
 
 def _emphasis_metrics(g, el):
@@ -1448,7 +1537,12 @@ def _artwork(ref, att, cells=6):
     where = "{}, {}".format(_ROW_WORDS[min(3, rows[len(rows) // 2] * 4 // cells)],
                             _COL_WORDS[min(3, cols[len(cols) // 2] * 4 // cells)])
     return {"share": round(share, 1), "where": where,
-            "colours": max(f["colours"] for f in found)}
+            "colours": max(f["colours"] for f in found),
+            "cells": [[f["row"], f["col"]] for f in found], "grid": cells,
+            "box": [int(min(f["col"] for f in found) * w / cells),
+                    int(min(f["row"] for f in found) * h / cells),
+                    int((max(f["col"] for f in found) + 1) * w / cells),
+                    int((max(f["row"] for f in found) + 1) * h / cells)]}
 
 
 def _problems(report):
@@ -1554,7 +1648,29 @@ def _problems(report):
 
     element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
     out.extend(element_lines)
-    if element_lines:
+    hollow_findings = els.get("hollow") or []
+    art_cells = set()
+    if report.get("artwork"):
+        art_cells = {tuple(c) for c in report["artwork"].get("cells", [])}
+    if art_cells:
+        # Only a large element sitting in artwork defers to the artwork line. The cells
+        # are coarse, so a photographic background puts half the page inside one, and
+        # filtering on the cell alone silenced a row of empty icon wells that had
+        # nothing to do with the artwork.
+        grid = report["artwork"].get("grid", 6)
+        w_img, h_img = report["size"]
+        page_area = float(max(w_img * h_img, 1))
+        hollow_findings = [
+            f for f in hollow_findings
+            if not ((int(f["cy"] * grid / max(h_img, 1)),
+                     int(f["cx"] * grid / max(w_img, 1))) in art_cells
+                    and (f["w"] * f["h"]) / page_area > 0.06)]
+    summary = _hollow_summary(hollow_findings)
+    if summary:
+        out.append(summary)
+    else:
+        out.extend(_hollow_sentence(f) for f in hollow_findings[:2])
+    if element_lines or hollow_findings:
         said.add("element")
     # Spacing after the elements themselves: a gap is only worth changing once the
     # things on either side of it are the right size.
@@ -1616,9 +1732,11 @@ def _problems(report):
             "photograph from a rendered object, so decide which it is. A photograph or an "
             "illustration will not be reached by any amount of code: export it and place it as "
             "an image. A 3D object can be built as one, and should be, but do not expect it to "
-            "match a rendered image exactly. Either way, do not keep spending rounds nudging it, "
-            "and read the rest of the report as being about everything "
-            "else.".format(art["share"], art["where"], art["colours"]))
+            "match a rendered image exactly. It covers roughly x {} to {}, y {} to {}, so that "
+            "is the region to crop from the design if you export it. Either way, stop nudging "
+            "it round after round, and read the rest of the report as being about everything "
+            "else.".format(art["share"], art["where"], art["colours"],
+                           art["box"][0], art["box"][2], art["box"][1], art["box"][3]))
         said.add("artwork")
 
     out.extend(_unexplained(report, said))
