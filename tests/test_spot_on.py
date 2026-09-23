@@ -880,6 +880,77 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertEqual(spacing, [])
 
 
+class RowSpacing(unittest.TestCase):
+    """A row of links is spaced along the other axis, and nothing measured it."""
+
+    def row(self, gap, n=5, y=60, w=48):
+        img = Image.new("RGB", (460, 200), "#F5F8FF")
+        d = ImageDraw.Draw(img)
+        x = 40
+        for _ in range(n):
+            d.rectangle([x, y, x + w, y + 22], fill="#1B2A3A")
+            x += w + gap
+        return img
+
+    def finds(self, a, b):
+        return so.score_images(a, b)[0]["elements"]["row_spacing"]
+
+    def test_a_row_spread_too_wide_is_reported_once(self):
+        found = self.finds(self.row(20), self.row(46))
+        self.assertTrue(found, "the wider row spacing was not noticed")
+        self.assertGreater(found[0]["attempt"], found[0]["design"])
+        problems = so.score_images(self.row(20), self.row(46))[0]["problems"]
+        self.assertEqual(sum(1 for p in problems if "items in the row" in p), 1)
+        self.assertIn("more spread out", [p for p in problems if "items in the row" in p][0])
+
+    def test_a_row_packed_too_tightly_says_so(self):
+        found = self.finds(self.row(46), self.row(20))
+        self.assertTrue(found)
+        self.assertLess(found[0]["attempt"], found[0]["design"])
+
+    def test_a_row_that_matches_is_not_reported(self):
+        self.assertEqual(self.finds(self.row(20), self.row(20)), [])
+
+    def test_two_items_are_not_a_row(self):
+        # Two things side by side say nothing about a container's spacing rule.
+        self.assertEqual(self.finds(self.row(20, n=2), self.row(60, n=2)), [])
+
+
+class ReportWatchesItself(unittest.TestCase):
+    """A component scoring badly with no sentence attached is a blind spot, and it
+    should say so rather than let the silence pass."""
+
+    REPORT = {"components": {"structure": 87.0, "shape": 87.2, "colour": 64.5,
+                             "detail": 80.8, "coverage": 99.6}}
+
+    def test_the_colour_blind_spot_would_have_been_caught(self):
+        # Colour scored 64.5 for six rounds while every sentence was about text, and
+        # nothing was watching for the absence. This is that watch.
+        said = so._unexplained(self.REPORT, {"element", "type"})
+        self.assertTrue(said)
+        self.assertIn("colour at 64.5", said[0])
+
+    def test_it_is_silent_once_the_fault_is_named(self):
+        self.assertEqual(so._unexplained(self.REPORT, {"colour", "element"}), [])
+
+    def test_it_is_silent_when_nothing_scores_badly(self):
+        good = {"components": {"structure": 95.0, "shape": 93.0, "colour": 99.0,
+                               "detail": 91.0, "coverage": 100.0}}
+        self.assertEqual(so._unexplained(good, set()), [])
+
+    def test_missing_elements_count_as_explaining_low_coverage(self):
+        low = {"components": {"coverage": 60.0}}
+        self.assertEqual(so._unexplained(low, {"coverage"}), [])
+        self.assertTrue(so._unexplained(low, {"type"}))
+
+    def test_a_real_report_carries_the_check(self):
+        # The wiring, not just the helper: a report built the normal way runs it.
+        problems = so.score_images(stack(), stack(bg="#D2E0F6", gaps=(24, 30)))[0]["problems"]
+        self.assertIsInstance(problems, list)
+        self.assertFalse(any("nothing above to explain it: colour" in p for p in problems),
+                         "colour is named here, so it must not be reported as unexplained")
+
+
 class AlignmentIsOneContainer(unittest.TestCase):
     """Left edges that line up in the design are one fix, not one fix per element."""
 

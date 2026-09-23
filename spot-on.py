@@ -655,6 +655,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
             "spacing": _spacing_gaps(matched, css, size),
+            "row_spacing": _row_gaps(matched, css, size),
             "type": _type_findings(matched, css, size),
             "alignment": _alignment(matched, css)}
 
@@ -952,6 +953,55 @@ def _spacing_gaps(matched, css, size, limit=3):
     return out[:limit]
 
 
+def _row_gaps(matched, css, size, limit=2):
+    """Horizontal gaps between elements sitting in a row, design against attempt.
+
+    The vertical version above catches stacked content, which is most of a page, but a
+    row of navigation links is spaced along the other axis and nothing measured it. The
+    report could only say each link "sits 43px to the right", once per link, which reads
+    as five separate faults when it is one: the gap between them, or where the row
+    starts. Same shape as the vertical pass, x and y exchanged.
+    """
+    rows = {}
+    for d, a in matched:
+        rows.setdefault(round((d["y"] + d["h"] / 2.0) / 12.0), []).append((d, a))
+    out = []
+    for group in rows.values():
+        if len(group) < 3:
+            continue
+        group.sort(key=lambda pair: pair[0]["x"])
+        design_gaps, attempt_gaps = [], []
+        for i in range(len(group) - 1):
+            (d0, a0), (d1, a1) = group[i], group[i + 1]
+            gd = d1["x"] - (d0["x"] + d0["w"])
+            ga = a1["x"] - (a0["x"] + a0["w"])
+            if gd < 0 or ga < 0:
+                continue
+            design_gaps.append(gd)
+            attempt_gaps.append(ga)
+        if len(design_gaps) < 2:
+            continue
+        med_d = sorted(design_gaps)[len(design_gaps) // 2]
+        med_a = sorted(attempt_gaps)[len(attempt_gaps) // 2]
+        diff = css(med_a - med_d)
+        if abs(diff) < 5:
+            continue
+        out.append({"n": len(group), "y": css(group[0][0]["y"]),
+                    "where": _where(group[0][0], size), "design": css(med_d),
+                    "attempt": css(med_a), "diff": diff,
+                    "score": abs(diff) * len(group)})
+    out.sort(key=lambda f: -f["score"])
+    return out[:limit]
+
+
+def _row_gap_sentence(f):
+    return ("The {} items in the row at y {}px (the {} of the page) sit {}px apart; the design "
+            "spaces them {}px apart, so the row is {} than it should be. That is the gap or "
+            "padding in their container, not {} separate moves.".format(
+                f["n"], f["y"], f["where"], f["attempt"], f["design"],
+                "more spread out" if f["diff"] > 0 else "more tightly packed", f["n"]))
+
+
 def _spacing_sentence(s):
     if s.get("leading"):
         return ("The lines of text at y {}px (the {} of the page) sit {}px apart; the design has "
@@ -1219,6 +1269,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None):
 def _problems(report):
     """Turn the numbers into the two or three sentences worth acting on."""
     out = []
+    said = set()          # the kinds of fault actually named, for the coverage check below
     comp = report["components"]
     raw = report["raw"]
     ranked = sorted(((k, v) for k, v in comp.items() if k != "coverage"), key=lambda kv: kv[1])
@@ -1233,16 +1284,19 @@ def _problems(report):
                 "is missing, extra or the wrong height: a label, a heading, padding or a margin. "
                 "Fix that first: most of the error below follows from this one shift.".format(
                     abs(v["css_shift"]), way))
+            said.add("shift")
         else:
             out.append(
                 "From about {}px down (the {} of the page), content sits about {}px {} than in the "
                 "design. Something above that point is missing, extra or the wrong height. Fix that "
                 "first: most of the error below it follows from this one shift.".format(
                     v["from_css_y"], v["where"], abs(v["css_shift"]), way))
+            said.add("shift")
     if off.get("horizontal"):
         hs = off["horizontal"]["css_shift"]
         out.append("Content sits about {}px further {} than in the design; check the container "
                    "width, side padding and centring.".format(abs(hs), "left" if hs > 0 else "right"))
+        said.add("shift")
 
     if comp.get("coverage", 100) < 97:
         if off.get("vertical") or off.get("horizontal"):
@@ -1251,6 +1305,7 @@ def _problems(report):
             tail = "Something is missing there, not just misplaced."
         out.append("{:.0f}% of the design has nothing drawn near it, mostly in the {} of the page. "
                    "{}".format(raw["design_not_drawn_pct"], raw["design_not_drawn_where"], tail))
+        said.add("coverage")
 
     wording = {
         "shape": "The silhouette is off: {:.0f}% of the drawn area overlaps the design. "
@@ -1277,8 +1332,10 @@ def _problems(report):
                 "gradient or body colour before the elements sitting on it.".format(
                     raw["background_where"], raw["background_reference_hex"],
                     raw["background_attempt_hex"]))
+            said.add("colour")
         elif pal >= 8.0:
             out.append(wording["colour"].format(pal))
+            said.add("colour")
 
     els = report.get("elements") or {}
     glyph = els.get("glyph") or {}
@@ -1287,20 +1344,34 @@ def _problems(report):
         out.append("The letters themselves do not match: {:.0f}% of the text lines that are in the "
                    "right place still differ in shape, so the font family or weight is wrong. Fix "
                    "the font before moving any boxes.".format(glyph["weak_share"] * 100))
+        said.add("type")
 
     # Type before the element boxes: a wrong font-size is reported again by every box
     # around it as a wrong width and a wrong height, so fixing it first removes several
     # of the complaints below rather than adding to them.
-    out.extend(_type_sentence(f) for f in (els.get("type") or []))
+    type_findings = els.get("type") or []
+    out.extend(_type_sentence(f) for f in type_findings)
+    if type_findings:
+        said.add("type")
     # Alignment before the individual elements too: a ragged column is one container,
     # and naming it here stops the list below repeating it once per element.
-    out.extend(_alignment_sentence(f) for f in (els.get("alignment") or []))
+    align_findings = els.get("alignment") or []
+    out.extend(_alignment_sentence(f) for f in align_findings)
+    if align_findings:
+        said.add("align")
 
     element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
     out.extend(element_lines)
+    if element_lines:
+        said.add("element")
     # Spacing after the elements themselves: a gap is only worth changing once the
     # things on either side of it are the right size.
-    out.extend(_spacing_sentence(s) for s in (els.get("spacing") or [])[:2])
+    spacing_findings = (els.get("spacing") or [])[:2]
+    out.extend(_spacing_sentence(s) for s in spacing_findings)
+    row_findings = (els.get("row_spacing") or [])[:2]
+    out.extend(_row_gap_sentence(f) for f in row_findings)
+    if spacing_findings or row_findings:
+        said.add("spacing")
 
     for name, value in ranked[:2]:
         if element_lines or typeface:
@@ -1344,7 +1415,51 @@ def _problems(report):
         if missing:
             out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
+
+    out.extend(_unexplained(report, said))
     return out
+
+
+# Which kinds of finding count as explaining a low component. A component scoring badly
+# with none of these present means the report can see the fault but cannot say what it is.
+EXPLAINED_BY = {
+    "colour": {"colour"},
+    "coverage": {"coverage", "element"},
+    "shape": {"element", "align", "spacing", "coverage"},
+    "structure": {"element", "type", "shift", "align"},
+    "detail": {"type", "element", "coverage"},
+}
+UNEXPLAINED_BELOW = 80.0
+
+
+def _unexplained(report, said):
+    """Say so when a component scores badly and nothing above accounts for it.
+
+    This is the check that would have caught the colour blind spot on its own. Colour
+    scored 64.5 for six rounds while every sentence in the report was about text, so a
+    quarter of the loss had no sentence attached and nobody noticed, because nothing was
+    watching for the absence. A score with no explanation is a fault the report cannot
+    name yet, and saying that out loud is more use than silence: it tells the person to
+    look at the difference map, and it stops the next round believing the list is
+    complete.
+    """
+    # What was actually said, not what could be inferred. Deriving the kinds from the
+    # report would defeat the point: the colour key is inferred from the colour score,
+    # so colour would always look explained precisely when it is low.
+    weak = []
+    for name, value in (report.get("components") or {}).items():
+        if value >= UNEXPLAINED_BELOW:
+            continue
+        if said & EXPLAINED_BY.get(name, set()):
+            continue
+        weak.append((name, value))
+    if not weak:
+        return []
+    weak.sort(key=lambda p: p[1])
+    named = ", ".join("{} at {:.1f}".format(n, v) for n, v in weak)
+    return ["Scoring badly with nothing above to explain it: {}. The difference is real "
+            "and the report cannot name it yet, so read the difference map for this one "
+            "rather than trusting the list.".format(named)]
 
 
 def diff_heatmap(per_px, out_png, ignore=None):
