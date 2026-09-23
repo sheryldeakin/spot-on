@@ -1825,30 +1825,53 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     return "\n".join(parts)
 
 
+def panel_agents(preferred, count):
+    """Which agent writes each rewrite in a round.
+
+    Three draws from one model are three samples of the same habits. Three draws from
+    three different models fail differently, which is the whole argument behind running
+    a council rather than asking once. Here there is already an objective judge, so the
+    diversity buys better drafts rather than better judgement, and the scorer still
+    picks the winner.
+
+    Only agents actually available on this machine are used, the preferred one first,
+    and the list wraps if fewer are installed than the round asks for, so a machine
+    with one agent behaves exactly as before.
+    """
+    if not os.environ.get("SPOT_ON_PANEL"):
+        return [preferred] * count
+    others = [a for a in AGENT_ORDER if a != preferred and _agent_available(a)]
+    order = [preferred] + others
+    return [order[i % len(order)] for i in range(count)]
+
+
 def gather_candidates(agent, prompt, cwd, images, count, kind):
     """Ask for `count` independent rewrites at once and return the usable ones.
 
     Each round is a fresh sample, so the spread between draws is wide: keeping the
     best of several is the same trick as building on the best attempt, applied
     inside one round. They run in parallel, so the round still takes about as long
-    as a single draw, and costs `count` times as much.
+    as a single draw, and costs `count` times as much. With SPOT_ON_PANEL set the
+    draws are spread across whichever models the machine has.
     """
     import concurrent.futures
 
-    def one(_):
-        raw = run_agent(agent, prompt, cwd, images)
+    panel = panel_agents(agent, count)
+
+    def one(which):
+        raw = run_agent(which, prompt, cwd, images)
         code, changes = _parse_iteration(raw)
         if not code or not _looks_like(code, kind):
-            return None, " ".join((code or "").split())[:240]
-        return code, changes
+            return which, None, " ".join((code or "").split())[:240]
+        return which, code, changes
 
     out, refusals = [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
-        for code, changes in pool.map(one, range(count)):
+        for which, code, changes in pool.map(one, panel):
             if code:
-                out.append((code, changes))
+                out.append((code, changes, which))
             else:
-                refusals.append(changes)
+                refusals.append("{}: {}".format(AGENT_LABELS.get(which, which), changes))
     return out, refusals
 
 
@@ -1897,9 +1920,11 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True):
             AGENT_LABELS[chosen], run["kind"], refusals[0] if refusals else "nothing"))
 
     # Recorded one at a time: each attempt takes the next number in the run.
-    records = [record_attempt(slug, c, source=chosen, changes=ch,
+    # Recorded against the agent that actually wrote it, so the history shows which
+    # model won a round rather than crediting the one the run was started with.
+    records = [record_attempt(slug, c, source=who, changes=ch,
                               meta={"candidate_of": n, "candidates": len(drafts)})
-               for c, ch in drafts]
+               for c, ch, who in drafts]
     best = max(records, key=lambda r: r["match"])
     best["candidate_scores"] = [r["match"] for r in records]
     # What the round was pressed on, and whether it moved. This is the part the page
@@ -2366,6 +2391,14 @@ PAGE_HTML = r"""<!doctype html>
      every bar drew an empty track whatever the score was. */
   .bar-track { display: block; height: 8px; border-radius: 999px; background: rgba(34,55,43,0.12); overflow: hidden; }
   .bar-fill { display: block; height: 8px; border-radius: 999px; background: var(--deep); transition: width 180ms ease; }
+  .code-summary { cursor: pointer; font-size: 13px; color: var(--deep); padding: 7px 0;
+    list-style: none; display: flex; align-items: center; gap: 7px; }
+  .code-summary::-webkit-details-marker { display: none; }
+  .code-summary::before { content: ""; width: 0; height: 0; border-left: 5px solid var(--muted);
+    border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    transition: transform 150ms ease; }
+  #code-fold[open] .code-summary::before { transform: rotate(90deg); }
+  #code-fold[open] .code-summary { margin-bottom: 8px; }
   .comp-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 12px; align-items: center; min-height: 30px; }
   .comp-name { font-size: 13px; font-weight: 500; }
   .comp-val { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; color: var(--deep); font-variant-numeric: tabular-nums; }
@@ -2528,7 +2561,13 @@ PAGE_HTML = r"""<!doctype html>
           <input type="text" id="url-input" class="text-input mono" spellcheck="false" placeholder="http://localhost:5173/pricing" style="width: 100%; height: 38px; font-size: 13px;">
           <div class="hint">Your dev server, at the page that should match the design. Change the code in your editor, then screenshot again; hot reload keeps it to one click.</div>
         </div>
-        <textarea id="code" class="code-area" rows="16" spellcheck="false" placeholder="Paste the page's HTML, or SVG or canvas code."></textarea>
+        <!-- Folded away by default. On a running page it is not used at all, and even on
+             a snippet the loop writes the code rather than the person, so leading the
+             section with it put the least-touched thing first. -->
+        <details id="code-fold">
+          <summary class="code-summary">The code, if you want to see or edit it</summary>
+          <textarea id="code" class="code-area" rows="16" spellcheck="false" placeholder="Paste the page's HTML, or SVG or canvas code."></textarea>
+        </details>
         <div class="hint">Screenshot by headless Chrome at the design's page size and display scale, so the score reflects the page and nothing else.</div>
 
         <div style="display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;">
@@ -2741,6 +2780,11 @@ function syncKindUi() {
   var url = isUrlKind();
   $("url-wrap").hidden = !url;
   $("code").hidden = url;
+  // The fold hides the whole thing on a running page, where the code lives in a repo.
+  // On a snippet run it opens itself while there is nothing to screenshot yet, because
+  // then the textarea is the only way in; once there is code it folds away again.
+  $("code-fold").hidden = url;
+  if (!url && !$("code").value.trim()) $("code-fold").open = true;
   $("url-loop-note").hidden = !url;
   $("iterate-wrap").hidden = url;
   $("starter").textContent = url ? "Use localhost" : "Insert starter";

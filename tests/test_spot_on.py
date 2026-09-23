@@ -880,6 +880,47 @@ class ReportNamesColourAndSpacing(unittest.TestCase):
         self.assertEqual(spacing, [])
 
 
+class PanelOfModels(unittest.TestCase):
+    """A round can draw from several models instead of sampling one three times."""
+
+    def setUp(self):
+        self.saved = so._agent_available
+        so._agent_available = lambda a: a in ("claude", "codex", "gemini")
+
+    def tearDown(self):
+        so._agent_available = self.saved
+
+    def panel(self, count, env):
+        keep = os.environ.get("SPOT_ON_PANEL")
+        if env is None:
+            os.environ.pop("SPOT_ON_PANEL", None)
+        else:
+            os.environ["SPOT_ON_PANEL"] = env
+        try:
+            return so.panel_agents("claude", count)
+        finally:
+            os.environ.pop("SPOT_ON_PANEL", None)
+            if keep is not None:
+                os.environ["SPOT_ON_PANEL"] = keep
+
+    def test_off_by_default_so_nothing_changes(self):
+        self.assertEqual(self.panel(3, None), ["claude"] * 3)
+
+    def test_it_spreads_across_the_models_the_machine_has(self):
+        self.assertEqual(self.panel(3, "1"), ["claude", "codex", "gemini"])
+
+    def test_the_preferred_agent_goes_first(self):
+        self.assertEqual(self.panel(1, "1"), ["claude"])
+
+    def test_it_wraps_when_fewer_models_than_draws(self):
+        so._agent_available = lambda a: a == "codex"
+        self.assertEqual(self.panel(3, "1"), ["claude", "codex", "claude"])
+
+    def test_one_agent_machine_behaves_as_before(self):
+        so._agent_available = lambda a: False
+        self.assertEqual(self.panel(3, "1"), ["claude"] * 3)
+
+
 class FontFromTheSource(unittest.TestCase):
     """Pixels cannot name a typeface, but a live design's own markup can."""
 
