@@ -1268,6 +1268,15 @@ class ArtworkIsNamedAsUnreachable(unittest.TestCase):
         blank = Image.new("RGB", (360, 240), "#FFFFFF")
         self.assertIsNone(so.score_images(self.flat_ui(), blank)[0]["artwork"])
 
+    def test_it_does_not_tell_the_loop_to_give_up_on_3d(self):
+        # The measurement cannot tell a photograph from a rendered object. Saying
+        # "code will not reach this" flatly contradicted the materials line offering
+        # three.js, on exactly the element most worth building in 3D.
+        report = so.score_images(self.picture(), self.flat_ui())[0]
+        line = [p for p in report["problems"] if "artwork rather than layout" in p][0]
+        self.assertIn("cannot tell a photograph from a rendered object", line)
+        self.assertIn("can be built as one", line)
+
     def test_artwork_that_was_reproduced_is_not_named(self):
         art = self.picture()
         self.assertIsNone(so.score_images(art, art)[0]["artwork"])

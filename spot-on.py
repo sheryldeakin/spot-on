@@ -1612,9 +1612,12 @@ def _problems(report):
     if art:
         out.append(
             "About {:.0f}% of the design is artwork rather than layout, around the {} of the "
-            "page: {} distinct colours and dense detail, which is a photograph, a render or an "
-            "illustration. Code will not reach it however many rounds you spend. Export it and "
-            "place it as an image, and read the rest of the report as being about everything "
+            "page: {} distinct colours and dense detail. This measurement cannot tell a "
+            "photograph from a rendered object, so decide which it is. A photograph or an "
+            "illustration will not be reached by any amount of code: export it and place it as "
+            "an image. A 3D object can be built as one, and should be, but do not expect it to "
+            "match a rendered image exactly. Either way, do not keep spending rounds nudging it, "
+            "and read the rest of the report as being about everything "
             "else.".format(art["share"], art["where"], art["colours"]))
         said.add("artwork")
 
