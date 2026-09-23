@@ -1170,6 +1170,43 @@ class RowSpacing(unittest.TestCase):
         self.assertEqual(self.finds(self.row(20, n=2), self.row(60, n=2)), [])
 
 
+@unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+class WebglRendersAndHoldsStill(unittest.TestCase):
+    """The tool grew out of iterating on a three.js jellyfish, so 3D has to work.
+
+    No network here: this is raw WebGL, which is the capability three.js needs. If this
+    passes, a CDN scene works too, and if it fails, no amount of materials wording will
+    make a 3D design reachable.
+    """
+
+    SCENE = ('<canvas id=c width=200 height=120></canvas><script>'
+             "var gl=document.getElementById('c').getContext('webgl')"
+             "||document.getElementById('c').getContext('experimental-webgl');"
+             "if(gl){gl.clearColor(0.2,0.75,0.55,1);gl.clear(gl.COLOR_BUFFER_BIT);}"
+             "else{document.body.style.background='#FF0000';}</script>")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-gl-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def shot(self, name):
+        return np.asarray(so.render_code(self.SCENE, "html", 200, 120, self.tmp / name),
+                          dtype=int)
+
+    def test_webgl_draws_rather_than_falling_back(self):
+        px = self.shot("a.png")[60, 100]
+        self.assertGreater(px[1], px[0], "green channel should dominate; red means no WebGL")
+        self.assertGreater(int(px[1]), 100)
+
+    def test_two_captures_of_a_static_scene_are_identical(self):
+        # A 3D scene that drifts would be excluded as motion rather than scored, so
+        # determinism is what makes it usable at all.
+        a, b = self.shot("one.png"), self.shot("two.png")
+        self.assertEqual(int((np.abs(a - b).sum(axis=2) > 8).sum()), 0)
+
+
 class MaterialsReachThePrompt(unittest.TestCase):
     """What the rebuild may reach for, carried on the run and sent every round."""
 
@@ -1187,11 +1224,18 @@ class MaterialsReachThePrompt(unittest.TestCase):
         for empty in ("", "   ", None):
             self.assertNotIn("What you may build with", self.prompt(empty))
 
-    def test_the_default_keeps_the_page_self_contained(self):
-        # Anything fetched makes a run depend on the network and a score move without
-        # the code changing, which the Limits section already warns about.
-        self.assertIn("do not link", so.MATERIALS_DEFAULT.lower())
-        self.assertIn("svg", so.MATERIALS_DEFAULT.lower())
+    def test_the_default_prefers_inline_but_allows_real_3d(self):
+        # Inline keeps a run reproducible, which is why it is the preference. Three.js
+        # is the one exception, because a 3D object in a design cannot be faked flat
+        # and this tool grew out of iterating on a three.js jellyfish.
+        d = so.MATERIALS_DEFAULT.lower()
+        self.assertIn("svg", d)
+        self.assertIn("prefer drawing inline", d)
+        self.assertIn("three.js", d)
+
+    def test_the_default_warns_against_animating(self):
+        # A scene still turning between screenshots is excluded as motion, not matched.
+        self.assertIn("do not animate", so.MATERIALS_DEFAULT.lower())
 
 
 class ArtworkIsNamedAsUnreachable(unittest.TestCase):

@@ -2527,8 +2527,11 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
 MATERIALS_DEFAULT = (
     "Inline SVG for icons and for any curved or radial shape (gauges, rings, arcs, "
     "wifi and signal glyphs). CSS conic-gradient and radial-gradient for dials and "
-    "glows, blur and rgba fills for translucent panels. Draw them inline; do not link "
-    "to files or libraries that are not here."
+    "glows, blur and rgba fills for translucent panels. Prefer drawing inline, so the "
+    "page stays self-contained. The one exception is a real 3D object: WebGL renders "
+    "here and three.js from a CDN works, so build it as one rather than faking it flat. "
+    "Render a single frame and do not animate, because anything still moving between "
+    "screenshots is excluded from the score rather than matched against the design."
 )
 
 STARTERS = {
