@@ -25,6 +25,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = Path(__file__).resolve().parent
@@ -1167,6 +1168,41 @@ class RowSpacing(unittest.TestCase):
     def test_two_items_are_not_a_row(self):
         # Two things side by side say nothing about a container's spacing rule.
         self.assertEqual(self.finds(self.row(20, n=2), self.row(60, n=2)), [])
+
+
+class ArtworkIsNamedAsUnreachable(unittest.TestCase):
+    """A photograph or a render is not a layout problem, and rounds spent on it are lost."""
+
+    def picture(self, size=(360, 240)):
+        # Many colours and busy at once, which is what a photo or a render looks like
+        # and what flat UI never does.
+        rng = np.random.RandomState(7)
+        base = rng.randint(0, 255, (size[1] // 4, size[0] // 4, 3)).astype("uint8")
+        return Image.fromarray(base).resize(size, Image.BICUBIC)
+
+    def flat_ui(self, size=(360, 240)):
+        img = Image.new("RGB", size, "#F5F8FF")
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([20, 20, 340, 120], radius=12, fill="#FFFFFF")
+        d.rectangle([40, 45, 240, 60], fill="#1B2A3A")
+        d.rounded_rectangle([40, 140, 180, 190], radius=10, fill="#183830")
+        return img
+
+    def test_artwork_the_attempt_did_not_reproduce_is_named(self):
+        report = so.score_images(self.picture(), self.flat_ui())[0]
+        self.assertIsNotNone(report["artwork"])
+        self.assertTrue(any("artwork rather than layout" in p for p in report["problems"]))
+
+    def test_flat_interfaces_are_never_called_artwork(self):
+        # The guard that matters: a colourful card or a gradient button is not a photo,
+        # and telling a loop to go and export one would be wrong every time.
+        self.assertIsNone(so.score_images(self.flat_ui(), self.flat_ui())[0]["artwork"])
+        blank = Image.new("RGB", (360, 240), "#FFFFFF")
+        self.assertIsNone(so.score_images(self.flat_ui(), blank)[0]["artwork"])
+
+    def test_artwork_that_was_reproduced_is_not_named(self):
+        art = self.picture()
+        self.assertIsNone(so.score_images(art, art)[0]["artwork"])
 
 
 class ReportWatchesItself(unittest.TestCase):

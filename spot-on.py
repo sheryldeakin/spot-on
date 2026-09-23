@@ -1394,8 +1394,57 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
         report["elements"] = None  # scipy missing: page-wide feedback only
     # Known only when the design is a live page, and only used to name the typeface.
     report["design_fonts"] = list(design_fonts or [])
+    report["artwork"] = _artwork(ref, att)
     report["problems"] = _problems(report)
     return report, per_px, ground
+
+
+def _artwork(ref, att, cells=6):
+    """Parts of the design that are pictures rather than layout.
+
+    A photograph, a rendered globe, a gradient bloom: code does not reproduce these,
+    and a loop that is not told so spends every round closing a gap that only an
+    exported asset closes. Artwork reads as many distinct colours and dense detail at
+    once, which flat UI never has: a card is two or three colours and clean edges, and
+    text is dense but nearly monochrome.
+    """
+    h, w = ref.shape[:2]
+    found = []
+    for r in range(cells):
+        for c in range(cells):
+            y0, y1 = h * r // cells, h * (r + 1) // cells
+            x0, x1 = w * c // cells, w * (c + 1) // cells
+            dcell, acell = ref[y0:y1, x0:x1], att[y0:y1, x0:x1]
+            if dcell.size < 300:
+                continue
+
+            def richness(block):
+                q = (block.astype(np.int32) >> 4)
+                keys = (q[:, :, 0] << 8) | (q[:, :, 1] << 4) | q[:, :, 2]
+                colours = len(np.unique(keys))
+                g = _gray(block)
+                edge = float(np.abs(np.diff(g, axis=1)).mean() + np.abs(np.diff(g, axis=0)).mean())
+                return colours, edge
+
+            dcol, dedge = richness(dcell)
+            acol, aedge = richness(acell)
+            # Many colours and busy at the same time, and the attempt nowhere near it.
+            # Measured across the designs on hand: ordinary UI tops out around 220
+            # colours with a median edge near 5, while a rendered HUD runs 269 colours
+            # at 13.9. Both conditions have to hold at once, because a single gradient
+            # panel is colourful without being busy and dense text is busy without
+            # being colourful.
+            if dcol >= 250 and dedge >= 9.0 and (acol < dcol * 0.5 or aedge < dedge * 0.5):
+                found.append({"row": r, "col": c, "colours": int(dcol)})
+    if not found:
+        return None
+    share = 100.0 * len(found) / float(cells * cells)
+    rows = sorted({f["row"] for f in found})
+    cols = sorted({f["col"] for f in found})
+    where = "{}, {}".format(_ROW_WORDS[min(3, rows[len(rows) // 2] * 4 // cells)],
+                            _COL_WORDS[min(3, cols[len(cols) // 2] * 4 // cells)])
+    return {"share": round(share, 1), "where": where,
+            "colours": max(f["colours"] for f in found)}
 
 
 def _problems(report):
@@ -1555,6 +1604,16 @@ def _problems(report):
             out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
 
+    art = report.get("artwork")
+    if art:
+        out.append(
+            "About {:.0f}% of the design is artwork rather than layout, around the {} of the "
+            "page: {} distinct colours and dense detail, which is a photograph, a render or an "
+            "illustration. Code will not reach it however many rounds you spend. Export it and "
+            "place it as an image, and read the rest of the report as being about everything "
+            "else.".format(art["share"], art["where"], art["colours"]))
+        said.add("artwork")
+
     out.extend(_unexplained(report, said))
     return out
 
@@ -1566,7 +1625,8 @@ EXPLAINED_BY = {
     "coverage": {"coverage", "element"},
     "shape": {"element", "align", "spacing", "coverage"},
     "structure": {"element", "type", "shift", "align"},
-    "detail": {"type", "element", "coverage"},
+    "detail": {"type", "element", "coverage", "artwork"},
+    "structure": {"element", "type", "shift", "align", "artwork"},
 }
 UNEXPLAINED_BELOW = 80.0
 
