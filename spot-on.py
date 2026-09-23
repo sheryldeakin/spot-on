@@ -1572,6 +1572,21 @@ def _cli_for(agent):
     return {"claude": "claude", "codex": "codex", "gemini": "agy"}.get(agent)
 
 
+# Whether a CLI can actually open the three images in headless mode. Gemini's cannot
+# without a permission rule it has no way to ask for: it auto-denies the read and
+# returns nothing at all, so telling it to look at reference.png produced an empty
+# answer every round while the other two worked. Claiming a capability an agent does
+# not have costs the whole draft, so this is stated rather than assumed.
+CLI_READS_FILES = {"claude": True, "codex": True, "gemini": False}
+
+
+def image_mode(agent):
+    """How this agent gets the pictures: opens them, is sent them, or gets none."""
+    if _cli_for(agent):
+        return "read" if CLI_READS_FILES.get(agent) else "none"
+    return "attached"
+
+
 def _agent_available(agent):
     """Is this agent usable on this machine right now?"""
     cli = _cli_for(agent)
@@ -1778,21 +1793,39 @@ def _stuck_section(stuck):
 
 
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    can_read_files=True, stuck=()):
+                    images="read", stuck=()):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
     parts = [
         "You are making {} code look exactly like a design.".format(run["kind"]),
         "",
-        ("Look at all three images before you change anything:" if can_read_files
-         else "Three images are attached, in this order:"),
-        ("  Read {} (the design)" if can_read_files else "  {} the design").format(ref),
-        ("  Read {} (your last attempt, rendered)" if can_read_files
-         else "  {} your last attempt, rendered").format(att),
-        ("  Read {} (the difference; bright red is where you missed)" if can_read_files
-         else "  {} the difference; bright red is where you missed").format(dif),
-        "",
+    ]
+    if images == "read":
+        parts += [
+            "Look at all three images before you change anything:",
+            "  Read {} (the design)".format(ref),
+            "  Read {} (your last attempt, rendered)".format(att),
+            "  Read {} (the difference; bright red is where you missed)".format(dif),
+            "",
+        ]
+    elif images == "attached":
+        parts += [
+            "Three images are attached, in this order:",
+            "  {} the design".format(ref),
+            "  {} your last attempt, rendered".format(att),
+            "  {} the difference; bright red is where you missed".format(dif),
+            "",
+        ]
+    else:
+        # No pictures at all. Saying so is the point: an agent told to look at images
+        # it cannot open either stalls or invents what it saw.
+        parts += [
+            "You cannot see the page or the design here, so work only from the measured",
+            "report below. Do not describe or guess at anything visual that it does not state.",
+            "",
+        ]
+    parts += [
         "The page is {}x{} CSS pixels on a {} ground.".format(
             run.get("css_width", run["width"]), run.get("css_height", run["height"]),
             run.get("ground", "#FFFFFF")),
@@ -1834,7 +1867,8 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     else:
         parts += [
             "The page is close now, so change at most three things, each on a specific element the",
-            "report names or the difference map shows. Never apply one rule to every element (for",
+            "report names{}. Never apply one rule to every element (for".format(
+                "" if images == "none" else " or the difference map shows"),
             "example a line height on all text): at this distance that breaks what already matches.",
         ]
     if run["kind"] == "canvas":
@@ -1923,10 +1957,10 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     chosen = pick_agent(agent)
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
     count = max(1, min(5, int(count)))
-    can_read_files = bool(_cli_for(chosen))
+    image_access = image_mode(chosen)
     stuck = [s for s in stuck_problems(history, base) if s["rounds"] < GIVE_UP_AFTER]
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
-                             rejected_changes(history, base), can_read_files, stuck)
+                             rejected_changes(history, base), image_access, stuck)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -3602,7 +3636,7 @@ class Handler(BaseHTTPRequestHandler):
                     "match": base["match"],
                     "prompt": _iterate_prompt(run, base["n"], code, base["report"],
                                               q.get("instructions", ""), discarded,
-                                              rejected_changes(history, base), False),
+                                              rejected_changes(history, base), "attached"),
                     "images": ["reference.png",
                                "attempts/{:03d}.png".format(base["n"]),
                                "attempts/{:03d}-diff.png".format(base["n"])],

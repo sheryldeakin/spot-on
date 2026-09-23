@@ -714,10 +714,26 @@ class PromptShape(unittest.TestCase):
                                   1, "<div></div>", score("close"), "")
         self.assertIn("at most three things", text)
 
-    def test_agents_that_cannot_open_files_are_told_the_images_are_attached(self):
+    def test_an_agent_that_is_sent_the_images_is_told_they_are_attached(self):
         text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
-                                  1, "<div></div>", score("close"), "", None, (), False)
+                                  1, "<div></div>", score("close"), "", None, (), "attached")
         self.assertIn("attached", text)
+        self.assertNotIn("Read reference.png", text)
+
+    def test_an_agent_with_no_images_is_told_so_and_not_sent_looking(self):
+        # Regression: every CLI was told to read the three images. Gemini's headless
+        # mode auto-denies that permission and returned nothing at all, every round,
+        # while the report still talked about a difference map it could not open.
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  1, "<div></div>", score("close"), "", None, (), "none")
+        self.assertIn("cannot see the page", text)
+        self.assertNotIn("Read reference.png", text)
+        self.assertNotIn("difference map", text)
+
+    def test_image_access_is_stated_per_agent(self):
+        self.assertEqual(so.image_mode("claude"), "read")
+        self.assertEqual(so.image_mode("gemini"), "none")
+        self.assertEqual(so.image_mode("anthropic-api"), "attached")
 
 
 class BrowserLookup(unittest.TestCase):
