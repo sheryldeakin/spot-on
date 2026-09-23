@@ -289,9 +289,13 @@ def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale
         # temporary directory undeletable, and the cleanup ignores errors, so it leaks.
         with Image.open(shot) as shot_img:
             if shot_img.mode in ("RGBA", "LA", "P"):
-                # A page with no background colour is white in a real browser, not black.
+                # Flattened onto the page's own colour, not white. A page with no
+                # background of its own is white in a real browser, which is why white
+                # was the default, but this run knows what the page sits on: on a dark
+                # design every transparent area was coming out white, so a translucent
+                # panel over a dark ground scored as a white box.
                 rgba = shot_img.convert("RGBA")
-                flat = Image.new("RGB", shot_img.size, "#FFFFFF")
+                flat = Image.new("RGB", shot_img.size, ground)
                 flat.paste(rgba, mask=rgba.split()[3])
                 img = flat
             else:
@@ -2077,6 +2081,11 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         ]
     if run["kind"] == "canvas":
         parts.append("The code is a function body with ctx, W and H already in scope.")
+    # What the rebuild is allowed to reach for. A model left to guess writes plain
+    # boxes, so a gauge comes out square and an icon comes out missing, and the report
+    # then reports the square box rather than the reason for it.
+    if (run.get("materials") or "").strip():
+        parts += ["", "What you may build with: " + run["materials"].strip()]
     if extra:
         parts += ["", "Extra instruction from the person running this: " + extra]
     return "\n".join(parts)
@@ -2499,6 +2508,7 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
         "best_match": -1,
         "best_attempt": None,
     }
+    run["materials"] = MATERIALS_DEFAULT
     if reference_url:
         run["design_url"] = reference_url
         # Read once, when the design is captured: the page is up now, and the answer
@@ -2510,6 +2520,16 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
     _save_run(slug, run)
     return run
 
+
+# Offered as the starting value, so the field is not an empty box nobody knows how to
+# fill. Everything here is drawn by the page itself: nothing is fetched, so a run stays
+# reproducible and nobody's licence is borrowed by accident.
+MATERIALS_DEFAULT = (
+    "Inline SVG for icons and for any curved or radial shape (gauges, rings, arcs, "
+    "wifi and signal glyphs). CSS conic-gradient and radial-gradient for dials and "
+    "glows, blur and rgba fills for translucent panels. Draw them inline; do not link "
+    "to files or libraries that are not here."
+)
 
 STARTERS = {
     "url": "http://localhost:5173/",
@@ -2866,6 +2886,13 @@ PAGE_HTML = r"""<!doctype html>
             <input type="text" id="iter-note" class="text-input" placeholder="Optional steer, for example the font is Inter, keep the card colours" style="flex: 1; min-width: 220px;">
             <button type="button" id="iter-stop" class="btn-ghost" hidden style="height: 32px;">Stop</button>
           </div>
+          <details id="materials-fold" style="margin-top: 12px;">
+            <summary class="code-summary">What it may build with</summary>
+            <textarea id="materials" class="text-input mono" rows="3" spellcheck="false"
+              style="width: 100%; font-size: 12px; line-height: 1.5; padding: 8px 10px;"
+              placeholder="Inline SVG for icons and curved shapes, conic-gradient for dials..."></textarea>
+            <div class="hint">Sent with every round. Left to guess, a model writes plain boxes, so a gauge comes out square and an icon comes out missing. Keep it to things the page can draw itself: anything fetched makes the run depend on the network.</div>
+          </details>
         </div>
       </div>
 
@@ -3188,6 +3215,7 @@ function loadRuns() {
 function openRun(slug) {
   return api("/run?run=" + encodeURIComponent(slug)).then(function (run) {
     state.run = run;
+    $("materials").value = run.materials || "";
     state.attempts = run.attempt_list || [];
     state.sel = state.attempts.length ? state.attempts[state.attempts.length - 1].n : null;
     $("ref-img").src = imgUrl("reference.png");
@@ -3285,6 +3313,18 @@ $("capture-design").addEventListener("click", function () {
     .then(function () { setStatus("Design captured. Point the attempt at your own page and score it."); })
     .catch(function (e) { setStatus("Could not capture that page: " + e.message); })
     .then(function () { $("capture-design").disabled = false; });
+});
+
+var materialsSaveTimer = null;
+$("materials").addEventListener("input", function () {
+  if (!state.run) return;
+  clearTimeout(materialsSaveTimer);
+  var value = $("materials").value;
+  materialsSaveTimer = setTimeout(function () {
+    api("/materials", { run: state.run.slug, materials: value })
+      .then(function (run) { state.run = run; })
+      .catch(function () {});
+  }, 600);
 });
 
 $("create-run").addEventListener("click", function () {
@@ -3909,6 +3949,11 @@ class Handler(BaseHTTPRequestHandler):
                                                    payload.get("candidates"),
                                                    insist=payload.get("insist", True),
                                                    panel=payload.get("panel", False)))
+            elif path == "/materials":
+                run = _load_run(payload["run"])
+                run["materials"] = (payload.get("materials") or "")[:600]
+                _save_run(payload["run"], run)
+                self._send_json(200, run)
             elif path == "/kind":
                 run = _load_run(payload["run"])
                 run["kind"] = payload["kind"] if payload["kind"] in KINDS else run["kind"]

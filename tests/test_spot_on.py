@@ -1170,6 +1170,30 @@ class RowSpacing(unittest.TestCase):
         self.assertEqual(self.finds(self.row(20, n=2), self.row(60, n=2)), [])
 
 
+class MaterialsReachThePrompt(unittest.TestCase):
+    """What the rebuild may reach for, carried on the run and sent every round."""
+
+    def prompt(self, materials):
+        run = {"kind": "html", "width": 760, "height": 500, "ground": "#FFFFFF",
+               "materials": materials}
+        return so._iterate_prompt(run, 1, "<div></div>", score("close"), "")
+
+    def test_materials_are_sent_with_the_round(self):
+        text = self.prompt("Inline SVG for icons; conic-gradient for dials")
+        self.assertIn("What you may build with", text)
+        self.assertIn("conic-gradient for dials", text)
+
+    def test_nothing_is_said_when_the_field_is_empty(self):
+        for empty in ("", "   ", None):
+            self.assertNotIn("What you may build with", self.prompt(empty))
+
+    def test_the_default_keeps_the_page_self_contained(self):
+        # Anything fetched makes a run depend on the network and a score move without
+        # the code changing, which the Limits section already warns about.
+        self.assertIn("do not link", so.MATERIALS_DEFAULT.lower())
+        self.assertIn("svg", so.MATERIALS_DEFAULT.lower())
+
+
 class ArtworkIsNamedAsUnreachable(unittest.TestCase):
     """A photograph or a render is not a layout problem, and rounds spent on it are lost."""
 
