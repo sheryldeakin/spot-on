@@ -1207,6 +1207,44 @@ class WebglRendersAndHoldsStill(unittest.TestCase):
         self.assertEqual(int((np.abs(a - b).sum(axis=2) > 8).sum()), 0)
 
 
+class RegionsAreScoredSeparately(unittest.TestCase):
+    """One number over a whole page is an average, and an average hides where the work is."""
+
+    def split(self, bad_corner):
+        img = Image.new("RGB", (300, 300), "#F5F8FF")
+        d = ImageDraw.Draw(img)
+        for i in range(9):
+            x, y = 10 + (i % 3) * 100, 10 + (i // 3) * 100
+            d.rectangle([x, y, x + 80, y + 80], fill="#1B2A3A")
+        if bad_corner:
+            d.rectangle([10, 10, 90, 90], fill="#F5F8FF")   # top left left blank
+        return img
+
+    def test_every_ninth_is_scored(self):
+        report = so.score_images(self.split(False), self.split(True))[0]
+        self.assertEqual(len(report["region_scores"]), 9)
+        names = {g["where"] for g in report["region_scores"]}
+        self.assertIn("top left", names)
+        self.assertIn("bottom right", names)
+
+    def test_the_weak_region_is_the_one_that_is_wrong(self):
+        report = so.score_images(self.split(False), self.split(True))[0]
+        worst = min(report["region_scores"], key=lambda g: g["match"])
+        self.assertEqual(worst["where"], "top left")
+
+    def test_a_level_page_is_not_called_uneven(self):
+        report = so.score_images(self.split(False), self.split(False))[0]
+        self.assertFalse(any("uneven" in p for p in report["problems"]))
+
+    def test_the_sentence_does_not_compare_regions_with_the_page_total(self):
+        # Scoring a crop recomputes its ground, coverage and ink masks for that crop,
+        # so a region score and the page score are not the same measurement.
+        report = so.score_images(self.split(False), self.split(True))[0]
+        line = [p for p in report["problems"] if "uneven" in p]
+        if line:
+            self.assertIn("not with the page total", line[0])
+
+
 class EmptyContainersAreNamed(unittest.TestCase):
     """A container the right size in the right place, with nothing drawn inside it."""
 

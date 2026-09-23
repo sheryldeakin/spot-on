@@ -1305,7 +1305,8 @@ def _cell_name(cell):
     return "{}, {}".format(_ROW_WORDS[cell["row"]], _COL_WORDS[cell["col"]])
 
 
-def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None):
+def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
+                 regions=True):
     """Compare two same-size RGB images and return the full score report.
 
     px_per_css converts image pixels back to CSS pixels for the sentences in the
@@ -1488,8 +1489,36 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     # Known only when the design is a live page, and only used to name the typeface.
     report["design_fonts"] = list(design_fonts or [])
     report["artwork"] = _artwork(ref, att)
+    report["region_scores"] = _region_scores(ref_img, att_img) if regions else []
     report["problems"] = _problems(report)
     return report, per_px, ground
+
+
+_REGION_NAMES = [["top left", "top centre", "top right"],
+                 ["middle left", "middle centre", "middle right"],
+                 ["bottom left", "bottom centre", "bottom right"]]
+
+
+def _region_scores(ref_img, att_img, n=3):
+    """Score each ninth of the page on its own.
+
+    One number over a whole page is an average, and an average hides where the work is.
+    On a large rebuild the page scored 70.7 while its own regions ran from 53.7 to
+    79.6: a quarter of the range invisible in the headline. It also explains why rounds
+    stall on a big page, because a region worth eleven percent of the pixels can be
+    fixed completely and move the total by under three points.
+    """
+    W, H = ref_img.size
+    out = []
+    for r in range(n):
+        for c in range(n):
+            box = (W * c // n, H * r // n, W * (c + 1) // n, H * (r + 1) // n)
+            if box[2] - box[0] < 24 or box[3] - box[1] < 24:
+                continue
+            sub, _, _ = score_images(ref_img.crop(box), att_img.crop(box), regions=False)
+            out.append({"row": r, "col": c, "where": _REGION_NAMES[r][c],
+                        "match": sub["match"]})
+    return out
 
 
 def _artwork(ref, att, cells=6):
@@ -1723,6 +1752,38 @@ def _problems(report):
         if missing:
             out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
+
+    regions = report.get("region_scores") or []
+    if len(regions) >= 4:
+        # Artwork regions are left out of the recommendation. The globe scored worst on
+        # one page, and sending the next round there would contradict the artwork line
+        # telling it not to chase a render.
+        art = report.get("artwork") or {}
+        art_cells = {tuple(c) for c in art.get("cells", [])}
+        grid = art.get("grid", 6)
+        def mostly_artwork(g):
+            if not art_cells:
+                return False
+            lo_r, hi_r = g["row"] * grid // 3, ((g["row"] + 1) * grid - 1) // 3
+            lo_c, hi_c = g["col"] * grid // 3, ((g["col"] + 1) * grid - 1) // 3
+            spans = [(r, c) for r in range(lo_r, hi_r + 1) for c in range(lo_c, hi_c + 1)]
+            hit = sum(1 for cell in spans if cell in art_cells)
+            return spans and hit >= 0.6 * len(spans)
+
+        workable = [g for g in regions if not mostly_artwork(g)]
+        if len(workable) >= 2:
+            worst = min(workable, key=lambda g: g["match"])
+            best = max(workable, key=lambda g: g["match"])
+            # Only when the page is genuinely uneven; on a level page this says nothing
+            # and would crowd out the specific findings.
+            if best["match"] - worst["match"] >= 15:
+                out.append(
+                    "The page is uneven. Scored ninth by ninth, the {} is the weakest part you "
+                    "can act on at {:.1f}, against {:.1f} for the {}. Work there first. These "
+                    "are comparable with each other and not with the page total, which is "
+                    "measured over the whole page at once. Expect the total to crawl even when "
+                    "a region improves a lot, because a region is only a fraction of the "
+                    "page.".format(worst["where"], worst["match"], best["match"], best["where"]))
 
     art = report.get("artwork")
     if art:
