@@ -2628,6 +2628,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     GIVE_UP_AFTER rounds: past that the honest reading is that the thing cannot be
     fixed in code, and spending every remaining round on it is worse than saying so.
     """
+    t0 = time.time()
     run = _load_run(slug)
     if run["kind"] == "url":
         # The code behind a running page lives in someone's repo, which this process
@@ -2693,8 +2694,12 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
                               insist=False, panel=panel)
         again["insisted_on"] = best["still_stuck"]
         if again["match"] >= best["match"]:
+            again["round_seconds"] = round(time.time() - t0, 2)
+            stamp_attempt(slug, again["n"], round_seconds=again["round_seconds"])
             return again
         best["insisting_did_not_help"] = True
+    best["round_seconds"] = round(time.time() - t0, 2)
+    stamp_attempt(slug, best["n"], round_seconds=best["round_seconds"])
     return best
 
 
@@ -2856,6 +2861,22 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
             latest["best_attempt"] = n
             _save_run(slug, latest)
     return record
+
+
+def stamp_attempt(slug, n, **fields):
+    """Add fields to a stored attempt after it was written.
+
+    How long a round took is only known once it has finished, by which point the
+    attempt it produced is already on disk. It is worth keeping, because it is what
+    lets the page say how far through a round it is instead of spinning.
+    """
+    p = _run_dir(slug) / "attempts" / "{:03d}.json".format(n)
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    rec.update(fields)
+    p.write_text(json.dumps(rec, indent=2), encoding="utf-8")
 
 
 def capture_design(url, out_png, css_width=1440, css_height=900, scale=1.0):
@@ -3160,6 +3181,16 @@ PAGE_HTML = r"""<!doctype html>
   .comp-val { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; color: var(--deep); font-variant-numeric: tabular-nums; }
 
   .region-cell { aspect-ratio: 1; border-radius: 3px; cursor: help; }
+  /* One progress control, used light on the page and pale on the dark stage. A round
+     takes minutes, and a spinner for minutes is indistinguishable from a hang. */
+  .prog { display: block; height: 4px; border-radius: 999px; background: rgba(34,55,43,0.12); overflow: hidden; }
+  .prog > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width 320ms linear; }
+  .prog.over > i { background: repeating-linear-gradient(115deg, var(--accent) 0 9px, var(--accent-hover) 9px 18px); animation: progCrawl 1s linear infinite; }
+  .prog.dark { background: rgba(255,255,255,0.16); }
+  .prog.dark > i { background: #CFE3D4; }
+  .prog.dark.over > i { background: repeating-linear-gradient(115deg, #CFE3D4 0 9px, #9FC2A9 9px 18px); }
+  @keyframes progCrawl { to { background-position: 18px 0; } }
+  .prog-note { font-size: 11px; color: var(--muted); }
   .el-score { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; color: var(--deep); }
   .el-name { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); min-width: 172px; }
   .el-verdict { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); min-width: 78px; text-align: right; }
@@ -3335,6 +3366,10 @@ PAGE_HTML = r"""<!doctype html>
           <button type="button" id="starter" class="btn-fill" disabled>Insert starter</button>
           <span id="status-line" style="margin-left: 4px; font-size: 12px; color: var(--muted);" aria-live="polite">Drop in a design to begin.</span>
         </div>
+        <div id="prog-row" hidden style="display: flex; align-items: center; gap: 10px; margin-top: 10px; max-width: 620px;">
+          <span class="prog" style="flex: 1;"><i id="prog-bar"></i></span>
+          <span id="prog-note" class="prog-note mono" style="white-space: nowrap;"></span>
+        </div>
 
         <div class="rule22" style="margin-top: 20px;"></div>
         <div id="no-agent" hidden style="padding-top: 14px; max-width: 580px;">
@@ -3411,6 +3446,10 @@ PAGE_HTML = r"""<!doctype html>
               <img id="stage-base" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain; object-position: top;">
               <img id="stage-over" alt="" hidden style="position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); object-fit: contain; object-position: top;">
               <span id="stage-empty" class="mono" style="font-size: 11px; color: #A9AFAB;">Nothing rendered yet.</span>
+              <div id="stage-prog" hidden style="position: absolute; left: 14px; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 10px;">
+                <span class="prog dark" style="flex: 1;"><i id="stage-prog-bar"></i></span>
+                <span id="stage-prog-note" class="mono" style="font-size: 10px; color: #DCEBE0; letter-spacing: 0.1em; white-space: nowrap;"></span>
+              </div>
             </div>
           </div>
         </div>
@@ -3528,6 +3567,64 @@ var state = {
 };
 
 function setStatus(msg) { $("status-line").textContent = msg; }
+
+// ---- progress
+// A round takes minutes, and for minutes a spinner is indistinguishable from a hang.
+// The bar fills against how long this run's own rounds have actually taken, so the
+// estimate is this machine with this model rather than a number chosen here. It stops
+// at 95% and starts crawling once it runs over, because a bar that sits full while
+// nothing happens is worse than one that admits it does not know.
+var PROG_FALLBACK = 150;   // seconds, until this run has timed a round of its own
+var prog = { timer: null, t0: 0, budget: 0, label: "" };
+
+function clock(s) {
+  return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
+}
+
+function roundBudget() {
+  var seen = [];
+  for (var i = 0; i < state.attempts.length; i++) {
+    var v = state.attempts[i].round_seconds;
+    if (v) seen.push(v);
+  }
+  if (!seen.length) return PROG_FALLBACK;
+  seen.sort(function (a, b) { return a - b; });
+  return seen[Math.floor(seen.length / 2)];
+}
+
+function progPaint() {
+  var s = Math.round((Date.now() - prog.t0) / 1000);
+  var frac = Math.min(0.95, prog.budget ? (Date.now() - prog.t0) / (prog.budget * 1000) : 0);
+  var over = frac >= 0.95;
+  var note = prog.label + " " + clock(s) +
+    (prog.budget ? (over ? ", longer than usual" : " of about " + clock(Math.round(prog.budget))) : "");
+  [["prog-bar", "prog-note"], ["stage-prog-bar", "stage-prog-note"]].forEach(function (ids) {
+    var bar = $(ids[0]);
+    bar.style.width = (frac * 100).toFixed(1) + "%";
+    bar.parentNode.classList.toggle("over", over);
+    $(ids[1]).textContent = note;
+  });
+}
+
+function progStart(label, budget) {
+  prog.t0 = Date.now();
+  prog.label = label;
+  prog.budget = budget === undefined ? roundBudget() : budget;
+  $("prog-row").hidden = false;
+  $("stage-prog").hidden = false;
+  progPaint();
+  clearInterval(prog.timer);
+  prog.timer = setInterval(progPaint, 250);
+}
+
+function progStop() {
+  clearInterval(prog.timer);
+  prog.timer = null;
+  $("prog-row").hidden = true;
+  $("stage-prog").hidden = true;
+  $("prog-bar").style.width = "0";
+  $("stage-prog-bar").style.width = "0";
+}
 function imgUrl(file) {
   if (!state.run) return "";
   return "/img?run=" + encodeURIComponent(state.run.slug) + "&file=" + encodeURIComponent(file) + "&t=" + Date.now();
@@ -3811,13 +3908,35 @@ $("materials").addEventListener("input", function () {
   }, 600);
 });
 
+// A new run starts itself. Everything the three opening clicks did was forced: there
+// is nothing to screenshot but the starter, and nothing to do with the score but
+// iterate on it. One round runs, not three, so the first real attempt appears and then
+// it hands back rather than spending minutes nobody asked for.
+function autoStart() {
+  var run = state.run;
+  if (!run || isUrlKind() || state.attempts.length) return Promise.resolve();
+  return api("/run?run=" + encodeURIComponent(run.slug))
+    .then(function (full) {
+      setCode(full.starter);
+      return scoreCurrentCode();
+    })
+    .then(function () {
+      if (!state.agents) {
+        setStatus("Scored the starter. No AI is set up here, so copy the packet below.");
+        return;
+      }
+      startRounds(1);
+    })
+    .catch(function () {});
+}
+
 $("create-run").addEventListener("click", function () {
   var name = $("run-name").value.trim();
   if (!name || !state.pending) return;
   setStatus("Creating run...");
   api("/runs", { name: name, kind: $("run-kind").value, scale: parseFloat($("run-scale").value), data_url: state.pending })
     .then(function (run) { state.pending = null; return loadRuns().then(function () { return openRun(run.slug); }); })
-    .then(function () { setStatus("Run created. Paste an attempt or insert the starter."); })
+    .then(function () { return autoStart(); })
     .catch(function (e) { setStatus("Could not create the run: " + e.message); });
 });
 
@@ -3844,12 +3963,17 @@ function busy(on, label) {
   $("iterate").disabled = on || !state.attempts.length;
 }
 
-$("render").addEventListener("click", function () {
+function scoreCurrentCode() {
   var code = getCode();
-  if (!state.run || !code.trim()) { setStatus("Nothing to render yet."); return; }
+  if (!state.run || !code.trim()) { setStatus("Nothing to render yet."); return Promise.reject(); }
   busy(true);
   setStatus("Taking the screenshot...");
-  api("/attempt", { run: state.run.slug, code: code })
+  // A screenshot and score is seconds, not minutes, so the bar is measured against
+  // what the last render of this run actually took.
+  var last = state.attempts.length
+    ? state.attempts[state.attempts.length - 1].render_seconds : 0;
+  progStart("screenshot", Math.max(3, last || 6));
+  return api("/attempt", { run: state.run.slug, code: code })
     .then(function (rec) {
       state.attempts.push(rec);
       state.sel = rec.n;
@@ -3860,29 +3984,26 @@ $("render").addEventListener("click", function () {
       setStatus("Attempt " + rec.n + " scored " + rec.match.toFixed(1) + " out of 100.");
       renderAll();
       loadRuns();
+      return rec;
     })
-    .catch(function (e) { setStatus("Render failed: " + e.message); })
-    .then(function () { busy(false); });
+    .catch(function (e) { setStatus("Render failed: " + e.message); throw e; })
+    .then(function (rec) { busy(false); progStop(); return rec; },
+          function (e) { busy(false); progStop(); throw e; });
+}
+
+$("render").addEventListener("click", function () {
+  scoreCurrentCode().catch(function () {});
 });
 
 // ---- iterate ----
-var roundTimer = null;
 function startRoundClock(round, total) {
-  var t0 = Date.now();
-  clearInterval(roundTimer);
-  function tick() {
-    var s = Math.round((Date.now() - t0) / 1000);
-    var tries = parseInt($("candidates").value, 10);
-    setStatus("Round " + round + " of " + total + ", " +
-      Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2) + " elapsed. " +
-      (tries > 1 ? tries + " rewrites are running at once; the best one is kept. "
-                 : "One rewrite is running. ") +
-      "A round usually takes two to five minutes.");
-  }
-  tick();
-  roundTimer = setInterval(tick, 1000);
+  var tries = parseInt($("candidates").value, 10);
+  setStatus("Round " + round + " of " + total + ". " +
+    (tries > 1 ? tries + " rewrites are running at once; the best one is kept."
+               : "One rewrite is running."));
+  progStart("round " + round + " of " + total + ",");
 }
-function stopRoundClock() { clearInterval(roundTimer); roundTimer = null; }
+function stopRoundClock() { progStop(); }
 
 function iterateRounds(left, note) {
   if (left <= 0 || state.stopping) {
@@ -3927,16 +4048,20 @@ function iterateRounds(left, note) {
     });
 }
 
-$("iterate").addEventListener("click", function () {
+function startRounds(rounds) {
   if (!state.run || !state.attempts.length) return;
   state.stopping = false;
-  state.rounds = parseInt($("rounds").value, 10);
+  state.rounds = rounds;
   $("iter-spin").hidden = false;
   $("iter-stop").hidden = false;
   $("iterate").disabled = true;
   busy(true, "Iterating");
   state.startBest = state.run.best_match || 0;
   iterateRounds(state.rounds, $("iter-note").value.trim());
+}
+
+$("iterate").addEventListener("click", function () {
+  startRounds(parseInt($("rounds").value, 10));
 });
 $("iter-stop").addEventListener("click", function () {
   state.stopping = true;

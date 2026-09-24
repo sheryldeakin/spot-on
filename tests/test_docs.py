@@ -2,7 +2,11 @@
 
 import importlib.util
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -138,6 +142,44 @@ class EchoedNumbers(unittest.TestCase):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)
         self.assertIsNotNone(m)
         self.assertEqual(int(m.group(1)), round((0.6 + 0.4 * 0.8) * 100))
+
+
+class ThePageScript(unittest.TestCase):
+    """The whole interface is one inline script, and nothing else parses it.
+
+    A stray bracket in it does not fail an import or a test: the server serves the page,
+    the browser stops at the error, and every control is dead with no message anywhere.
+    Node is not a dependency of the tool, so this is skipped when it is missing.
+    """
+
+    def script(self):
+        page = TOOL.PAGE_HTML
+        start = page.index("<script>") + len("<script>")
+        return page[start:page.index("</script>", start)]
+
+    def test_it_parses(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                         encoding="utf-8") as f:
+            f.write(self.script())
+            path = f.name
+        try:
+            done = subprocess.run([node, "--check", path], capture_output=True)
+            self.assertEqual(done.returncode, 0,
+                             done.stderr.decode("utf-8", "replace")[-900:])
+        finally:
+            os.unlink(path)
+
+    def test_every_element_it_reaches_for_exists(self):
+        # $("thing") on an id the markup does not have returns null, and the next line
+        # throws. That kills the rest of the script, so one typo can disable the page.
+        page, script = TOOL.PAGE_HTML, self.script()
+        ids = set(re.findall(r'\bid="([A-Za-z0-9\-]+)"', page))
+        wanted = set(re.findall(r'\$\("([A-Za-z0-9\-]+)"\)', script))
+        made = set(re.findall(r'\.id = "([A-Za-z0-9\-]+)"', script))
+        self.assertEqual(sorted(wanted - ids - made), [])
 
 
 class HouseRules(unittest.TestCase):

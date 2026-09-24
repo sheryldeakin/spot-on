@@ -1753,6 +1753,52 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
 
 
+class RoundsAreTimedForTheProgressBar(unittest.TestCase):
+    """How long a round took, kept so the page can say how far through the next one is.
+
+    Without it the page can only spin, and for something that takes minutes a spinner
+    is indistinguishable from a hang.
+    """
+
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">'
+           '<rect width="400" height="300" fill="#FFFFFF"/>{}</svg>')
+    CIRCLE = '<circle cx="200" cy="150" r="{}" fill="#52796F"/>'
+
+    def setUp(self):
+        self.saved_agent, self.saved_runs = so.run_agent, so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-timing-"))
+        so.RUNS_DIR = self.tmp
+
+    def tearDown(self):
+        so.run_agent, so.RUNS_DIR = self.saved_agent, self.saved_runs
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_field_can_be_added_to_an_attempt_after_it_is_written(self):
+        so.create_run("stamp", "svg", reference_bytes=_png_bytes(DESIGN))
+        rec = so.record_attempt("stamp", self.SVG.format(self.CIRCLE.format(80)))
+        self.assertNotIn("round_seconds", rec)
+        so.stamp_attempt("stamp", rec["n"], round_seconds=41.5)
+        self.assertEqual(so._attempts("stamp")[0]["round_seconds"], 41.5)
+
+    def test_stamping_an_attempt_that_is_not_there_is_not_an_error(self):
+        so.create_run("stamp2", "svg", reference_bytes=_png_bytes(DESIGN))
+        so.stamp_attempt("stamp2", 99, round_seconds=1.0)  # must not raise
+
+    @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+    def test_a_round_records_how_long_it_took(self):
+        so.create_run("timed", "svg", reference_bytes=_png_bytes(DESIGN))
+        so.record_attempt("timed", self.SVG.format(self.CIRCLE.format(20)))
+        body = self.SVG.format(self.CIRCLE.format(80))
+        so.run_agent = lambda agent, prompt, cwd, images: "```\n" + body + "\n```"
+        best = so.run_iteration("timed", candidates=1, insist=False)
+        self.assertGreater(best["round_seconds"], 0)
+        # On disk too, so a reload of the page still has something to estimate from.
+        stored = [a for a in so._attempts("timed") if a["n"] == best["n"]][0]
+        self.assertEqual(stored["round_seconds"], best["round_seconds"])
+        # The rendering of the attempt is part of the round, never longer than it.
+        self.assertGreaterEqual(best["round_seconds"], best["render_seconds"])
+
+
 class PairingElementsByAppearance(unittest.TestCase):
     """Which attempt element is this design element, once it has moved.
 
