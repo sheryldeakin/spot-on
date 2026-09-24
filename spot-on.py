@@ -72,6 +72,7 @@ IDENTITY_MATCH = "content"   # for identity questions: where did this element en
 CONTENT_ACCEPT = 0.35    # thumbnail correlation below which two elements are not the same thing
 CONTENT_FAR_W = 2.0      # what crossing the whole page costs a pair, in correlation
 CONTENT_GATE = 1.0       # total cost above which a pair is refused
+LAYOUT_TRUST = 0.8       # how far the ink profile is trusted against the pixels; 0 is off
 ELEMENT_SCORES = 8       # elements kept in the report, worst first
 ELEMENT_MIN = 16         # px; below this a box is a glyph, not something to be told about
 ELEMENT_BEHIND = 10      # points below the page score at which an element is worth naming
@@ -573,8 +574,37 @@ def _thumb(g, el, n=12):
     return (t / s).ravel() if s > 1e-9 else None
 
 
+def _ink_profile(g, el, rows=10, cols=4):
+    """Where the ink sits inside one element, rather than what it spells.
+
+    A thumbnail of the pixels is the sharper way to recognise an element, and it has
+    one blind spot: change the words in a box and the pixels change, so the box reads
+    as a different thing and a reworded label is reported missing. What a reword does
+    not change is the layout of the ink: how many rows of it there are, how tall they
+    are, how dense. Reading that as well gives the match something to hold on to when
+    the glyphs have all moved. Deliberately coarse across the page, where words live,
+    and finer down it, where the type metrics do.
+    """
+    crop = g[el["y"]:el["y"] + el["h"], el["x"]:el["x"] + el["w"]]
+    if crop.size < 16:
+        return None
+    ink = (np.abs(crop - np.median(crop)) > 24).astype(np.float64)
+    if ink.sum() < 4:
+        return None
+
+    def bins(profile, n):
+        src = np.linspace(0.0, 1.0, num=len(profile))
+        return np.interp(np.linspace(0.0, 1.0, num=n), src, profile)
+
+    v = np.concatenate([bins(ink.mean(axis=1), rows), bins(ink.mean(axis=0), cols),
+                        [ink.mean()]])
+    v -= v.mean()
+    s = float(np.sqrt((v * v).sum()))
+    return v / s if s > 1e-9 else None
+
+
 def _match_content(design, attempt, g_ref, g_att, accept=CONTENT_ACCEPT,
-                   far_w=CONTENT_FAR_W, gate=CONTENT_GATE):
+                   far_w=CONTENT_FAR_W, gate=CONTENT_GATE, layout=LAYOUT_TRUST):
     """Pair elements by what they look like, with position only as a tie-breaker.
 
     Matching on position cannot tell a moved element from a missing one and a new
@@ -583,6 +613,8 @@ def _match_content(design, attempt, g_ref, g_att, accept=CONTENT_ACCEPT,
     """
     td = [_thumb(g_ref, d) for d in design]
     ta = [_thumb(g_att, a) for a in attempt]
+    pd = [_ink_profile(g_ref, d) for d in design] if layout else [None] * len(design)
+    pa = [_ink_profile(g_att, a) for a in attempt] if layout else [None] * len(attempt)
     diag = float(np.hypot(g_ref.shape[1], g_ref.shape[0])) or 1.0
     pairs = []
     for i, d in enumerate(design):
@@ -596,6 +628,11 @@ def _match_content(design, attempt, g_ref, g_att, accept=CONTENT_ACCEPT,
             # lost nothing, and saying "the card is missing, and here is one you did not
             # ask for" sends the next round to redraw geometry that is already right.
             sim = abs(float(td[i] @ ta[j]))
+            # Whichever way recognises it, discounting the coarser one so that where the
+            # pixels agree they decide. The profile is there to rescue an element the
+            # pixels have lost, not to overrule them.
+            if pd[i] is not None and pa[j] is not None:
+                sim = max(sim, layout * abs(float(pd[i] @ pa[j])))
             if sim < accept:
                 continue
             shape = abs(math.log((a["w"] * d["h"] + 1.0) / (a["h"] * d["w"] + 1.0)))

@@ -90,13 +90,31 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(WORDS.get(m.group(1), -1), len(trial["scenarios"]))
         self.assertEqual(int(m.group(2)), trial["totals"]["content"]["of"])
 
-    def test_the_reword_limit_matches_the_trial_output(self):
-        trial = TRIAL
-        row = next(s for s in trial["scenarios"] if s["scenario"] == "text-swap")["matchers"]
-        m = re.search(r"below position matching \((\d+\.\d+)% against (\d+)%\)", README)
-        self.assertIsNotNone(m, "the reword limit is worded differently now")
-        self.assertEqual(float(m.group(1)), row["content"]["accuracy"])
-        self.assertEqual(float(m.group(2)), row["geometry"]["accuracy"])
+    def test_the_reword_fix_matches_the_trial_output(self):
+        rows = {s["scenario"]: s["matchers"]["content"]["accuracy"]
+                for s in TRIAL["scenarios"]}
+        m = re.search(r"reword case from (\d+\.\d+)% to (\d+)% and the total from "
+                      r"(\d+\.\d+)% to (\d+\.\d+)%", README)
+        self.assertIsNotNone(m, "the reword fix is worded differently now")
+        self.assertEqual(float(m.group(2)), rows["text-swap"])
+        self.assertEqual(float(m.group(4)), TRIAL["totals"]["content"]["accuracy"])
+        # The before figures come from the sweep row with the profile switched off.
+        sweep = {(r["far_w"], r["gate"], r["layout"]): r for r in SWEEP["sweep"]}
+        off = sweep[(TOOL.CONTENT_FAR_W, TOOL.CONTENT_GATE, 0.0)]
+        self.assertEqual(float(m.group(1)), off["by_scenario"]["text-swap"])
+        self.assertEqual(float(m.group(3)), off["known_pct"])
+
+    def test_the_remaining_limit_matches_the_trial_output(self):
+        rows = {s["scenario"]: s["matchers"]["content"]["accuracy"]
+                for s in TRIAL["scenarios"]}
+        m = re.search(r"Both remaining failures in the trial are that case "
+                      r"\((\d+\.\d+)% and (\d+\.\d+)%; every other scenario is 100%\)", README)
+        self.assertIsNotNone(m, "the remaining limit is worded differently now")
+        below = {k: v for k, v in rows.items() if v < 100.0}
+        self.assertTrue(all("swap" in k for k in below),
+                        "a non-swap scenario now fails: " + ", ".join(sorted(below)))
+        self.assertEqual(sorted(round(float(g), 1) for g in m.groups()),
+                         sorted(round(v, 1) for v in below.values()))
 
     def test_the_unbounded_reach_numbers_match_the_sweep(self):
         sweep = SWEEP

@@ -285,11 +285,11 @@
           "accuracy": 100.0
         },
         "content": {
-          "correct": 17,
+          "correct": 18,
           "of": 18,
           "paired_wrong": 0,
-          "called_absent_wrongly": 1,
-          "accuracy": 94.4
+          "called_absent_wrongly": 0,
+          "accuracy": 100.0
         },
         "overlay": {
           "correct": 18,
@@ -428,9 +428,9 @@
       "accuracy": 92.8
     },
     "content": {
-      "correct": 246,
+      "correct": 247,
       "of": 250,
-      "accuracy": 98.4
+      "accuracy": 98.8
     },
     "overlay": {
       "correct": 201,

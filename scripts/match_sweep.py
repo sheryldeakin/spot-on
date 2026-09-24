@@ -31,6 +31,7 @@ import match_trial as mt  # noqa: E402
 
 FAR_W = (0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0)
 GATE = (10.0, 1.6, 1.4, 1.2, 1.0, 0.9, 0.7, 0.55)
+LAYOUT = (0.0, 0.7, 0.8, 0.85, 0.9, 1.0)
 BIGGEST = 6   # real runs to sweep, the largest first: small pages have no lookalikes
 
 
@@ -96,7 +97,9 @@ def real_cases():
 
 def score_synthetic(cases, **kw):
     right = total = 0
+    per = {}
     for name, fd, fa, g_ref, g_att, truth in cases:
+        was = right
         matched, missing = so._match_content(fd, fa, g_ref, g_att, **kw)
         got = {mt.key(d): mt.key(a) for d, a in matched}
         for d in missing:
@@ -109,7 +112,8 @@ def score_synthetic(cases, **kw):
             elif want is not None and have is not None and mt.iou(
                     dict(zip("xywh", have)), dict(zip("xywh", want))) >= mt.IOU_SAME:
                 right += 1
-    return right, total
+        per[name] = round(100.0 * (right - was) / max(1, len(truth)), 1)
+    return right, total, per
 
 
 def score_real(cases, **kw):
@@ -133,20 +137,27 @@ def main():
     import tempfile
     tmp = Path(tempfile.mkdtemp(prefix="match-sweep-"))
     syn, real = synthetic_cases(tmp), real_cases()
-    print("{:>7} {:>6} {:>10} {:>9} {:>9} {:>10}".format(
-        "far_w", "gate", "known", "reaches", "paired", "furthest"))
+    # The whole grid with the ink profile off, so the original choice stays reproducible,
+    # then a grid around that choice for each level of trust in the profile.
+    combos = [(fw, gt, 0.0) for fw in FAR_W for gt in GATE]
+    combos += [(fw, gt, lt) for lt in LAYOUT if lt
+               for fw in (1.5, 2.0, 2.5, 3.0) for gt in (1.2, 1.0, 0.9, 0.7)]
+    print("{:>7} {:>6} {:>7} {:>10} {:>9} {:>9} {:>10}".format(
+        "far_w", "gate", "layout", "known", "reaches", "paired", "furthest"))
     rows = []
-    for fw in FAR_W:
-        for gt in GATE:
-            r, t = score_synthetic(syn, far_w=fw, gate=gt)
-            far, paired, designs, worst = score_real(real, far_w=fw, gate=gt)
-            rows.append({"far_w": fw, "gate": gt, "known_correct": r, "known_of": t,
-                         "known_pct": round(100.0 * r / t, 1), "cross_page_pairs": far,
-                         "real_paired": paired, "real_designs": designs,
-                         "real_paired_pct": round(100.0 * paired / designs, 1),
-                         "furthest_px": round(worst, 1)})
-            print("{:>7} {:>6} {:>9.1f}% {:>9} {:>8.1f}% {:>10.0f}".format(
-                fw, gt, rows[-1]["known_pct"], far, rows[-1]["real_paired_pct"], worst))
+    for fw, gt, lt in combos:
+        kw = {"far_w": fw, "gate": gt, "layout": lt}
+        r, t, per = score_synthetic(syn, **kw)
+        far, paired, designs, worst = score_real(real, **kw)
+        rows.append({"far_w": fw, "gate": gt, "layout": lt, "known_correct": r,
+                     "known_of": t, "known_pct": round(100.0 * r / t, 1),
+                     "by_scenario": per,
+                     "cross_page_pairs": far, "real_paired": paired,
+                     "real_designs": designs,
+                     "real_paired_pct": round(100.0 * paired / designs, 1),
+                     "furthest_px": round(worst, 1)})
+        print("{:>7} {:>6} {:>7} {:>9.1f}% {:>9} {:>8.1f}% {:>10.0f}".format(
+            fw, gt, lt, rows[-1]["known_pct"], far, rows[-1]["real_paired_pct"], worst))
     # For reference, the two matchers this is competing with, on the same real pages.
     base = {}
     for how in ("geometry", "overlay"):

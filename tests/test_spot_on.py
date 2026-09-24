@@ -1818,6 +1818,25 @@ class PairingElementsByAppearance(unittest.TestCase):
             self.assertEqual((d["x"], d["y"], d["w"], d["h"]),
                              (a["x"], a["y"], a["w"], a["h"]))
 
+    def test_an_element_whose_words_changed_is_still_the_same_element(self):
+        # Pixels alone lose this: change what a box says and it reads as a different
+        # thing, so a reworded label is reported missing and a new one unasked for. The
+        # ink profile is what survives a reword, because the rows of type do not move.
+        design = self.page([(40, 40, 220, 40, "#FFFFFF", 14)])
+        reworded = self.page([(40, 40, 220, 40, "#FFFFFF", 14)])
+        d = ImageDraw.Draw(reworded)
+        d.rectangle([46, 54, 150, 60], fill="#FFFFFF")   # erase part of the stripe
+        d.rectangle([170, 54, 254, 60], fill="#111827")  # and set it elsewhere
+        matched, missing = self.pairs(design, reworded, "content")
+        self.assertEqual(len(matched), 1, "the reworded box was not recognised")
+        self.assertEqual(missing, [])
+
+    def test_the_ink_profile_is_only_a_fallback_not_an_override(self):
+        # It is coarser than the pixels, so where the pixels agree they must decide.
+        # Trusted fully it would pair any two boxes with type at the same height.
+        self.assertLess(so.LAYOUT_TRUST, 1.0)
+        self.assertGreater(so.LAYOUT_TRUST, 0.0)
+
     def test_the_slot_detectors_keep_position_matching(self):
         # Empty containers and emphasis exist to compare things that look different, so
         # they cannot be paired by appearance. Their default must stay position.
