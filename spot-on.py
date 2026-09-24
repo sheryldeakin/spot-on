@@ -1598,13 +1598,26 @@ _REGION_NAMES = [["top left", "top centre", "top right"],
                  ["bottom left", "bottom centre", "bottom right"]]
 
 
-def _element_score_sentences(report, behind=ELEMENT_BEHIND, moved_by=ELEMENT_MOVED):
-    """Name the weakest elements, and say whether each needs moving or rebuilding."""
+def _element_score_sentences(report, behind=ELEMENT_BEHIND, moved_by=ELEMENT_MOVED,
+                             already=()):
+    """Name the weakest elements, and say whether each needs moving or rebuilding.
+
+    `already` is the elements the geometry lines above have named. Those lines are
+    paired by position and these by appearance, so on an element the two pairings
+    disagree about, the report would otherwise carry both answers: one saying the box
+    is 22% narrower, the next saying nothing in the attempt resembles it. The specific
+    line wins, and this adds the ranking and the diagnosis for everything else.
+    """
     scored = report.get("element_scores") or []
     page = report.get("match", 0.0)
+    seen = {(int(x), int(y)) for x, y in already}
     out = []
-    for e in scored[:2]:
+    for e in scored[:4]:
+        if len(out) >= 2:
+            break
         if e["in_place"] > page - behind:
+            continue
+        if any(abs(e["x"] - sx) <= 4 and abs(e["y"] - sy) <= 4 for sx, sy in seen):
             continue
         what = "{}x{}px {} at x {}, y {} ({} of the page)".format(
             e["w"], e["h"], "text" if e["kind"] == "text" else "box", e["x"], e["y"],
@@ -1656,9 +1669,11 @@ def _element_score_sentences(report, behind=ELEMENT_BEHIND, moved_by=ELEMENT_MOV
                 "compared like for like, so the miss is inside it rather than in where it sits."
                 .format(what, e["in_place"], page, e["as_built"]))
     if out:
-        out.append(
-            "Those element scores are comparable with each other and not with the page total, "
-            "which is measured over the whole page at once. Expect the total to move by a "
+        # Attached to the last sentence rather than numbered on its own: the loop is told
+        # to work the numbered list in order, and a caveat is not a thing to fix.
+        out[-1] += (
+            " Element scores are comparable with each other and not with the page total, "
+            "which is measured over the whole page at once, so expect the total to move by a "
             "fraction of an element's share of the pixels even when the element is fixed "
             "outright.")
     return out
@@ -1908,8 +1923,14 @@ def _problems(report):
     if align_findings:
         said.add("align")
 
-    element_lines = [_element_sentence(g) for g in (els.get("groups") or [])[:4]]
+    groups = (els.get("groups") or [])[:4]
+    element_lines = [_element_sentence(g) for g in groups]
     out.extend(element_lines)
+    # Ranked elements sit with the named ones, because a report is read in order and a
+    # weakest-element line at number sixteen is a line nobody acts on.
+    element_score_lines = _element_score_sentences(
+        report, already=[(i["x"], i["y"]) for g in groups for i in g])
+    out.extend(element_score_lines)
     hollow_findings = els.get("hollow") or []
     art_cells = set()
     if report.get("artwork"):
@@ -1932,7 +1953,7 @@ def _problems(report):
         out.append(summary)
     else:
         out.extend(_hollow_sentence(f) for f in hollow_findings[:2])
-    if element_lines or hollow_findings:
+    if element_lines or hollow_findings or element_score_lines:
         said.add("element")
     # Spacing after the elements themselves: a gap is only worth changing once the
     # things on either side of it are the right size.
@@ -1985,11 +2006,6 @@ def _problems(report):
         if missing:
             out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
-
-    element_score_lines = _element_score_sentences(report)
-    out.extend(element_score_lines)
-    if element_score_lines:
-        said.add("element")
 
     regions = report.get("region_scores") or []
     # Elements first: a ninth is a boundary nobody drew, and saying both crowds the

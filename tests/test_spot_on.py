@@ -1897,8 +1897,22 @@ class ElementsAreScoredOnTheirOwn(unittest.TestCase):
 
     def test_elements_replace_the_ninths_sentence_rather_than_joining_it(self):
         rep = self.report(self.page(30, 150), self.page(86, 196))
-        if so._element_score_sentences(rep):
-            self.assertEqual([p for p in rep["problems"] if "ninth by ninth" in p], [])
+        named = [p for p in rep["problems"] if "Element scores are comparable" in p]
+        ninths = [p for p in rep["problems"] if "ninth by ninth" in p]
+        self.assertTrue(named or ninths, "neither fired, so this proves nothing")
+        self.assertFalse(named and ninths,
+                         "the report answers 'where is the miss' twice, two different ways")
+
+    def test_an_element_the_geometry_lines_already_named_is_not_named_again(self):
+        # The two pairings disagree, so on a shared element the report would otherwise
+        # carry both answers: "22% narrower" from one, "nothing resembles it" from the
+        # next, about the same box.
+        rep = {"match": 70.0, "element_scores": [{
+            "kind": "box", "where": "top, left", "x": 100, "y": 200, "w": 300, "h": 90,
+            "in_place": 40.0, "as_built": None, "moved": None, "sized": None,
+            "area": 27000}]}
+        self.assertTrue(so._element_score_sentences(rep))
+        self.assertEqual(so._element_score_sentences(rep, already=[(102, 199)]), [])
 
     def test_a_shallow_score_skips_the_sentences_but_keeps_the_numbers(self):
         # Ranking elements and ninths means hundreds of scored crops; each one running
