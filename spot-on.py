@@ -16,6 +16,7 @@ The tool itself serves on loopback only. Nothing is uploaded anywhere.
 
 import base64
 import json
+import math
 import os
 import re
 import shlex
@@ -59,6 +60,23 @@ MAX_PIXELS = 6_000_000   # designs bigger than this are scaled down before scori
 SSIM_WINDOW = 7          # odd; box window for the structural term
 INK_EDGE = 6.0           # local contrast that counts as the edge of drawn content
 PRESS_LIMIT = 3          # stuck faults one round is asked to fix; ten is the same as none
+# Two questions, two pairings. "What did the attempt put in this slot?" is a question
+# about position, and the detectors built on it (empty containers, emphasis, type,
+# spacing) exist precisely to compare things that look different, so pairing them by
+# appearance refuses the pairs they need. "Which element is this?" is a question about
+# identity, and there position is the thing that changed. Measured on pages built so the
+# answer is known, identity by appearance is right 98.4% of the time against 92.8% for
+# position and 80.4% for not pairing at all: scripts/match_trial.py.
+MATCH_DEFAULT = "geometry"   # for slot questions: what is in this part of the page
+IDENTITY_MATCH = "content"   # for identity questions: where did this element end up
+CONTENT_ACCEPT = 0.35    # thumbnail correlation below which two elements are not the same thing
+CONTENT_FAR_W = 2.0      # what crossing the whole page costs a pair, in correlation
+CONTENT_GATE = 1.0       # total cost above which a pair is refused
+ELEMENT_SCORES = 8       # elements kept in the report, worst first
+ELEMENT_MIN = 16         # px; below this a box is a glyph, not something to be told about
+ELEMENT_BEHIND = 10      # points below the page score at which an element is worth naming
+ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
+ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
 
 # ---------------------------------------------------------------- run storage
@@ -512,16 +530,9 @@ def _elements(g):
     return out
 
 
-def _match_elements(design, attempt):
-    """Pair each design element with its closest attempt element, one to one."""
-    pairs = []
-    for i, d in enumerate(design):
-        for j, a in enumerate(attempt):
-            cost = (abs(a["x"] - d["x"]) + abs(a["y"] - d["y"]) + abs(a["w"] - d["w"])
-                    + abs(a["h"] - d["h"]) + (40 if a["kind"] != d["kind"] else 0))
-            if cost <= 0.6 * (d["w"] + d["h"]) + 12:
-                pairs.append((cost, i, j))
-    pairs.sort()
+def _greedy(pairs, design, attempt):
+    """Take the cheapest pairing first, one design element to one attempt element."""
+    pairs.sort(key=lambda p: p[0])
     used_d, used_a, matched = set(), set(), []
     for cost, i, j in pairs:
         if i in used_d or j in used_a:
@@ -531,6 +542,84 @@ def _match_elements(design, attempt):
         matched.append((design[i], attempt[j]))
     missing = [d for i, d in enumerate(design) if i not in used_d]
     return matched, missing
+
+
+def _match_geometry(design, attempt, g_ref=None, g_att=None):
+    """Pair each design element with the attempt element nearest in position and size."""
+    pairs = []
+    for i, d in enumerate(design):
+        for j, a in enumerate(attempt):
+            cost = (abs(a["x"] - d["x"]) + abs(a["y"] - d["y"]) + abs(a["w"] - d["w"])
+                    + abs(a["h"] - d["h"]) + (40 if a["kind"] != d["kind"] else 0))
+            if cost <= 0.6 * (d["w"] + d["h"]) + 12:
+                pairs.append((cost, i, j))
+    return _greedy(pairs, design, attempt)
+
+
+def _thumb(g, el, n=12):
+    """One element reduced to a small contrast-normalised thumbnail.
+
+    Normalising away the mean and the scale is what lets this recognise the same
+    element after it has been recoloured or resized, which is exactly where matching
+    on position and size gives up.
+    """
+    crop = g[el["y"]:el["y"] + el["h"], el["x"]:el["x"] + el["w"]]
+    if crop.size < 4:
+        return None
+    t = np.asarray(Image.fromarray(crop.astype(np.uint8)).resize((n, n), Image.BILINEAR),
+                   dtype=np.float64)
+    t -= t.mean()
+    s = float(np.sqrt((t * t).sum()))
+    return (t / s).ravel() if s > 1e-9 else None
+
+
+def _match_content(design, attempt, g_ref, g_att, accept=CONTENT_ACCEPT,
+                   far_w=CONTENT_FAR_W, gate=CONTENT_GATE):
+    """Pair elements by what they look like, with position only as a tie-breaker.
+
+    Matching on position cannot tell a moved element from a missing one and a new
+    one: it reports two faults where there is one, and the sentence it writes sends
+    the next round to redraw something that is already correct.
+    """
+    td = [_thumb(g_ref, d) for d in design]
+    ta = [_thumb(g_att, a) for a in attempt]
+    diag = float(np.hypot(g_ref.shape[1], g_ref.shape[0])) or 1.0
+    pairs = []
+    for i, d in enumerate(design):
+        if td[i] is None:
+            continue
+        for j, a in enumerate(attempt):
+            if ta[j] is None:
+                continue
+            # Absolute correlation, so a light-on-dark element still matches its
+            # dark-on-light twin. A rebuild that inverts a card has moved nothing and
+            # lost nothing, and saying "the card is missing, and here is one you did not
+            # ask for" sends the next round to redraw geometry that is already right.
+            sim = abs(float(td[i] @ ta[j]))
+            if sim < accept:
+                continue
+            shape = abs(math.log((a["w"] * d["h"] + 1.0) / (a["h"] * d["w"] + 1.0)))
+            size = abs(math.log((a["w"] * a["h"] + 1.0) / (d["w"] * d["h"] + 1.0)))
+            far = math.hypot(a["x"] + a["w"] / 2.0 - d["x"] - d["w"] / 2.0,
+                             a["y"] + a["h"] / 2.0 - d["y"] - d["h"] / 2.0) / diag
+            cost = (1.0 - sim) + 0.6 * shape + 0.3 * min(size, 2.0) + far_w * far
+            if cost <= gate:
+                pairs.append((cost, i, j))
+    return _greedy(pairs, design, attempt)
+
+
+def _match_overlay(design, attempt, g_ref=None, g_att=None):
+    """Do not match at all: compare each design element with whatever sits in its box."""
+    return [(d, dict(d, kind=d["kind"])) for d in design], []
+
+
+MATCHERS = {"geometry": _match_geometry, "content": _match_content, "overlay": _match_overlay}
+
+
+def _match_elements(design, attempt, g_ref=None, g_att=None, how=None):
+    """Pair design elements with attempt elements by the chosen strategy."""
+    how = how or os.environ.get("SPOT_ON_MATCH") or MATCH_DEFAULT
+    return MATCHERS[how](design, attempt, g_ref, g_att)
 
 
 def _where(el, size):
@@ -575,7 +664,7 @@ def _glyph_check(g_ref, g_att, matched):
             "median": round(float(np.median(scores)), 3)}
 
 
-def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
+def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
     """Element-level differences in CSS pixels, grouped and ordered by how much they matter.
 
     Page-wide numbers stop helping once a page is close: they say the structure is
@@ -583,7 +672,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0):
     works. This names the element, the direction and the size of each miss.
     """
     design, attempt = _elements(g_ref), _elements(g_att)
-    matched, missing = _match_elements(design, attempt)
+    matched, missing = _match_elements(design, attempt, g_ref, g_att, how=how)
     size = (g_ref.shape[1], g_ref.shape[0])
 
     def css(v):
@@ -1306,7 +1395,7 @@ def _cell_name(cell):
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
-                 regions=True):
+                 regions=True, deep=True, how=None):
     """Compare two same-size RGB images and return the full score report.
 
     px_per_css converts image pixels back to CSS pixels for the sentences in the
@@ -1472,6 +1561,13 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
         "regions": cells,
         "worst_regions": [{"where": _cell_name(c), "rmse": c["rmse"]} for c in worst],
     }
+    # A crop being scored to rank one element or one region needs the four numbers and
+    # nothing else. Everything below writes sentences about a whole page, and running it
+    # per crop cost more than the scores it was ranking.
+    if not deep:
+        report["problems"] = []
+        return report, per_px, ground
+
     off = _offsets(g_ref, g_att)
     if off["vertical"]:
         v = off["vertical"]
@@ -1483,9 +1579,12 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     report["offsets"] = off
     shift_css = (off["vertical"] or {}).get("css_shift", 0)
     try:
-        report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css)
+        report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css, how=how)
+        report["element_scores"] = _element_scores(
+            ref_img, att_img, g_ref, g_att, px_per_css, how=how)
     except ImportError:
         report["elements"] = None  # scipy missing: page-wide feedback only
+        report["element_scores"] = []
     # Known only when the design is a live page, and only used to name the typeface.
     report["design_fonts"] = list(design_fonts or [])
     report["artwork"] = _artwork(ref, att)
@@ -1497,6 +1596,139 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
 _REGION_NAMES = [["top left", "top centre", "top right"],
                  ["middle left", "middle centre", "middle right"],
                  ["bottom left", "bottom centre", "bottom right"]]
+
+
+def _element_score_sentences(report, behind=ELEMENT_BEHIND, moved_by=ELEMENT_MOVED):
+    """Name the weakest elements, and say whether each needs moving or rebuilding."""
+    scored = report.get("element_scores") or []
+    page = report.get("match", 0.0)
+    out = []
+    for e in scored[:2]:
+        if e["in_place"] > page - behind:
+            continue
+        what = "{}x{}px {} at x {}, y {} ({} of the page)".format(
+            e["w"], e["h"], "text" if e["kind"] == "text" else "box", e["x"], e["y"],
+            e["where"])
+        if e["as_built"] is None:
+            out.append(
+                "The {} scores {:.1f} on its own against {:.1f} for the page, and nothing in "
+                "the attempt was recognisable as it. Draw it first."
+                .format(what, e["in_place"], page))
+            continue
+        # Scoring it against what it was paired to takes position and size out, so a
+        # large gap between the two says the element itself is right and only its
+        # geometry is wrong. Which part of the geometry is a separate question: an
+        # element can be the wrong size without having moved, and saying "the miss is
+        # inside it" about something that scores 90 like for like is simply false.
+        # The gap between the two scores decides the diagnosis; the measurements below
+        # only explain it. So once the gap says geometry, every displacement counts,
+        # however small: a 4px drop is a quarter of the height of a line of text, and
+        # holding it to the same threshold as a hero panel reported an element that
+        # scores 92 against its own pair as wrong on the inside.
+        gap = e["as_built"] - e["in_place"]
+        near = moved_by if gap < behind else 1
+        geometry, sized = [], []
+        if max(abs(e["moved"][0]), abs(e["moved"][1])) >= near:
+            geometry.append("sits {} where the design has it".format(_by(e["moved"])))
+        if abs(e["sized"][0]) >= (6 if gap < behind else 2):
+            sized.append("{:.0f}% {}".format(
+                abs(e["sized"][0]), "narrower" if e["sized"][0] > 0 else "wider"))
+        if abs(e["sized"][1]) >= (6 if gap < behind else 2):
+            sized.append("{:.0f}% {}".format(
+                abs(e["sized"][1]), "shorter" if e["sized"][1] > 0 else "taller"))
+        if sized:
+            geometry.append("is drawn " + " and ".join(sized))
+        if e["as_built"] >= ELEMENT_BUILT and gap >= behind and geometry:
+            out.append(
+                "The {} scores {:.1f} where the design puts it but {:.1f} against what it was "
+                "paired to, so the element itself is right and its geometry is not: it {}. "
+                "Fix that and leave the inside of it alone."
+                .format(what, e["in_place"], e["as_built"], " and ".join(geometry)))
+        elif gap >= behind and geometry:
+            out.append(
+                "The {} scores {:.1f} where the design puts it and {:.1f} against what it was "
+                "paired to, so part of the miss is geometry and part is the element itself. It "
+                "{}. Both need work."
+                .format(what, e["in_place"], e["as_built"], " and ".join(geometry)))
+        else:
+            out.append(
+                "The {} scores {:.1f} on its own against {:.1f} for the page, and {:.1f} even "
+                "compared like for like, so the miss is inside it rather than in where it sits."
+                .format(what, e["in_place"], page, e["as_built"]))
+    if out:
+        out.append(
+            "Those element scores are comparable with each other and not with the page total, "
+            "which is measured over the whole page at once. Expect the total to move by a "
+            "fraction of an element's share of the pixels even when the element is fixed "
+            "outright.")
+    return out
+
+
+def _by(moved):
+    """How far the attempt put an element from where the design has it, in words.
+
+    The sign is the direction the attempt went, so the instruction is the opposite of it.
+    """
+    dx, dy = moved
+    parts = []
+    if dx:
+        parts.append("{}px {}".format(abs(dx), "right" if dx > 0 else "left"))
+    if dy:
+        parts.append("{}px {}".format(abs(dy), "below" if dy > 0 else "above"))
+    return " and ".join(parts) or "exactly on top"
+
+
+def _element_scores(ref_img, att_img, g_ref, g_att, px_per_css=1.0, how=None,
+                    limit=ELEMENT_SCORES):
+    """Score each element of the design on its own, twice: in place, and as built.
+
+    A ninth of the page is a boundary nobody drew: it cuts through a card and averages
+    its title with the gap beside it, so the weakest ninth names a part of the canvas
+    rather than a thing to fix. An element is the thing to fix.
+
+    Two scores, because they come apart and the difference is the instruction. `in place`
+    compares the design's own rectangle in both images, so it falls when anything there
+    is wrong, including the element having gone somewhere else. `as built` compares the
+    element with whatever it was paired to, scaled to the same size, so it says whether
+    the thing itself is right. Built right and in the wrong place is a move; built wrong
+    is a redraw; and until now both read as one low number.
+    """
+    design = _elements(g_ref)
+    matched, missing = _match_elements(design, _elements(g_att), g_ref, g_att,
+                                       how=how or IDENTITY_MATCH)
+    partner = {(d["x"], d["y"], d["w"], d["h"]): a for d, a in matched}
+    size = (g_ref.shape[1], g_ref.shape[0])
+    out = []
+    for d in design:
+        if d["w"] < ELEMENT_MIN or d["h"] < ELEMENT_MIN:
+            continue
+        box = (d["x"], d["y"], d["x"] + d["w"], d["y"] + d["h"])
+        crop = ref_img.crop(box)
+        place = score_images(crop, att_img.crop(box), regions=False, deep=False)[0]["match"]
+        a = partner.get((d["x"], d["y"], d["w"], d["h"]))
+        built = None
+        if a is not None:
+            shot = att_img.crop((a["x"], a["y"], a["x"] + a["w"], a["y"] + a["h"]))
+            if shot.size[0] >= 2 and shot.size[1] >= 2:
+                built = score_images(crop, shot.resize(crop.size, Image.LANCZOS),
+                                     regions=False, deep=False)[0]["match"]
+        out.append({
+            "kind": d["kind"], "where": _where(d, size),
+            "x": int(round(d["x"] / px_per_css)), "y": int(round(d["y"] / px_per_css)),
+            "w": int(round(d["w"] / px_per_css)), "h": int(round(d["h"] / px_per_css)),
+            "in_place": place, "as_built": built,
+            "moved": None if a is None else [int(round((a["x"] - d["x"]) / px_per_css)),
+                                             int(round((a["y"] - d["y"]) / px_per_css))],
+            # Positive means the attempt drew it smaller than the design.
+            "sized": None if a is None else [
+                round(100.0 * (d["w"] - a["w"]) / max(1, d["w"]), 1),
+                round(100.0 * (d["h"] - a["h"]) / max(1, d["h"]), 1)],
+            "area": d["w"] * d["h"],
+        })
+    # Worst first, but weighted by size: a 20px label scoring 40 is not the page's
+    # problem when a card the size of a quarter of it scores 55.
+    out.sort(key=lambda e: (100.0 - e["in_place"]) * math.sqrt(e["area"]), reverse=True)
+    return out[:limit]
 
 
 def _region_scores(ref_img, att_img, n=3):
@@ -1515,7 +1747,8 @@ def _region_scores(ref_img, att_img, n=3):
             box = (W * c // n, H * r // n, W * (c + 1) // n, H * (r + 1) // n)
             if box[2] - box[0] < 24 or box[3] - box[1] < 24:
                 continue
-            sub, _, _ = score_images(ref_img.crop(box), att_img.crop(box), regions=False)
+            sub, _, _ = score_images(ref_img.crop(box), att_img.crop(box), regions=False,
+                                     deep=False)
             out.append({"row": r, "col": c, "where": _REGION_NAMES[r][c],
                         "match": sub["match"]})
     return out
@@ -1753,8 +1986,15 @@ def _problems(report):
             out.append("Colours in the design with no close match in the attempt: "
                        + ", ".join(missing) + ".")
 
+    element_score_lines = _element_score_sentences(report)
+    out.extend(element_score_lines)
+    if element_score_lines:
+        said.add("element")
+
     regions = report.get("region_scores") or []
-    if len(regions) >= 4:
+    # Elements first: a ninth is a boundary nobody drew, and saying both crowds the
+    # report with two answers to the same question.
+    if len(regions) >= 4 and not element_score_lines:
         # Artwork regions are left out of the recommendation. The globe scored worst on
         # one page, and sending the next round there would contradict the artwork line
         # telling it not to chase a render.
@@ -2867,6 +3107,10 @@ PAGE_HTML = r"""<!doctype html>
   .comp-val { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; color: var(--deep); font-variant-numeric: tabular-nums; }
 
   .region-cell { aspect-ratio: 1; border-radius: 3px; cursor: help; }
+  .el-score { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; color: var(--deep); }
+  .el-name { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); min-width: 172px; }
+  .el-verdict { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); min-width: 78px; text-align: right; }
+  @media (max-width: 720px) { .el-score { flex-wrap: wrap; } .el-name { min-width: 0; flex: 1 1 100%; } }
   .problem { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; font-size: 13px; color: var(--deep); line-height: 1.6; }
   .problem .n { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); min-width: 14px; }
 
@@ -3159,6 +3403,7 @@ PAGE_HTML = r"""<!doctype html>
 
           <div class="rule13" style="margin: 20px 0 8px;"></div>
           <div id="problems"></div>
+          <div id="element-scores" style="margin-top: 16px;"></div>
           <div id="palette-row" style="display: flex; align-items: center; gap: 14px; margin-top: 12px; flex-wrap: wrap;"></div>
         </div>
       </div>
@@ -3783,6 +4028,53 @@ function renderScore() {
     row.lastChild.textContent = p;
     pr.appendChild(row);
   });
+
+  // Named elements, worst first. A sixteen-cell heat grid says a corner is dark; this
+  // says which thing in it is wrong, and whether it needs moving or rebuilding.
+  var es = $("element-scores");
+  es.innerHTML = "";
+  var scored = rep.element_scores || [];
+  if (scored.length) {
+    var head = document.createElement("div");
+    head.className = "mono";
+    head.style.cssText = "font-size:10px;color:var(--muted);letter-spacing:0.14em;" +
+      "text-transform:uppercase;margin-bottom:8px;";
+    head.textContent = "weakest elements";
+    es.appendChild(head);
+    scored.forEach(function (e) {
+      var row = document.createElement("div");
+      row.className = "el-score";
+      var verdict = e.as_built === null ? "not drawn"
+        : (e.as_built - e.in_place >= 10 ? "placed wrong" : "built wrong");
+      var name = document.createElement("span");
+      name.className = "el-name";
+      name.textContent = e.w + "x" + e.h + " " + e.kind + " at " + e.x + "," + e.y;
+      name.title = e.where + " of the page";
+      var track = document.createElement("span");
+      track.className = "bar-track";
+      track.style.flex = "1";
+      track.innerHTML = '<span class="bar-fill" style="width:' +
+        Math.max(0, Math.min(100, e.in_place)) + '%"></span>';
+      var val = document.createElement("span");
+      val.className = "comp-val";
+      val.textContent = e.in_place.toFixed(1);
+      val.title = e.as_built === null ? "nothing in the attempt was recognisable as it"
+        : "scores " + e.as_built.toFixed(1) + " compared with what it was paired to";
+      var tag = document.createElement("span");
+      tag.className = "el-verdict";
+      tag.textContent = verdict;
+      row.appendChild(name);
+      row.appendChild(track);
+      row.appendChild(val);
+      row.appendChild(tag);
+      es.appendChild(row);
+    });
+    var note = document.createElement("div");
+    note.style.cssText = "font-size:11px;color:var(--muted);margin-top:8px;line-height:1.45;";
+    note.textContent = "Scored against the design in the element's own place. " +
+      "Comparable with each other, not with the page total.";
+    es.appendChild(note);
+  }
 
   var pal = $("palette-row");
   pal.innerHTML = "";

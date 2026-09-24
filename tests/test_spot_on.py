@@ -1753,5 +1753,162 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
 
 
+class PairingElementsByAppearance(unittest.TestCase):
+    """Which attempt element is this design element, once it has moved.
+
+    The three ways of answering were measured against pages built so the answer is
+    known (scripts/match_trial.py): appearance 98.4%, position 92.8%, not pairing at
+    all 80.4%. These hold the behaviours that produced the gap.
+    """
+
+    def page(self, boxes, ink="#111827"):
+        img = Image.new("RGB", (400, 300), "#FFFFFF")
+        d = ImageDraw.Draw(img)
+        for x, y, w, h, fill, bar in boxes:
+            d.rectangle([x, y, x + w, y + h], fill=fill, outline=ink, width=2)
+            # A stripe at a distinctive height, so the two boxes do not look alike.
+            d.rectangle([x + 6, y + bar, x + w - 6, y + bar + 6], fill=ink)
+        return img
+
+    def pairs(self, design, attempt, how):
+        g_ref = so._gray(np.asarray(design.convert("RGB"), dtype=np.float64))
+        g_att = so._gray(np.asarray(attempt.convert("RGB"), dtype=np.float64))
+        return so._match_elements(so._elements(g_ref), so._elements(g_att),
+                                  g_ref, g_att, how=how)
+
+    def test_a_moved_element_is_recognised_rather_than_reported_gone(self):
+        # One box crosses the page. Pairing on position calls that two faults, one thing
+        # missing and one unasked for, and the next round redraws what was already right.
+        here = [(30, 30, 120, 90, "#DBEAFE", 20), (30, 170, 120, 90, "#FCE7F3", 60)]
+        there = [(240, 30, 120, 90, "#DBEAFE", 20), (30, 170, 120, 90, "#FCE7F3", 60)]
+        matched, missing = self.pairs(self.page(here), self.page(there), "content")
+        self.assertTrue([1 for d, a in matched if a["x"] - d["x"] > 150],
+                        "the moved box was not paired with itself")
+        self.assertEqual(missing, [])
+
+    def test_position_matching_loses_the_same_element(self):
+        here = [(30, 30, 120, 90, "#DBEAFE", 20), (30, 170, 120, 90, "#FCE7F3", 60)]
+        there = [(240, 30, 120, 90, "#DBEAFE", 20), (30, 170, 120, 90, "#FCE7F3", 60)]
+        matched, missing = self.pairs(self.page(here), self.page(there), "geometry")
+        self.assertTrue(missing, "position matching was expected to give up here")
+
+    def test_a_recoloured_element_is_still_the_same_element(self):
+        # Light on dark and dark on light correlate at -1, not 0, so the absolute value
+        # is what makes an inverted card match instead of reading as missing.
+        box = [(30, 30, 120, 90, "#FFFFFF", 20)]
+        flipped = [(30, 30, 120, 90, "#111827", 20)]
+        matched, _ = self.pairs(self.page(box),
+                                self.page(flipped, ink="#FFFFFF"), "content")
+        self.assertEqual(len(matched), 1)
+
+    def test_it_will_not_reach_across_the_page_for_a_lookalike(self):
+        # A label with no true partner, and one that looks like it on the far side.
+        # Pairing them says "this moved 300px" about something that never moved.
+        matched, missing = self.pairs(self.page([(20, 20, 80, 40, "#FFFFFF", 10)]),
+                                      self.page([(300, 250, 80, 40, "#FFFFFF", 10)]),
+                                      "content")
+        self.assertEqual(matched, [])
+        self.assertEqual(len(missing), 1)
+
+    def test_not_pairing_at_all_compares_each_box_with_its_own_rectangle(self):
+        matched, missing = self.pairs(self.page([(30, 30, 120, 90, "#DBEAFE", 20)]),
+                                      self.page([]), "overlay")
+        self.assertEqual(missing, [])
+        for d, a in matched:
+            self.assertEqual((d["x"], d["y"], d["w"], d["h"]),
+                             (a["x"], a["y"], a["w"], a["h"]))
+
+    def test_the_slot_detectors_keep_position_matching(self):
+        # Empty containers and emphasis exist to compare things that look different, so
+        # they cannot be paired by appearance. Their default must stay position.
+        self.assertEqual(so.MATCH_DEFAULT, "geometry")
+        self.assertEqual(so.IDENTITY_MATCH, "content")
+
+
+class ElementsAreScoredOnTheirOwn(unittest.TestCase):
+    """A score per element, and whether the miss is the element or where it sits."""
+
+    def page(self, x, y, fill="#1D4ED8", w=150, h=110, card=True):
+        img = Image.new("RGB", (420, 320), "#FFFFFF")
+        d = ImageDraw.Draw(img)
+        # A second, always-correct block, so the page score stays healthy and the one
+        # being tested is the thing that stands out from it. Far from where the card
+        # moves to: two boxes within about 10px of each other merge into one element.
+        d.rectangle([280, 16, 404, 96], fill="#E2E8F0", outline="#0F172A", width=3)
+        d.rectangle([294, 34, 390, 58], fill="#F8FAFC")
+        if not card:
+            return img
+        d.rectangle([x, y, x + w, y + h], fill=fill, outline="#0F172A", width=3)
+        d.rectangle([x + 14, y + 20, x + w - 14, y + 44], fill="#F8FAFC")
+        d.rectangle([x + 14, y + 60, x + w - 40, y + 76], fill="#93C5FD")
+        return img
+
+    def report(self, design, attempt):
+        return so.score_images(design, attempt)[0]
+
+    def test_every_element_gets_a_score_worst_first(self):
+        scores = self.report(self.page(30, 150), self.page(34, 156))["element_scores"]
+        self.assertTrue(scores)
+        ranked = [(100.0 - e["in_place"]) * (e["area"] ** 0.5) for e in scores]
+        self.assertEqual(ranked, sorted(ranked, reverse=True))
+        for e in scores:
+            self.assertIn("in_place", e)
+            self.assertIn("as_built", e)
+
+    def test_an_element_built_right_and_placed_wrong_says_so(self):
+        rep = self.report(self.page(30, 150), self.page(86, 196))
+        worst = rep["element_scores"][0]
+        self.assertIsNotNone(worst["as_built"])
+        self.assertGreater(worst["as_built"], worst["in_place"] + 10)
+        self.assertIn("geometry is not", " ".join(so._element_score_sentences(rep)))
+
+    def test_an_element_nothing_was_drawn_for_is_named_as_such(self):
+        rep = self.report(self.page(30, 150), self.page(30, 150, card=False))
+        self.assertIsNone(rep["element_scores"][0]["as_built"])
+        self.assertIn("nothing in the attempt was recognisable as it",
+                      " ".join(so._element_score_sentences(rep)))
+
+    def test_it_never_blames_the_inside_of_an_element_that_scores_well(self):
+        # The fault this replaces: an element scoring 92 against its own pair was told
+        # its problem was inside it, because its 2px drop was under a flat threshold that
+        # a 17px line of text can never reach.
+        rep = {"match": 80.0, "element_scores": [{
+            "kind": "text", "where": "top, left", "x": 10, "y": 10, "w": 700, "h": 17,
+            "in_place": 49.4, "as_built": 92.3, "moved": [1, 2], "sized": [0.0, 0.0],
+            "area": 11900}]}
+        line = " ".join(so._element_score_sentences(rep))
+        self.assertNotIn("inside it", line)
+        self.assertIn("2px below", line)
+
+    def test_the_caveat_is_said_once_not_per_element(self):
+        one = {"kind": "box", "where": "top, left", "x": 10, "y": 10, "w": 90, "h": 90,
+               "in_place": 40.0, "as_built": 45.0, "moved": [0, 0], "sized": [0.0, 0.0],
+               "area": 8100}
+        lines = so._element_score_sentences(
+            {"match": 80.0, "element_scores": [one, dict(one, x=200, in_place=42.0)]})
+        self.assertEqual(sum("comparable with each other" in s for s in lines), 1)
+
+    def test_an_element_no_worse_than_the_page_is_not_named(self):
+        rep = {"match": 80.0, "element_scores": [{
+            "kind": "box", "where": "top, left", "x": 10, "y": 10, "w": 90, "h": 90,
+            "in_place": 79.0, "as_built": 80.0, "moved": [0, 0], "sized": [0.0, 0.0],
+            "area": 8100}]}
+        self.assertEqual(so._element_score_sentences(rep), [])
+
+    def test_elements_replace_the_ninths_sentence_rather_than_joining_it(self):
+        rep = self.report(self.page(30, 150), self.page(86, 196))
+        if so._element_score_sentences(rep):
+            self.assertEqual([p for p in rep["problems"] if "ninth by ninth" in p], [])
+
+    def test_a_shallow_score_skips_the_sentences_but_keeps_the_numbers(self):
+        # Ranking elements and ninths means hundreds of scored crops; each one running
+        # the whole sentence machinery cost more than the scores it was ranking.
+        rep = so.score_images(self.page(30, 150), self.page(34, 156), deep=False)[0]
+        self.assertEqual(set(rep["components"]),
+                         {"structure", "shape", "colour", "detail", "coverage"})
+        self.assertEqual(rep["problems"], [])
+        self.assertNotIn("element_scores", rep)
+
+
 if __name__ == "__main__":
     unittest.main()

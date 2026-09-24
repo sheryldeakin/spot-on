@@ -1,6 +1,7 @@
 """README consistency: every number in it comes from a generated file or a fixture."""
 
 import importlib.util
+import json
 import re
 import unittest
 from pathlib import Path
@@ -9,10 +10,18 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+WORDS = {"six": 6, "fourteen": 14}
 
 spec = importlib.util.spec_from_file_location("sync_readme", ROOT / "scripts" / "sync_readme.py")
 sync = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sync)
+
+_tool = importlib.util.spec_from_file_location("spot_on_docs", ROOT / "spot-on.py")
+TOOL = importlib.util.module_from_spec(_tool)
+_tool.loader.exec_module(TOOL)
+
+SWEEP = json.loads((ROOT / "scripts" / "match-sweep.json").read_text(encoding="utf-8"))
+TRIAL = json.loads((ROOT / "scripts" / "match-trial.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -66,6 +75,46 @@ class EchoedNumbers(unittest.TestCase):
         m = re.search(r"drew (\d+\.\d+), (\d+\.\d+) and (\d+\.\d+) from one prompt", README)
         self.assertIsNotNone(m, "worked example sentence changed; update this check with it")
         self.assertIn("/".join(m.groups()), spreads.values())
+
+    def test_matcher_table_matches_the_trial_output(self):
+        trial = TRIAL
+        for label, how in (("appearance, with position breaking ties", "content"),
+                           ("position and size", "geometry"),
+                           ("nothing: each element against whatever is in its rectangle",
+                            "overlay")):
+            m = re.search(r"\|\s*" + re.escape(label) + r"\s*\|\s*(\d+\.\d+)%", README)
+            self.assertIsNotNone(m, "matcher table row missing: " + label)
+            self.assertEqual(float(m.group(1)), trial["totals"][how]["accuracy"], label)
+        m = re.search(r"(\w+) mutations of one page, (\d+) decisions", README)
+        self.assertIsNotNone(m, "the trial's shape is quoted differently now")
+        self.assertEqual(WORDS.get(m.group(1), -1), len(trial["scenarios"]))
+        self.assertEqual(int(m.group(2)), trial["totals"]["content"]["of"])
+
+    def test_the_reword_limit_matches_the_trial_output(self):
+        trial = TRIAL
+        row = next(s for s in trial["scenarios"] if s["scenario"] == "text-swap")["matchers"]
+        m = re.search(r"below position matching \((\d+\.\d+)% against (\d+)%\)", README)
+        self.assertIsNotNone(m, "the reword limit is worded differently now")
+        self.assertEqual(float(m.group(1)), row["content"]["accuracy"])
+        self.assertEqual(float(m.group(2)), row["geometry"]["accuracy"])
+
+    def test_the_unbounded_reach_numbers_match_the_sweep(self):
+        sweep = SWEEP
+        loose = max(sweep["sweep"], key=lambda r: (r["gate"], -r["far_w"]))
+        m = re.search(r"on (\w+) real runs it reached (\d+)px for a pair and made (\d+) "
+                      r"pairings more than a quarter of a page apart", README)
+        self.assertIsNotNone(m, "the unbounded-reach sentence changed")
+        self.assertEqual(WORDS.get(m.group(1), -1), SWEEP["real_runs"])
+        self.assertEqual(int(m.group(2)), int(loose["furthest_px"]))
+        self.assertEqual(int(m.group(3)), loose["cross_page_pairs"])
+
+    def test_the_chosen_setting_is_the_best_that_never_crosses_the_page(self):
+        sweep = SWEEP
+        clean = [r for r in sweep["sweep"] if r["cross_page_pairs"] == 0]
+        self.assertTrue(clean, "the sweep found no setting without cross-page pairs")
+        best = max(clean, key=lambda r: (r["known_pct"], r["real_paired_pct"]))
+        self.assertEqual(TOOL.CONTENT_FAR_W, best["far_w"])
+        self.assertEqual(TOOL.CONTENT_GATE, best["gate"])
 
     def test_coverage_cap_example(self):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)
