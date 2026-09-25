@@ -1753,6 +1753,83 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
 
 
+class ColourIsMeasuredPerceptually(unittest.TestCase):
+    """How far apart two colours look, not how far apart their numbers are."""
+
+    # Sharma et al.'s published CIEDE2000 test pairs, the canonical check for an
+    # implementation: they are chosen to cross the discontinuities where a naive one
+    # goes wrong, including the blue region the hue-rotation term exists for.
+    SHARMA = [
+        ((50.0000, 2.6772, -79.7751), (50.0000, 0.0000, -82.7485), 2.0425),
+        ((50.0000, 3.1571, -77.2803), (50.0000, 0.0000, -82.7485), 2.8615),
+        ((50.0000, 2.8361, -74.0200), (50.0000, 0.0000, -82.7485), 3.4412),
+        ((50.0000, -1.3802, -84.2814), (50.0000, 0.0000, -82.7485), 1.0000),
+        ((50.0000, -1.1848, -84.8006), (50.0000, 0.0000, -82.7485), 1.0000),
+        ((60.2574, -34.0099, 36.2677), (60.4626, -34.1751, 39.4387), 1.2644),
+        ((63.0109, -31.0961, -5.8663), (62.8187, -29.7946, -4.0864), 1.2630),
+        ((35.0831, -44.1164, 3.7933), (35.0232, -40.0716, 1.5901), 1.8645),
+        ((22.7233, 20.0904, -46.6940), (23.0331, 14.9730, -42.5619), 2.0373),
+    ]
+
+    def test_it_matches_the_published_reference_pairs(self):
+        for lab1, lab2, want in self.SHARMA:
+            got = float(so._ciede2000(np.array(lab1), np.array(lab2)))
+            self.assertAlmostEqual(got, want, places=3, msg=str(lab1))
+
+    def test_whole_arrays_agree_with_one_pair_at_a_time(self):
+        rng = np.random.default_rng(0)
+        a = rng.integers(0, 256, (40, 3)).astype(float)
+        b = rng.integers(0, 256, (40, 3)).astype(float)
+        bulk = so._ciede2000(so._srgb_to_lab(a), so._srgb_to_lab(b))
+        for i in range(40):
+            self.assertAlmostEqual(float(bulk[i]), so._lab_gap(a[i], b[i]), places=9)
+
+    def test_known_colours_land_where_they_should(self):
+        self.assertAlmostEqual(so._lab_gap((255, 255, 255), (255, 255, 255)), 0.0, places=9)
+        # Black against white is the largest difference there is, a little over 100.
+        self.assertTrue(95 < so._lab_gap((0, 0, 0), (255, 255, 255)) < 105)
+
+    def test_it_separates_pairs_that_rgb_distance_cannot(self):
+        # This is the whole reason for the change. Two pairs the same distance apart in
+        # RGB, one of which is three times further apart to look at. Distance in RGB
+        # scores them identically, so a plainly wrong colour could pass while a
+        # difference nobody would notice was reported as the same fault.
+        one = ((112, 96, 113), (238, 7, 232))
+        two = ((117, 42, 131), (133, 231, 83))
+
+        def rgb(p):
+            return float(np.sqrt(((np.array(p[0]) - np.array(p[1])) ** 2).sum()))
+
+        self.assertLess(abs(rgb(one) - rgb(two)), 2.0, "the pairs are not RGB-equal")
+        self.assertGreater(so._lab_gap(*two), 3.0 * so._lab_gap(*one))
+
+    def test_a_mean_over_many_pixels_does_not_need_all_of_them(self):
+        rng = np.random.default_rng(1)
+        a = rng.integers(0, 256, (400_000, 3)).astype(float)
+        b = np.clip(a + rng.normal(0, 9, a.shape), 0, 255)
+        full = float(so._ciede2000(so._srgb_to_lab(a), so._srgb_to_lab(b)).mean())
+        self.assertAlmostEqual(so._mean_delta_e(a, b), full, delta=0.05)
+        # Sampled by stride, so the same pixels every time: scoring twice must agree.
+        self.assertEqual(so._mean_delta_e(a, b), so._mean_delta_e(a, b))
+
+    def test_the_visible_threshold_is_the_just_noticeable_difference(self):
+        # The colour sentences fire above this. On the old 0 to 441 RGB scale the
+        # threshold was 8, which is a large difference here and would have silenced them.
+        self.assertEqual(so.DELTA_E_VISIBLE, 2.3)
+        self.assertGreater(so.COLOUR_FALLOFF, so.DELTA_E_VISIBLE)
+
+    def test_a_wrong_hue_now_costs_more_than_a_slightly_deeper_gradient(self):
+        # The two ends of the calibration set, and the point of a perceptual measure:
+        # a deliberately wrong colour should be punished and a barely visible shift
+        # should not be punished as if it were the same mistake.
+        page = Image.new("RGB", (240, 180), "#F4F8FF")
+        deeper = Image.new("RGB", (240, 180), "#EDF3FF")      # a shade stronger
+        wrong = Image.new("RGB", (240, 180), "#FFF4E8")       # a different hue
+        d = so.score_images(page, deeper)[0]["components"]["colour"]
+        w = so.score_images(page, wrong)[0]["components"]["colour"]
+        self.assertGreater(d, w)
+
+
 class RoundsAreTimedForTheProgressBar(unittest.TestCase):
     """How long a round took, kept so the page can say how far through the next one is.
 

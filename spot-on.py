@@ -59,6 +59,17 @@ SCALES = (1.0, 1.25, 1.5, 2.0)
 MAX_PIXELS = 6_000_000   # designs bigger than this are scaled down before scoring
 SSIM_WINDOW = 7          # odd; box window for the structural term
 INK_EDGE = 6.0           # local contrast that counts as the edge of drawn content
+# Colour is measured as CIEDE2000, where about 2.3 is the smallest difference a person
+# can see and black against white is a little over 100. The falloff is fitted, not
+# chosen: scripts/fit_colour.py picks the value that leaves the colour scores of real
+# runs where distance in RGB had them, so the change re-ranks rather than re-scales.
+DELTA_E_MAX = 100.0      # stand-in distance when one side has no colours at all
+COLOUR_FALLOFF = 15.3    # delta-E at which the colour score falls to 1/e of 100
+SAMPLE_PIXELS = 200_000  # pixels sampled for a mean colour difference
+# The smallest difference a person can see, which is what makes a threshold on this
+# scale meaningful rather than chosen. The old thresholds were 8 on a 0 to 441 RGB
+# scale, which is a large difference here and would have silenced the colour lines.
+DELTA_E_VISIBLE = 2.3
 PRESS_LIMIT = 3          # stuck faults one round is asked to fix; ten is the same as none
 # Two questions, two pairings. "What did the attempt put in this slot?" is a question
 # about position, and the detectors built on it (empty containers, emphasis, type,
@@ -417,8 +428,97 @@ def _top_colours(rgb, mask, limit=6):
     return out
 
 
+def _srgb_to_lab(rgb):
+    """sRGB 0-255 to CIELAB under D65, over an array of any shape ending in 3."""
+    c = np.asarray(rgb, dtype=np.float64) / 255.0
+    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    m = np.array([[0.4124, 0.3576, 0.1805],
+                  [0.2126, 0.7152, 0.0722],
+                  [0.0193, 0.1192, 0.9505]])
+    xyz = lin @ m.T * 100.0
+    xyz = xyz / np.array([95.047, 100.0, 108.883])
+    f = np.where(xyz > 0.008856, np.cbrt(np.maximum(xyz, 0.0)), 7.787 * xyz + 16.0 / 116.0)
+    return np.stack([116.0 * f[..., 1] - 16.0,
+                     500.0 * (f[..., 0] - f[..., 1]),
+                     200.0 * (f[..., 1] - f[..., 2])], axis=-1)
+
+
+def _ciede2000(lab1, lab2):
+    """Perceptual colour difference, elementwise over arrays of CIELAB triples.
+
+    Distance in RGB is not how far apart two colours look: the same step counts for
+    far more in some parts of the space than in others, so on a page a green that is
+    plainly wrong can score better than a blue nobody would notice. CIEDE2000 is the
+    standard correction, and its hue-rotation term is largest in the blue region
+    around 275 degrees, which is where dark interfaces live.
+    """
+    lab1 = np.asarray(lab1, dtype=np.float64)
+    lab2 = np.asarray(lab2, dtype=np.float64)
+    l1, a1, b1 = lab1[..., 0], lab1[..., 1], lab1[..., 2]
+    l2, a2, b2 = lab2[..., 0], lab2[..., 1], lab2[..., 2]
+    c1, c2 = np.hypot(a1, b1), np.hypot(a2, b2)
+    cbar7 = ((c1 + c2) / 2.0) ** 7
+    g = 0.5 * (1.0 - np.sqrt(cbar7 / (cbar7 + 25.0 ** 7)))
+    a1p, a2p = (1.0 + g) * a1, (1.0 + g) * a2
+    c1p, c2p = np.hypot(a1p, b1), np.hypot(a2p, b2)
+
+    def hue(ap, bp, cp):
+        h = np.degrees(np.arctan2(bp, ap))
+        return np.where(cp < 1e-12, 0.0, np.where(h < 0, h + 360.0, h))
+
+    h1p, h2p = hue(a1p, b1, c1p), hue(a2p, b2, c2p)
+    both = (c1p * c2p) > 1e-12
+
+    dlp = l2 - l1
+    dcp = c2p - c1p
+    dh = h2p - h1p
+    dh = np.where(dh > 180.0, dh - 360.0, np.where(dh < -180.0, dh + 360.0, dh))
+    dh = np.where(both, dh, 0.0)
+    dhp = 2.0 * np.sqrt(np.maximum(c1p * c2p, 0.0)) * np.sin(np.radians(dh) / 2.0)
+
+    lbar = (l1 + l2) / 2.0
+    cbarp = (c1p + c2p) / 2.0
+    hsum, hdiff = h1p + h2p, np.abs(h1p - h2p)
+    hbar = np.where(hdiff <= 180.0, hsum / 2.0,
+                    np.where(hsum < 360.0, (hsum + 360.0) / 2.0, (hsum - 360.0) / 2.0))
+    hbar = np.where(both, hbar, hsum)
+
+    t = (1.0 - 0.17 * np.cos(np.radians(hbar - 30.0))
+         + 0.24 * np.cos(np.radians(2.0 * hbar))
+         + 0.32 * np.cos(np.radians(3.0 * hbar + 6.0))
+         - 0.20 * np.cos(np.radians(4.0 * hbar - 63.0)))
+    dtheta = 30.0 * np.exp(-(((hbar - 275.0) / 25.0) ** 2))
+    cbarp7 = cbarp ** 7
+    rc = 2.0 * np.sqrt(cbarp7 / (cbarp7 + 25.0 ** 7))
+    sl = 1.0 + (0.015 * (lbar - 50.0) ** 2) / np.sqrt(20.0 + (lbar - 50.0) ** 2)
+    sc = 1.0 + 0.045 * cbarp
+    sh = 1.0 + 0.015 * cbarp * t
+    rt = -np.sin(np.radians(2.0 * dtheta)) * rc
+    dl, dc, dhh = dlp / sl, dcp / sc, dhp / sh
+    return np.sqrt(np.maximum(dl * dl + dc * dc + dhh * dhh + rt * dc * dhh, 0.0))
+
+
+def _mean_delta_e(ref_px, att_px, sample=SAMPLE_PIXELS):
+    """Mean perceptual difference over a set of pixels.
+
+    A page can hold millions of them and this is a mean, so past a large enough
+    sample the answer stops moving. Taken every nth pixel rather than at random,
+    so scoring the same pair twice gives the same number.
+    """
+    if ref_px.shape[0] > sample:
+        step = ref_px.shape[0] // sample
+        ref_px, att_px = ref_px[::step], att_px[::step]
+    return float(_ciede2000(_srgb_to_lab(ref_px), _srgb_to_lab(att_px)).mean())
+
+
+def _lab_gap(a, b):
+    """Perceptual distance between two sRGB triples, as a plain float."""
+    return float(_ciede2000(_srgb_to_lab(np.asarray(a, dtype=np.float64)),
+                            _srgb_to_lab(np.asarray(b, dtype=np.float64))))
+
+
 def _colour_gap(a, b):
-    return sum((x - y) ** 2 for x, y in zip(a["rgb"], b["rgb"])) ** 0.5
+    return _lab_gap(a["rgb"], b["rgb"])
 
 
 def _palette_distance(ref_cols, att_cols):
@@ -430,7 +530,7 @@ def _palette_distance(ref_cols, att_cols):
     if not ref_cols and not att_cols:
         return 0.0
     if not ref_cols or not att_cols:
-        return 441.7
+        return DELTA_E_MAX
     fwd = sum(min(_colour_gap(rc, ac) for ac in att_cols) * rc["share"] for rc in ref_cols)
     fwd /= max(sum(rc["share"] for rc in ref_cols), 1e-6)
     back = sum(min(_colour_gap(ac, rc) for rc in ref_cols) * ac["share"] for ac in att_cols)
@@ -1499,7 +1599,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     # over-saturated gradient scored 99.2. Whichever is worse governs, because a right
     # background does not excuse wrong text and right text does not excuse a wrong page.
     behind = ~m_union
-    background_dist = (float(np.sqrt(((ref[behind] - att[behind]) ** 2).sum(axis=1)).mean())
+    background_dist = (_mean_delta_e(ref[behind], att[behind])
                        if behind.sum() >= 64 else 0.0)
     colour_dist = max(palette_dist, background_dist)
 
@@ -1509,7 +1609,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     # hexes would send the next round chasing a difference of two.
     background_where, background_ref_hex, background_att_hex = None, None, None
     if behind.sum() >= 256:
-        per_px_rgb = np.sqrt(((ref - att) ** 2).sum(axis=2))
+        per_px_rgb = _ciede2000(_srgb_to_lab(ref), _srgb_to_lab(att))
         h, w = behind.shape
         worst, worst_cell = -1.0, None
         for r in range(4):
@@ -1530,7 +1630,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
             background_att_hex = "#{:02X}{:02X}{:02X}".format(
                 *[int(v) for v in att[y0:y1, x0:x1][sel].mean(axis=0)])
     both = np.logical_and(m_ref, m_att)
-    overlap_dist = (float(np.sqrt(((ref[both] - att[both]) ** 2).sum(axis=1)).mean())
+    overlap_dist = (_mean_delta_e(ref[both], att[both])
                     if both.sum() >= 16 else colour_dist)
 
     def _mag(g):
@@ -1551,7 +1651,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
 
     structure = max(0.0, min(100.0, ssim * 100.0))
     shape = max(0.0, min(100.0, iou * 100.0))
-    colour = max(0.0, min(100.0, 100.0 * float(np.exp(-colour_dist / 60.0))))
+    colour = max(0.0, min(100.0, 100.0 * float(np.exp(-colour_dist / COLOUR_FALLOFF))))
     detail = max(0.0, min(100.0, edge_corr * 100.0))
     weighted = 0.40 * structure + 0.25 * shape + 0.20 * colour + 0.15 * detail
     match = weighted * (0.6 + 0.4 * coverage)
@@ -1903,8 +2003,9 @@ def _problems(report):
     wording = {
         "shape": "The silhouette is off: {:.0f}% of the drawn area overlaps the design. "
                  "The design covers {:.1f}% of the page, the attempt covers {:.1f}%. {}",
-        "colour": "The palette is off by {:.0f} on a 0 to 441 scale: a design colour has "
-                  "no close match in the attempt, or the attempt invented one.",
+        "colour": "The palette is off by {:.1f}, on a scale where 2.3 is the smallest "
+                  "difference a person can see: a design colour has no close match in the "
+                  "attempt, or the attempt invented one.",
         "structure": "Local structure does not line up (SSIM {:.3f}). Edges and gradients sit in "
                      "the wrong places even where the colours are close.",
         "detail": "Detail density does not match (edge correlation {:.2f}). {}",
@@ -1918,7 +2019,7 @@ def _problems(report):
     if comp.get("colour", 100) < 90:
         bg = raw.get("background_distance", 0.0)
         pal = raw.get("palette_only_distance", 0.0)
-        if bg >= max(pal, 8.0) and raw.get("background_where"):
+        if bg >= max(pal, DELTA_E_VISIBLE) and raw.get("background_where"):
             out.append(
                 "The page behind the content is the wrong colour. Where it is furthest off, the {} "
                 "of the page, the design is {} and the attempt is {}. Fix the page background, "
@@ -1926,7 +2027,7 @@ def _problems(report):
                     raw["background_where"], raw["background_reference_hex"],
                     raw["background_attempt_hex"]))
             said.add("colour")
-        elif pal >= 8.0:
+        elif pal >= DELTA_E_VISIBLE:
             out.append(wording["colour"].format(pal))
             said.add("colour")
 

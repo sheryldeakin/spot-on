@@ -94,7 +94,7 @@ Keys and accounts stay on your machine. The page never talks to any provider its
 |---|---|---|---|
 | structure | 40% | SSIM over 7px windows, on the drawn content | border radius, borders, shadows, font size or line height |
 | shape | 25% | overlap of the drawn area with the design's, as intersection over union | width, height, padding, gap or alignment |
-| colour | 20% | distance between the two palettes, in both directions, and between the pages behind them; whichever is worse | a background, text or button colour is wrong or missing |
+| colour | 20% | perceptual difference (CIEDE2000) between the two palettes, in both directions, and between the pages behind them; whichever is worse | a background, text or button colour is wrong or missing |
 | detail | 15% | correlation of edge density over a 9px window | missing text, icons or borders, or the wrong font weight |
 | coverage | caps the total | share of the design with something drawn within 6px of it | an element that was never built |
 
@@ -128,6 +128,7 @@ Each of these choices fixed a case where the score disagreed with what the eye s
 - **Coverage caps the score.** Even with the three fixes above, a design with one element removed could still edge out a close copy of the whole thing.
 - **Content is found by local contrast, not by distance from one page colour.** Measuring distance from a single ground colour failed both ways on real pages: a background gradient a little too saturated crossed the threshold everywhere and was measured as content, which pinned shape near 10 for an entire run and sent the model to fix box geometry that was already right; and a white card on an off-white page fell under the threshold, so leaving out the largest element on the page cost a tenth of a point. The page-like calibration cases below hold each of those directions down.
 - **The page behind the content is compared separately.** Once the background was out of the mask it was out of the palette too, and a clearly over-saturated gradient scored 99.2. Colour now takes the worse of the content palette and the page behind it, so the background is charged once, to the part that means colour.
+- **Colour distance is perceptual, not arithmetic.** Distance in RGB is not how far apart two colours look: the same step counts for far more in some parts of the space than others, and two pairs exactly as far apart in RGB can be three times as far apart to the eye. Colour is measured with CIEDE2000 instead, which is the standard correction for that. On the calibration cases it moved both ways, which is the point: the case built to be the wrong hue went from 37.2 to **23.4**, and a gradient rendered a shade too deep went from 80.3 to **83.4**. Harder on a colour that is actually wrong, easier on one nobody would notice. It changes the page total very little (across 194 saved attempts, by **-0.14 on average**, never more than 1.5 in either direction, and the ranking of attempts within a run is unchanged); the reason to do it is that the colour term is now right, and that the number in the report means something. "The palette is off by 12, on a scale where 2.3 is the smallest difference a person can see" is a sentence a model can act on. "Off by 64 on a 0 to 441 scale" was not. The falloff constant is fitted rather than chosen, by `scripts/fit_colour.py`, to leave colour scores where the old measure had them, so this re-ranks which colour errors count rather than rescaling the axis.
 - **A component that scores badly is always named.** Colour, structure and detail used to be reported only when there was nothing more specific to say, and on a real page there is always something more specific, so they were never reported at all. A rebuild scored 64.5 on colour and was told nothing about colour for an entire run, while every round nudged text instead. Whatever else is wrong, a wrong page colour now gets its own sentence, first, because it is also among the cheapest things to fix.
 
 ### Calibration
@@ -141,20 +142,20 @@ Flat shapes on flat white never exercise the background, and the background is w
 case    match  structure  shape  colour  detail  coverage  what it is
 exact    97.7       95.9   99.0   100.0    97.7     100.0  identical to the design
 close    89.2       86.2   94.5    99.9    73.9     100.0  3px offset and a slight hue shift
-half     80.4       89.1   83.0    84.7    84.1      83.9  the square left out entirely
-hue      85.1       95.6   99.0    37.2    97.7     100.0  right geometry, wrong colour
+half     80.0       89.1   83.0    82.5    84.1      83.9  the square left out entirely
+hue      82.3       95.6   99.0    23.4    97.7     100.0  right geometry, wrong colour
 shift    52.2       66.9   47.6   100.0     0.0      72.4  right colours, 40px to the right
-wrong    33.8       64.8   42.9    26.0     0.0      51.9  one wrong shape in the wrong place
+wrong    31.8       64.8   42.9    13.8     0.0      51.9  one wrong shape in the wrong place
 blank    15.0       62.4    0.0     0.1     0.0       0.0  nothing drawn
 
 a page-like design: a full-bleed gradient with a card and text on it
 
 case    match  structure  shape  colour  detail  coverage  what it is
 same    100.0      100.0  100.0   100.0   100.0     100.0  identical to the design
-deeper   95.8       99.4  100.0    80.3    99.9     100.0  same content, gradient a little stronger
-strong   91.7       98.2   99.8    62.3    99.7     100.0  same content, gradient clearly stronger
-flatbg   98.5       99.9  100.0    92.9   100.0     100.0  same content, no gradient at all
-nocard   58.2       97.3   21.6    93.7    99.7      36.6  right gradient, the card left out
+deeper   96.4       99.4  100.0    83.4    99.9     100.0  same content, gradient a little stronger
+strong   93.2       98.2   99.8    70.1    99.7     100.0  same content, gradient clearly stronger
+flatbg   98.6       99.9  100.0    93.3   100.0     100.0  same content, no gradient at all
+nocard   57.5       97.3   21.6    88.7    99.7      36.6  right gradient, the card left out
 ```
 <!-- calibration:end -->
 

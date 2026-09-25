@@ -138,6 +138,26 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(TOOL.CONTENT_FAR_W, best["far_w"])
         self.assertEqual(TOOL.CONTENT_GATE, best["gate"])
 
+    def test_the_colour_change_numbers_match_their_sources(self):
+        fit = json.loads((ROOT / "scripts" / "colour-fit.json").read_text(encoding="utf-8"))
+        m = re.search(r"across (\d+) saved attempts, by \*\*([-+]?\d+\.\d+) on average\*\*, "
+                      r"never more than (\d+\.\d+) in either direction", README)
+        self.assertIsNotNone(m, "the colour-change sentence is worded differently now")
+        self.assertEqual(int(m.group(1)), fit["match"]["attempts"])
+        self.assertEqual(float(m.group(2)), fit["match"]["mean"])
+        self.assertGreaterEqual(float(m.group(3)),
+                                max(abs(fit["match"]["min"]), abs(fit["match"]["max"])))
+        # The two calibration figures are quoted from the generated table, both ends.
+        table = (ROOT / "docs" / "calibration.txt").read_text(encoding="utf-8")
+        m = re.search(r"wrong hue went from 37\.2 to \*\*(\d+\.\d+)\*\*", README)
+        self.assertIsNotNone(m, "the hue example is worded differently now")
+        row = re.search(r"^hue\s+\S+\s+\S+\s+\S+\s+(\S+)", table, re.M)
+        self.assertEqual(m.group(1), row.group(1))
+        m = re.search(r"a shade too deep went from 80\.3 to \*\*(\d+\.\d+)\*\*", README)
+        self.assertIsNotNone(m, "the gradient example is worded differently now")
+        row = re.search(r"^deeper\s+\S+\s+\S+\s+\S+\s+(\S+)", table, re.M)
+        self.assertEqual(m.group(1), row.group(1))
+
     def test_coverage_cap_example(self):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)
         self.assertIsNotNone(m)
