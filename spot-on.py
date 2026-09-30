@@ -2767,8 +2767,9 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     # What the rebuild is allowed to reach for. A model left to guess writes plain
     # boxes, so a gauge comes out square and an icon comes out missing, and the report
     # then reports the square box rather than the reason for it.
-    if (run.get("materials") or "").strip():
-        parts += ["", "What you may build with: " + run["materials"].strip()]
+    materials = materials_for(run)
+    if materials.strip():
+        parts += ["", "What you may build with: " + materials.strip()]
     if extra:
         parts += ["", "Extra instruction from the person running this: " + extra]
     return "\n".join(parts)
@@ -3212,7 +3213,6 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
         "best_match": -1,
         "best_attempt": None,
     }
-    run["materials"] = MATERIALS_DEFAULT
     if reference_url:
         run["design_url"] = reference_url
         # Read once, when the design is captured: the page is up now, and the answer
@@ -3246,6 +3246,23 @@ MATERIALS_DEFAULT = (
     "Render a single frame and do not animate, because anything still moving between "
     "screenshots is excluded from the score rather than matched against the design."
 ).format(tool=ICON_TOOL)
+
+
+def materials_for(run):
+    """What this round may build with: the run's own line if someone wrote one, else today's.
+
+    A run used to keep whatever the default said on the day it was created, and that
+    copy went stale the moment the default gained anything. Six of the runs saved here
+    still carry a line written before the icon set existed, so a round on any of them
+    would never be told the set is there, and the feature would have looked like it did
+    not work. A run keeps its own text only once a person has actually written one.
+    """
+    if run.get("materials_custom"):
+        # Including an empty one. Clearing the box is a choice, and it means send
+        # nothing, not fall back to the default: once a person has touched the field
+        # it is theirs, and until they touch it the tool keeps it current.
+        return (run.get("materials") or "").strip()
+    return MATERIALS_DEFAULT
 
 
 STARTERS = {
@@ -4772,6 +4789,7 @@ class Handler(BaseHTTPRequestHandler):
                 run = _load_run(q["run"])
                 run["attempt_list"] = _attempts(q["run"])
                 run["starter"] = starter_code(run)
+                run["materials"] = materials_for(run)
                 self._send_json(200, run)
             elif path == "/code":
                 q = self._query()
@@ -4817,6 +4835,7 @@ class Handler(BaseHTTPRequestHandler):
                                  capture_width=payload.get("capture_width", 1440),
                                  capture_height=payload.get("capture_height", 900))
                 run["starter"] = starter_code(run)
+                run["materials"] = materials_for(run)
                 self._send_json(200, run)
             elif path == "/runs/delete":
                 shutil.rmtree(_run_dir(payload["run"]), ignore_errors=True)
@@ -4833,8 +4852,13 @@ class Handler(BaseHTTPRequestHandler):
                                                    panel=payload.get("panel", False)))
             elif path == "/materials":
                 run = _load_run(payload["run"])
-                run["materials"] = (payload.get("materials") or "")[:600]
+                text = (payload.get("materials") or "")[:600]
+                run["materials"] = text
+                # Touching the field at all makes it the run's own, cleared included.
+                # Until then the run follows whatever the default says today.
+                run["materials_custom"] = True
                 _save_run(payload["run"], run)
+                run["materials"] = materials_for(run)
                 self._send_json(200, run)
             elif path == "/kind":
                 run = _load_run(payload["run"])

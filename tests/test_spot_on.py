@@ -1328,7 +1328,9 @@ class MaterialsReachThePrompt(unittest.TestCase):
 
     def prompt(self, materials):
         run = {"kind": "html", "width": 760, "height": 500, "ground": "#FFFFFF",
-               "materials": materials}
+        # materials_custom is what marks the line as the run's own; without it the
+        # run follows the current default, which is the point of the class below.
+               "materials": materials, "materials_custom": True}
         return so._iterate_prompt(run, 1, "<div></div>", score("close"), "")
 
     def test_materials_are_sent_with_the_round(self):
@@ -1336,7 +1338,9 @@ class MaterialsReachThePrompt(unittest.TestCase):
         self.assertIn("What you may build with", text)
         self.assertIn("conic-gradient for dials", text)
 
-    def test_nothing_is_said_when_the_field_is_empty(self):
+    def test_nothing_is_said_when_someone_has_cleared_the_field(self):
+        # Clearing it is a choice and it means send nothing. A run that was never
+        # touched is a different case and gets the current default.
         for empty in ("", "   ", None):
             self.assertNotIn("What you may build with", self.prompt(empty))
 
@@ -1787,6 +1791,53 @@ class ServerAndScreenshots(unittest.TestCase):
         html = urllib.request.urlopen(self.base + "/", timeout=30).read().decode()
         self.assertTrue("<title>Spot On</title>" in html, "title missing")
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
+
+
+class MaterialsDoNotGoStale(unittest.TestCase):
+    """A run created before a capability existed still gets told about it."""
+
+    def test_a_run_carrying_an_old_default_follows_the_current_one(self):
+        # The fault this replaces: the default was copied into the run at creation, so
+        # six saved runs still carried a line written before the icon set existed. A
+        # round on any of them would never have heard of the set, and the feature would
+        # have looked broken when it was only unreachable.
+        stale = {"materials": "Inline SVG for icons and for any curved or radial shape."}
+        self.assertEqual(so.materials_for(stale), so.MATERIALS_DEFAULT)
+
+    def test_a_run_with_nothing_stored_gets_the_current_default(self):
+        self.assertEqual(so.materials_for({}), so.MATERIALS_DEFAULT)
+
+    def test_a_line_someone_wrote_is_kept(self):
+        mine = {"materials": "only flat boxes, no gradients", "materials_custom": True}
+        self.assertEqual(so.materials_for(mine), "only flat boxes, no gradients")
+
+    def test_creating_a_run_does_not_freeze_a_copy(self):
+        saved = so.RUNS_DIR
+        tmp = Path(tempfile.mkdtemp(prefix="spot-on-mat-"))
+        try:
+            so.RUNS_DIR = tmp
+            run = so.create_run("fresh", "svg", reference_bytes=_png_bytes(DESIGN))
+            self.assertFalse(run.get("materials"), "the default was copied in again")
+            self.assertEqual(so.materials_for(so._load_run("fresh")), so.MATERIALS_DEFAULT)
+        finally:
+            so.RUNS_DIR = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_the_round_is_handed_whatever_that_resolves_to(self):
+        saved = so.RUNS_DIR
+        tmp = Path(tempfile.mkdtemp(prefix="spot-on-mat2-"))
+        try:
+            so.RUNS_DIR = tmp
+            run = so.create_run("fresh2", "svg", reference_bytes=_png_bytes(DESIGN))
+            rec = so.record_attempt("fresh2", "<svg xmlns='http://www.w3.org/2000/svg'"
+                                              " width='400' height='300'></svg>")
+            prompt = so._iterate_prompt(so._load_run("fresh2"), rec["n"], "<svg/>",
+                                        rec["report"], "", [], [], "read", [])
+            self.assertIn("What you may build with:", prompt)
+            self.assertIn("icon set is bundled", prompt)
+        finally:
+            so.RUNS_DIR = saved
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class TheIconSetIsBundled(unittest.TestCase):
