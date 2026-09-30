@@ -2854,6 +2854,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
 
 
 GIVE_UP_AFTER = 3
+INSIST_CANDIDATES = 1
 
 
 def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, panel=False):
@@ -2932,17 +2933,36 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     # has already survived GIVE_UP_AFTER rounds is not pressed at all. The retry reads
     # the history again, so it presses on whatever is still wrong rather than repeating
     # this prompt, and it is recorded like any other attempt.
+    #
+    # One draw, not `candidates` of them. This used to take the same number as the
+    # first wave, so a round quietly cost twice what the setting said: three rounds at
+    # candidates=3 added twelve attempts, not nine, and nothing anywhere said why. The
+    # spread across parallel draws is what the first wave is for, over the whole space
+    # of what to change next; the second swing is aimed at one named fault that the
+    # first wave already failed to move, and a wide sample is not what it is short of.
     if insist and best["still_stuck"]:
-        again = run_iteration(slug, extra=extra, agent=agent, candidates=candidates,
+        again = run_iteration(slug, extra=extra, agent=agent, candidates=INSIST_CANDIDATES,
                               insist=False, panel=panel)
         again["insisted_on"] = best["still_stuck"]
+        used = len(records) + again.get("attempts_used", 1)
+        again["attempts_used"] = used
         if again["match"] >= best["match"]:
             again["round_seconds"] = round(time.time() - t0, 2)
-            stamp_attempt(slug, again["n"], round_seconds=again["round_seconds"])
+            # Written down, not just returned. These three said whether the second
+            # swing was worth its cost, and they were set on the record after
+            # record_attempt had already put it on disk, so a scan over every run in
+            # the tool found nothing to weigh either way.
+            stamp_attempt(slug, again["n"], round_seconds=again["round_seconds"],
+                          insisted_on=again["insisted_on"],
+                          attempts_used=again["attempts_used"])
             return again
         best["insisting_did_not_help"] = True
+        best["attempts_used"] = used
+    best.setdefault("attempts_used", len(records))
     best["round_seconds"] = round(time.time() - t0, 2)
-    stamp_attempt(slug, best["n"], round_seconds=best["round_seconds"])
+    stamp_attempt(slug, best["n"], round_seconds=best["round_seconds"],
+                  attempts_used=best["attempts_used"],
+                  insisting_did_not_help=best.get("insisting_did_not_help", False))
     return best
 
 
@@ -3327,7 +3347,16 @@ ICON_TOOL = Path(__file__).resolve().parent / "scripts" / "icon.py"
 # rule names that.
 ICON_SHIM = "icons.py"
 ICON_CMD = "python " + ICON_SHIM
-ICON_RULE = "Bash({}:*)".format(ICON_CMD)
+# A rule matches the literal start of the command, so a spelling that means the same
+# thing to the shell means nothing to the matcher. Measured: `python icons.py house`
+# runs, `python ./icons.py house` and `python3 icons.py house` are both refused, and
+# those are the two a model reaches for unprompted. One round ran the script while
+# another in the same round reported it as not permitted, which is what that looks
+# like from the outside. All four spellings of the same command are allowed; nothing
+# else is.
+ICON_SPELLINGS = ("python " + ICON_SHIM, "python ./" + ICON_SHIM,
+                  "python3 " + ICON_SHIM, "python3 ./" + ICON_SHIM)
+ICON_RULE = ",".join("Bash({}:*)".format(c) for c in ICON_SPELLINGS)
 ICON_SHIM_SOURCE = '''# Written by Spot On for each round: a fixed name the permission rule can allow.
 import runpy, sys
 TOOL = r"{tool}"
@@ -3344,7 +3373,8 @@ def write_icon_shim(cwd):
 
 
 MATERIALS_DEFAULT = (
-    "A consistent icon set is bundled and offline: run "
+    "A consistent icon set is bundled and offline, and running it is permitted here "
+    "even though nothing else is: run "
     "`{cmd} --find <word>` to search it by name or keyword, then "
     "`{cmd} <name> [<name>...] --size N --stroke '#RRGGBB'` for markup to "
     "paste straight in. Take every icon on the page from it rather than drawing them "

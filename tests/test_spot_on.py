@@ -1969,9 +1969,11 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         self.assertNotIn("dangerously", passed)
         self.assertNotIn("bypassPermissions", passed)
         self.assertNotIn("acceptEdits", passed)
-        # One rule, naming one command, not a bare tool name that would allow any.
+        # Rules naming one command, not a bare tool name that would allow any.
         self.assertTrue(so.ICON_RULE.startswith("Bash(python icons.py"), so.ICON_RULE)
         self.assertNotEqual(so.ICON_RULE, "Bash")
+        for rule in so.ICON_RULE.split(","):
+            self.assertRegex(rule, r"^Bash\(python3? (\./)?icons\.py:\*\)$", rule)
 
     def test_the_shim_is_there_to_be_run(self):
         so._run_cli_agent("claude", "make it match", self.tmp)
@@ -1997,6 +1999,103 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         path = so.write_icon_shim(self.tmp)
         self.assertIn(str(so.ICON_TOOL), path.read_text(encoding="utf-8"))
         self.assertTrue(so.ICON_TOOL.is_absolute())
+
+
+class TheSpellingsOfOneCommandAreAllPermitted(unittest.TestCase):
+    """A rule matches text, so a command that means the same thing is a different one."""
+
+    def test_the_two_a_model_reaches_for_are_covered(self):
+        # Measured against the real CLI: `python icons.py house` ran, while
+        # `python ./icons.py house` and `python3 icons.py house` were both refused
+        # under a rule naming only the first. One candidate ran the script while
+        # another in the same round reported it as not permitted.
+        for spelling in ("python icons.py", "python ./icons.py",
+                         "python3 icons.py", "python3 ./icons.py"):
+            self.assertIn("Bash({}:*)".format(spelling), so.ICON_RULE, spelling)
+
+    def test_and_nothing_beyond_them(self):
+        rules = so.ICON_RULE.split(",")
+        self.assertEqual(len(rules), len(set(rules)))
+        for rule in rules:
+            self.assertIn(so.ICON_SHIM, rule)
+            # No rule may end the prefix before the script name, which would allow
+            # any python at all.
+            self.assertNotIn("Bash(python:*)", rule)
+            self.assertNotIn("Bash(python3:*)", rule)
+
+    def test_the_round_is_told_it_may_run_it(self):
+        # Regression: a candidate declined with "the file edit and script run were
+        # not permitted in this session" in the same round another ran it fine, so
+        # the sentence now says so rather than leaving it to be assumed.
+        self.assertIn("permitted", so.MATERIALS_DEFAULT)
+
+
+class ARoundCostsWhatItSaysItCosts(unittest.TestCase):
+    """The second swing is a round's worth of work and used to be billed silently."""
+
+    def setUp(self):
+        self.saved = so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-cost-"))
+        so.RUNS_DIR = self.tmp
+        so.create_run("cost", "html", reference_bytes=_png_bytes(DESIGN))
+        d = self.tmp / "cost" / "attempts"
+        CASES["close"].save(d / "001.png")
+        (d / "001.code").write_text("<div></div>", encoding="utf-8")
+        (d / "001.json").write_text(json.dumps(
+            {"n": 1, "match": 10.0, "report": score("close")}), encoding="utf-8")
+        self.asked = []
+        self.saved_gather = so.gather_candidates
+
+        def fake(agent, prompt, cwd, images, count, kind, panel=False):
+            self.asked.append(count)
+            return [("<div>a{}</div>".format(i), "changed", "claude")
+                    for i in range(count)], []
+
+        so.gather_candidates = fake
+
+    def tearDown(self):
+        so.gather_candidates = self.saved_gather
+        so.RUNS_DIR = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_round_that_fixes_what_it_was_asked_draws_once(self):
+        best = so.run_iteration("cost", candidates=3)
+        self.assertEqual(self.asked, [3])
+        self.assertEqual(best["attempts_used"], 3)
+
+    def test_the_second_swing_takes_one_draw_not_another_full_wave(self):
+        # Regression: it passed `candidates` straight down, so three rounds at
+        # candidates=3 added twelve attempts rather than nine and nothing said why.
+        with _forced_stuck():
+            best = so.run_iteration("cost", candidates=3)
+        self.assertEqual(self.asked, [3, so.INSIST_CANDIDATES])
+        self.assertEqual(so.INSIST_CANDIDATES, 1)
+        self.assertEqual(best["attempts_used"], 4)
+
+    def test_what_the_swing_cost_and_whether_it_helped_are_written_down(self):
+        # Regression: insisted_on and insisting_did_not_help were set on the record
+        # after record_attempt had already written it, so a scan over every run in
+        # the tool could not say whether the second swing had ever been worth it.
+        with _forced_stuck():
+            best = so.run_iteration("cost", candidates=2)
+        stored = json.loads((self.tmp / "cost" / "attempts" /
+                             "{:03d}.json".format(best["n"])).read_text(encoding="utf-8"))
+        self.assertEqual(stored["attempts_used"], 3)
+        self.assertTrue(stored.get("insisted_on") or stored.get("insisting_did_not_help") is not None)
+
+
+@contextlib.contextmanager
+def _forced_stuck():
+    """Make one round look like it left a pressed fault unfixed."""
+    saved = so.stuck_problems
+    key = [{"key": ("font", "family"), "rounds": 1}]
+    so.stuck_problems = lambda history, base: key
+    saved_keys = so.problem_keys
+    so.problem_keys = lambda report: {("font", "family")}
+    try:
+        yield
+    finally:
+        so.stuck_problems, so.problem_keys = saved, saved_keys
 
 
 class AStaleReportIsRefreshedBeforeARoundReadsIt(unittest.TestCase):
