@@ -3155,6 +3155,8 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
         "source": source,
         "changes": changes,
         "match": report["match"],
+        # Read off the page, not off what the round said it did.
+        "icons_used": icons_used(code),
         "render_seconds": round(time.time() - t0, 2),
         "report": report,
     }
@@ -3363,6 +3365,69 @@ TOOL = r"{tool}"
 sys.argv[0] = TOOL
 runpy.run_path(TOOL, run_name="__main__")
 '''
+
+
+_ICON_INDEX = None
+
+
+def _icon_index():
+    """The bundled set, loaded once. 620KB, so not per attempt."""
+    global _ICON_INDEX
+    if _ICON_INDEX is None:
+        _ICON_INDEX = json.loads(ICON_TOOL.parent.parent.joinpath(
+            "assets", "icons", "lucide.json").read_text(encoding="utf-8"))
+    return _ICON_INDEX
+
+
+_ICON_SHAPES = ("path", "circle", "line", "rect", "polyline", "polygon", "ellipse")
+_ICON_GEOMETRY = ("d", "cx", "cy", "r", "rx", "ry", "x", "y",
+                  "x1", "y1", "x2", "y2", "width", "height", "points")
+
+
+def _shapes(markup):
+    """The geometry of one piece of svg, with everything else dropped."""
+    out = set()
+    for tag, attrs in re.findall(r"<(" + "|".join(_ICON_SHAPES) + r")\b([^>]*)>", markup or ""):
+        got = dict(re.findall(r'([\w-]+)\s*=\s*"([^"]*)"', attrs))
+        out.add(tag + "|" + ";".join("{}={}".format(k, " ".join(got[k].split()))
+                                     for k in _ICON_GEOMETRY if k in got))
+    return out
+
+
+def icons_used(code):
+    """Which bundled icons this page actually contains, read off the page.
+
+    A round says in its notes whether it used the set, and that sentence was the only
+    evidence there was: proving one round had really used it meant matching path data
+    out of the index against the page by hand. The page is the honest witness.
+
+    Matched on geometry rather than on markup, because what comes back is the same
+    shapes reformatted: the index writes `<path d="..." />` and the page came back
+    with `<path d="..."/>`, which no amount of flattening whitespace will reconcile.
+    Size, colour and stroke are excluded deliberately, since setting those is what the
+    script is for.
+
+    Three things stop it overcounting. Every shape of an icon must sit inside one svg
+    on the page, so scattered coincidences do not add up to an icon. Aliases are
+    counted once, under the first of their names alphabetically: 254 of the 2121 names
+    share a body, house and home among them, and a page with one house in it should
+    not report three. And an icon whose shapes are
+    a subset of another matched icon is dropped, because a page holding file-text
+    necessarily holds file's two paths as part of it.
+    """
+    blocks = [_shapes(b) for b in re.findall(r"<svg\b[^>]*>.*?</svg>", code or "", re.S)
+              if "0 0 24 24" in b]
+    if not blocks:
+        return []
+    hits = {}
+    for name, body in _icon_index()["icons"].items():
+        sig = frozenset(_shapes(body))
+        if sig and any(sig <= block for block in blocks):
+            # First alphabetically, so the same drawing always comes back under the
+            # same name instead of under whichever one the index happens to list first.
+            hits[sig] = min(name, hits.get(sig, name))
+    return sorted(name for sig, name in hits.items()
+                  if not any(sig < other for other in hits if other is not sig))
 
 
 def write_icon_shim(cwd):

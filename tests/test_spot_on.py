@@ -2001,6 +2001,81 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         self.assertTrue(so.ICON_TOOL.is_absolute())
 
 
+class WhichIconsThePageActuallyUses(unittest.TestCase):
+    """The round's own sentence about it is not evidence."""
+
+    def icon(self, *args):
+        out = subprocess.run([sys.executable, str(TOOL.parent / "scripts" / "icon.py")]
+                             + list(args), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def page(self, *svgs):
+        return "<div>" + "".join(svgs) + "</div>"
+
+    def test_an_icon_from_the_set_is_found_in_the_page(self):
+        self.assertEqual(so.icons_used(self.page(self.icon("droplet"))), ["droplet"])
+
+    def test_markup_reformatted_on_the_way_in_still_counts(self):
+        # Regression: the first version compared the markup, and the index writes
+        # `<path d="..." />` while what came back was `<path d="..."/>`, so a page
+        # built entirely from the set reported nothing at all.
+        squashed = self.icon("droplet").replace(" />", "/>").replace("> <", "><")
+        self.assertEqual(so.icons_used(self.page(squashed)), ["droplet"])
+
+    def test_resizing_and_recolouring_it_does_not_hide_it(self):
+        # Which is the whole point of the script, so it must not break the check.
+        got = self.icon("droplet", "--size", "34", "--stroke", "#7FD4F5",
+                        "--stroke-width", "1.5")
+        self.assertEqual(so.icons_used(self.page(got)), ["droplet"])
+
+    def test_a_hand_drawn_glyph_counts_as_nothing(self):
+        drawn = ('<svg viewBox="0 0 24 24" width="20" height="20">'
+                 '<path d="M4 4 L20 20 L4 20 Z" fill="#fff"/></svg>')
+        self.assertEqual(so.icons_used(self.page(drawn)), [])
+
+    def test_a_page_with_no_svg_at_all_is_fine(self):
+        self.assertEqual(so.icons_used("<div>just text</div>"), [])
+        self.assertEqual(so.icons_used(""), [])
+        self.assertEqual(so.icons_used(None), [])
+
+    def test_two_names_for_one_drawing_are_counted_once(self):
+        # house and home are the same seven paths; 254 of the 2121 names are aliases.
+        self.assertEqual(len(so.icons_used(self.page(self.icon("house")))), 1)
+
+    def test_an_icon_contained_in_another_is_not_also_reported(self):
+        # file-text is file's two paths plus the lines of text, so a page holding
+        # file-text holds file, and saying so twice would inflate the count.
+        got = so.icons_used(self.page(self.icon("file-text")))
+        self.assertEqual(got, ["file-text"])
+
+    def test_shapes_scattered_across_the_page_do_not_add_up_to_an_icon(self):
+        whole = self.icon("file-text")
+        halves = whole.replace("</svg>", "").split("<path", 2)
+        split = ('<svg viewBox="0 0 24 24"><path' + halves[1] + "</svg>"
+                 '<svg viewBox="0 0 24 24"><path' + halves[2] + "</svg>")
+        self.assertEqual(so.icons_used(self.page(split)), [])
+
+    def test_the_attempt_records_it(self):
+        saved = so.RUNS_DIR
+        tmp = Path(tempfile.mkdtemp(prefix="spot-on-iconrec-"))
+        try:
+            so.RUNS_DIR = tmp
+            so.create_run("iconrec", "svg", reference_bytes=_png_bytes(DESIGN))
+            body = so._icon_index()["icons"]["droplet"]
+            code = ('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">'
+                    '<rect width="400" height="300" fill="#fff"/>'
+                    '<svg viewBox="0 0 24 24" x="10" y="10">' + body + "</svg></svg>")
+            rec = so.record_attempt("iconrec", code)
+            self.assertEqual(rec["icons_used"], ["droplet"])
+            stored = json.loads((tmp / "iconrec" / "attempts" / "001.json")
+                                .read_text(encoding="utf-8"))
+            self.assertEqual(stored["icons_used"], ["droplet"])
+        finally:
+            so.RUNS_DIR = saved
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TheSpellingsOfOneCommandAreAllPermitted(unittest.TestCase):
     """A rule matches text, so a command that means the same thing is a different one."""
 
