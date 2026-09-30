@@ -2538,7 +2538,7 @@ def _prompt_on_disk(prompt, cwd):
             "answer in the format it asks for.")
 
 
-def _run_cli_agent(agent, prompt, cwd, timeout=600):
+def _run_cli_agent(agent, prompt, cwd, timeout=600, schema=True):
     cli = _cli_for(agent)
     exe = shutil.which(cli)
     if exe is None and agent == "gemini":
@@ -2547,9 +2547,11 @@ def _run_cli_agent(agent, prompt, cwd, timeout=600):
 
     def build(text):
         if agent == "claude":
-            return [exe, "-p", text, "--output-format", "json",
-                    "--model", _model_for("claude"),
-                    "--json-schema", json.dumps(ITERATE_SCHEMA)]
+            cmd = [exe, "-p", text, "--output-format", "json",
+                   "--model", _model_for("claude")]
+            # The iteration schema asks for {code, changes}. A caller after prose gets
+            # its answer wrapped in a code field if it is left on.
+            return cmd + (["--json-schema", json.dumps(ITERATE_SCHEMA)] if schema else [])
         if agent == "codex":
             return [exe, "exec", "--skip-git-repo-check", text]
         return [exe, "-p", text, "--print-timeout", "300s"]
@@ -2613,9 +2615,9 @@ def _run_api_agent(agent, prompt, images):
     return out.get("message", {}).get("content", "")
 
 
-def run_agent(agent, prompt, cwd, images):
+def run_agent(agent, prompt, cwd, images, schema=True):
     if _cli_for(agent):
-        return _run_cli_agent(agent, prompt, cwd)
+        return _run_cli_agent(agent, prompt, cwd, schema=schema)
     return _run_api_agent(agent, prompt, images)
 
 
@@ -2770,6 +2772,9 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     materials = materials_for(run)
     if materials.strip():
         parts += ["", "What you may build with: " + materials.strip()]
+    if (run.get("design_needs") or "").strip():
+        parts += ["", "What this design needs, read off the design itself: "
+                  + run["design_needs"].strip()]
     if extra:
         parts += ["", "Extra instruction from the person running this: " + extra]
     return "\n".join(parts)
@@ -2853,6 +2858,13 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     report = base["report"]
 
     chosen = pick_agent(agent)
+    # Once per run, before the first prompt is built, so every round after it is told
+    # what this design actually needs rather than working it out from the picture again.
+    # It never blocks a round: a failure here leaves the field unset and the round goes
+    # ahead with the materials line alone.
+    if run.get("design_needs") is None:
+        describe_needs(slug, chosen, run)
+        run = _load_run(slug)
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
     count = max(1, min(5, int(count)))
     image_access = image_mode(chosen)
@@ -3246,6 +3258,81 @@ MATERIALS_DEFAULT = (
     "Render a single frame and do not animate, because anything still moving between "
     "screenshots is excluded from the score rather than matched against the design."
 ).format(tool=ICON_TOOL)
+
+
+NEEDS_PROMPT = (
+    "Look at this design and list what a rebuild of it will have to draw. Name the "
+    "concrete things: how many icons and roughly what they are, whether any panel is "
+    "translucent over what is behind it, whether there is a 3D object, a gauge, a dial, "
+    "a chart, a photograph, a map. Say which parts are artwork that code cannot "
+    "reproduce. Be specific to this image and do not list techniques it does not need. "
+    "Under 70 words, one paragraph, no preamble."
+)
+
+
+def describe_needs(slug, agent=None, run=None):
+    """Ask once what this particular design needs, and keep the answer on the run.
+
+    The materials line says what the tool can do, and it is the same sentence for a
+    page of flat cards and a page with a 3D globe, forty icons and translucent panels.
+    Which half of it matters is a property of the design, and the design is sitting
+    right there, so it is worth one look rather than leaving every round to work it out
+    from the picture again or leaving a person to type it.
+
+    Kept separate from the materials line rather than replacing it: the tool's half
+    goes stale when the tool gains something, and this half does not, so they are not
+    the same kind of text and should not share a field.
+    """
+    run = run or _load_run(slug)
+    if run.get("design_needs") is not None:
+        return run["design_needs"]
+    d = _run_dir(slug)
+    chosen = pick_agent(agent)
+    try:
+        out = run_agent(chosen, NEEDS_PROMPT, d, [d / "reference.png"], schema=False)
+    except Exception:
+        return None
+    text = " ".join((_parse_needs(out) or "").split())
+    if len(text) > 500:
+        cut = text.rfind(". ", 0, 500)
+        text = text[:cut + 1] if cut > 200 else text[:500].rsplit(" ", 1)[0]
+    if not text:
+        return None
+    with _run_lock(slug):
+        latest = _load_run(slug)
+        latest["design_needs"] = text
+        latest["design_needs_by"] = chosen
+        _save_run(slug, latest)
+    return text
+
+
+def _parse_needs(out):
+    """Pull the prose out of whatever shape the agent answered in."""
+    out = (out or "").strip()
+    if not out:
+        return ""
+    try:
+        got = json.loads(out)
+    except ValueError:
+        return out
+    seen = set()
+    while isinstance(got, dict):
+        # The CLI wraps its answer, and a schema left on wraps it again inside that.
+        for key in ("result", "text", "content", "response", "code"):
+            value = got.get(key)
+            if isinstance(value, str) and value.strip():
+                try:
+                    inner = json.loads(value)
+                except ValueError:
+                    return value.strip()
+                if id(inner) in seen or not isinstance(inner, dict):
+                    return value.strip()
+                seen.add(id(inner))
+                got = inner
+                break
+        else:
+            return out
+    return out
 
 
 def materials_for(run):

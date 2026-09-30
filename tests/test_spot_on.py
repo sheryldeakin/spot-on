@@ -629,7 +629,7 @@ class BestOfN(unittest.TestCase):
     def answer(self, *bodies):
         seen = []
 
-        def fake(agent, prompt, cwd, images):
+        def fake(agent, prompt, cwd, images, schema=True):
             body = bodies[len(seen) % len(bodies)]
             seen.append(body)
             return "```\n" + body + "\n```"
@@ -689,7 +689,7 @@ class BestOfN(unittest.TestCase):
         import time as _time
         active, peak, lock = [0], [0], threading.Lock()
 
-        def slow(agent, prompt, cwd, images):
+        def slow(agent, prompt, cwd, images, schema=True):
             with lock:
                 active[0] += 1
                 peak[0] = max(peak[0], active[0])
@@ -1555,7 +1555,7 @@ class InsistingOnce(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def answer_with(self, radius):
-        def fake(agent, prompt, cwd, images):
+        def fake(agent, prompt, cwd, images, schema=True):
             self.calls.append(prompt)
             return "```\n" + self.SVG.format(radius) + "\n```"
         so.run_agent = fake
@@ -1570,7 +1570,22 @@ class InsistingOnce(unittest.TestCase):
         self.seed()
         self.answer_with(24)
         so.run_iteration("insist", candidates=1)
-        self.assertLessEqual(len(self.calls), 2)
+        # The one-off "what does this design need" call is not a round, so it does
+        # not count against the cap. What this guards is that insisting cannot
+        # recurse, and that is a count of iteration prompts.
+        rounds = [c for c in self.calls if not c.startswith(so.NEEDS_PROMPT[:40])]
+        self.assertLessEqual(len(rounds), 2)
+
+    def test_the_design_is_only_looked_at_once_per_run(self):
+        # It is a property of the design, not of the round, so asking every round
+        # would be paying repeatedly for the same answer.
+        self.seed()
+        self.answer_with(24)
+        so.run_iteration("insist", candidates=1, insist=False)
+        so.run_iteration("insist", candidates=1, insist=False)
+        asked = [c for c in self.calls if c.startswith(so.NEEDS_PROMPT[:40])]
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(so._load_run("insist").get("design_needs"))
 
 
 @contextlib.contextmanager
@@ -1791,6 +1806,78 @@ class ServerAndScreenshots(unittest.TestCase):
         html = urllib.request.urlopen(self.base + "/", timeout=30).read().decode()
         self.assertTrue("<title>Spot On</title>" in html, "title missing")
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
+
+
+class TheDesignIsReadOnce(unittest.TestCase):
+    """What this design needs, written from the design rather than typed by a person."""
+
+    def setUp(self):
+        self.saved_agent, self.saved_runs = so.run_agent, so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-needs-"))
+        so.RUNS_DIR = self.tmp
+        self.asked = []
+
+    def tearDown(self):
+        so.run_agent, so.RUNS_DIR = self.saved_agent, self.saved_runs
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def answer(self, text):
+        def fake(agent, prompt, cwd, images, schema=True):
+            self.asked.append({"prompt": prompt, "schema": schema, "images": list(images)})
+            return text
+        so.run_agent = fake
+
+    def seed(self):
+        so.create_run("needs", "svg", reference_bytes=_png_bytes(DESIGN))
+
+    def test_the_answer_is_stored_and_the_design_is_shown(self):
+        self.seed()
+        self.answer("Nine icons, one translucent panel, no 3D.")
+        got = so.describe_needs("needs")
+        self.assertEqual(got, "Nine icons, one translucent panel, no 3D.")
+        self.assertEqual(so._load_run("needs")["design_needs"], got)
+        self.assertTrue(any("reference.png" in str(i) for i in self.asked[0]["images"]))
+
+    def test_it_is_asked_as_prose_not_against_the_code_schema(self):
+        # Regression: the first version inherited the iteration schema, so the answer
+        # came back wrapped as {"code": "..."} and was stored with the wrapper on it.
+        self.seed()
+        self.answer("Nine icons.")
+        so.describe_needs("needs")
+        self.assertFalse(self.asked[0]["schema"])
+
+    def test_a_wrapped_answer_is_unwrapped(self):
+        inner = json.dumps({"code": "Nine icons.", "changes": "x"})
+        self.assertEqual(so._parse_needs(json.dumps({"result": inner})), "Nine icons.")
+        self.assertEqual(so._parse_needs(json.dumps({"result": "Nine icons."})), "Nine icons.")
+        self.assertEqual(so._parse_needs("Nine icons."), "Nine icons.")
+
+    def test_a_long_answer_is_cut_at_a_sentence(self):
+        self.seed()
+        self.answer("A sentence that ends here. " * 40)
+        got = so.describe_needs("needs")
+        self.assertLessEqual(len(got), 500)
+        self.assertTrue(got.endswith("."), got[-40:])
+
+    def test_a_failure_leaves_the_field_unset_rather_than_blocking(self):
+        self.seed()
+
+        def boom(agent, prompt, cwd, images, schema=True):
+            raise RuntimeError("no agent here")
+        so.run_agent = boom
+        self.assertIsNone(so.describe_needs("needs"))
+        self.assertIsNone(so._load_run("needs").get("design_needs"))
+
+    def test_it_reaches_the_round(self):
+        self.seed()
+        run = so._load_run("needs")
+        run["design_needs"] = "Nine icons and one translucent panel."
+        prompt = so._iterate_prompt(run, 1, "<svg/>", score("close"), "")
+        self.assertIn("What this design needs", prompt)
+        self.assertIn("Nine icons and one translucent panel.", prompt)
+        # Beside the materials line, not instead of it: one says what the tool can do
+        # and goes stale when the tool gains something, the other does not.
+        self.assertIn("What you may build with", prompt)
 
 
 class MaterialsDoNotGoStale(unittest.TestCase):
