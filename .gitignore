@@ -2,3 +2,4 @@ runs/
 __pycache__/
 *.pyc
 scripts/match-real.json
+CLAUDE.md
