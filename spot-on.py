@@ -1054,6 +1054,9 @@ def _hollow(matched, css, size, limit=2):
     return merged[:limit]
 
 
+HOLLOW_NAMED = 10
+
+
 def _hollow_summary(found):
     """One sentence when empties are everywhere, rather than two arbitrary examples.
 
@@ -1061,18 +1064,36 @@ def _hollow_summary(found):
     bar, the quick-access grid and three bottom panels were every one of them an empty
     container. Naming two of those sets describes the symptom; naming the pattern is
     what a person or a model can act on in a single pass.
+
+    Every box is named by position, which the first version of this threw away: it
+    gave a count and a size range, so a round was asked to find eight boxes between
+    69x71 and 30x24 pixels somewhere on a page of 1536x1024, while every other line in
+    the report carries an x and a y. Measured on a run where the count had not moved
+    in six rounds: handed the same report with the boxes listed by position, one round
+    closed three of the seven places and took three new icons from the bundled set.
+
+    It also says outright that filling them counts as one change, because the round is
+    told to change at most three things, and "fill all eight of these" against that
+    budget reads as a rule it cannot keep. The round that did the job quoted the
+    permission back: "Filled the empty containers with icons from icons.py (one
+    change)".
     """
     if len(found) < 3:
         return None
     boxes = sum(f.get("n", 1) for f in found)
-    biggest = max(found, key=lambda f: f["w"] * f["h"])
+    named = sorted(found, key=lambda f: -(f["w"] * f["h"]))[:HOLLOW_NAMED]
+    where = ["x {} y {} ({}x{}px{})".format(
+        f["x"], f["y"], f["w"], f["h"],
+        "" if f.get("n", 1) == 1 else ", {} side by side".format(f["n"])) for f in named]
+    rest = len(found) - len(named)
+    if rest:
+        where.append("and {} more".format(rest))
     return ("{} places on the page draw a container the right size in the right place and "
-            "leave it empty, {} boxes in all, from {}x{}px down to {}x{}px. The design puts an "
-            "icon or a glyph in each. This is one job, not {} separate ones: take them from "
-            "the bundled set ({}) and fill them all "
-            "from it, so they match each other.".format(
-                len(found), boxes, biggest["w"], biggest["h"],
-                min(f["w"] for f in found), min(f["h"] for f in found), boxes, ICON_CMD))
+            "leave it empty, {} boxes in all. The design puts an icon or a glyph in each: "
+            "{}. This is one job, not {} separate ones: take them from the bundled set "
+            "({}) and fill them all from it, so they match each other. Filling all of them "
+            "counts as one change, not {}.".format(
+                len(found), boxes, "; ".join(where), boxes, ICON_CMD, boxes))
 
 
 def _hollow_sentence(f):
@@ -1308,6 +1329,15 @@ def problem_keys(report):
     for g in (els.get("groups") or [])[:4]:
         it = g[0]
         keys.add(("element", it["kind"], it["y"] // 50, tuple(sorted(it["aspects"]))))
+    # Both of these were missing, so the two findings most likely to be actionable
+    # were the only ones invisible to the press mechanism: a page could carry the same
+    # empty containers for twenty rounds and never once be told it had been asked
+    # already. Keyed without a count, so the fault is the same fault while any of it
+    # remains and stops being named the moment the last box is filled.
+    if els.get("hollow"):
+        keys.add(("hollow",))
+    if els.get("fill"):
+        keys.add(("fill",))
     return keys
 
 
@@ -1363,6 +1393,10 @@ def stuck_phrase(key):
     if kind == "element":
         what = ", ".join(key[3]) or "position"
         return "the {} around y {}px ({})".format(key[1], key[2] * 50, what)
+    if kind == "hollow":
+        return "the containers drawn empty"
+    if kind == "fill":
+        return "the panels at the wrong alpha"
     return str(key)
 
 
@@ -1602,7 +1636,10 @@ def _cell_name(cell):
 # Bumped whenever score_images changes what it computes or what it says. A stored
 # report carrying an older number, or none at all, was written by a scorer that no
 # longer exists, and the sentences in it are the ones a round is asked to act on.
-SCORER_VERSION = 1
+# Bumped to 2 when the empty-container sentence started naming where the boxes are:
+# nothing about the numbers changed, and a report that still gave only a size range
+# would have gone on being read out for the rest of every run already on disk.
+SCORER_VERSION = 2
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,

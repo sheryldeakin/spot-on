@@ -1991,8 +1991,9 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         self.assertTrue(so.ICON_RULE.startswith("Bash(" + so.ICON_CMD))
         self.assertIn(so.ICON_CMD, so.MATERIALS_DEFAULT)
         self.assertNotIn(str(so.ICON_TOOL), so.MATERIALS_DEFAULT)
-        found = [{"w": 90, "h": 82, "n": 3}, {"w": 40, "h": 40, "n": 5},
-                 {"w": 27, "h": 27, "n": 7}]
+        found = [{"x": 10, "y": 20, "w": 90, "h": 82, "n": 3},
+                 {"x": 30, "y": 40, "w": 40, "h": 40, "n": 5},
+                 {"x": 50, "y": 60, "w": 27, "h": 27, "n": 7}]
         self.assertIn(so.ICON_CMD, so._hollow_summary(found))
 
     def test_the_shim_points_at_the_real_script_by_absolute_path(self):
@@ -2000,6 +2001,82 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         path = so.write_icon_shim(self.tmp)
         self.assertIn(str(so.ICON_TOOL), path.read_text(encoding="utf-8"))
         self.assertTrue(so.ICON_TOOL.is_absolute())
+
+
+class TheEmptyBoxesAreNamedWhereTheyAre(unittest.TestCase):
+    """The one item a round can actually close was the only one with no position."""
+
+    def found(self, n=3):
+        return [{"x": 100 + 40 * i, "y": 200 + 30 * i, "w": 40 - i, "h": 30 - i, "n": 1}
+                for i in range(n)]
+
+    def test_every_box_is_named_by_position(self):
+        # Regression: it gave a count and a size range and no positions at all, while
+        # every other line in the report carries an x and a y. Handed the same report
+        # with the boxes listed, a round that had left the count unmoved for six
+        # rounds closed three of the seven places and took three new icons from the
+        # set. The score did not move either way: this is about the job getting done.
+        line = so._hollow_summary(self.found())
+        for f in self.found():
+            self.assertIn("x {} y {}".format(f["x"], f["y"]), line)
+
+    def test_it_says_filling_them_all_is_one_change(self):
+        # The round is told to change at most three things, so "fill all seven of
+        # these" reads as a rule it cannot keep, and it kept neither.
+        line = so._hollow_summary(self.found(7))
+        self.assertIn("counts as one change", line)
+
+    def test_boxes_sharing_a_place_are_counted_not_repeated(self):
+        found = self.found()
+        found[0]["n"] = 4
+        line = so._hollow_summary(found)
+        self.assertIn("6 boxes in all", line)
+        self.assertIn("4 side by side", line)
+
+    def test_a_page_full_of_them_does_not_list_every_one(self):
+        line = so._hollow_summary(self.found(so.HOLLOW_NAMED + 5))
+        self.assertIn("and 5 more", line)
+        self.assertLessEqual(line.count("x 1"), so.HOLLOW_NAMED + 1)
+
+    def test_the_biggest_are_the_ones_named(self):
+        line = so._hollow_summary(self.found(so.HOLLOW_NAMED + 3))
+        self.assertIn("x 100 y 200", line)          # 40x30, the largest
+        self.assertNotIn("x 580 y 560", line)       # 28x18, the smallest
+
+    def test_two_of_them_is_still_two_sentences_not_a_summary(self):
+        self.assertIsNone(so._hollow_summary(self.found(2)))
+
+
+class EmptyBoxesAndPanelFillCanBePressed(unittest.TestCase):
+    """Both were invisible to the mechanism that says "you were asked already"."""
+
+    def report(self, **els):
+        return {"components": {"coverage": 100, "colour": 100}, "raw": {},
+                "offsets": {}, "elements": els}
+
+    def test_empty_containers_are_a_fault_that_can_survive_a_round(self):
+        # Regression: a page carried the same empty containers for fifteen rounds
+        # and was never once told it had been asked already, because the key did not
+        # exist. It was the only actionable item in the report's top three.
+        self.assertIn(("hollow",), so.problem_keys(self.report(hollow=[{"x": 1}])))
+        self.assertNotIn(("hollow",), so.problem_keys(self.report(hollow=[])))
+
+    def test_so_is_a_panel_at_the_wrong_alpha(self):
+        self.assertIn(("fill",), so.problem_keys(self.report(fill=[{"x": 1}])))
+        self.assertNotIn(("fill",), so.problem_keys(self.report(fill=[])))
+
+    def test_the_key_does_not_change_as_boxes_get_filled(self):
+        # Keyed without a count, so filling four of seven leaves the same fault
+        # rather than looking like a new one that has survived nothing.
+        many = so.problem_keys(self.report(hollow=[{"x": i} for i in range(7)]))
+        few = so.problem_keys(self.report(hollow=[{"x": 1}]))
+        self.assertEqual(many, few)
+
+    def test_both_have_words_to_be_named_by(self):
+        self.assertEqual(so.stuck_phrase(("hollow",)), "the containers drawn empty")
+        self.assertEqual(so.stuck_phrase(("fill",)), "the panels at the wrong alpha")
+        for key in (("hollow",), ("fill",)):
+            self.assertNotIn("(", so.stuck_phrase(key), "the raw key leaked into the prompt")
 
 
 class WhichIconsThePageActuallyUses(unittest.TestCase):
@@ -2341,8 +2418,9 @@ class TheIconSetIsBundled(unittest.TestCase):
         self.assertTrue(so.ICON_TOOL.exists())
 
     def test_the_empty_container_line_points_at_it(self):
-        found = [{"w": 90, "h": 82, "n": 3}, {"w": 40, "h": 40, "n": 5},
-                 {"w": 27, "h": 27, "n": 7}]
+        found = [{"x": 10, "y": 20, "w": 90, "h": 82, "n": 3},
+                 {"x": 30, "y": 40, "w": 40, "h": 40, "n": 5},
+                 {"x": 50, "y": 60, "w": 27, "h": 27, "n": 7}]
         line = so._hollow_summary(found)
         self.assertIn(so.ICON_CMD, line)
         self.assertIn("15 boxes in all", line)
