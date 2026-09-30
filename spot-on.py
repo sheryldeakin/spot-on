@@ -1068,10 +1068,11 @@ def _hollow_summary(found):
     biggest = max(found, key=lambda f: f["w"] * f["h"])
     return ("{} places on the page draw a container the right size in the right place and "
             "leave it empty, {} boxes in all, from {}x{}px down to {}x{}px. The design puts an "
-            "icon or a glyph in each. This is one job, not {} separate ones: pick an icon set or "
-            "draw them as inline SVG and fill them all.".format(
+            "icon or a glyph in each. This is one job, not {} separate ones: take them from "
+            "the bundled set ({}) and fill them all "
+            "from it, so they match each other.".format(
                 len(found), boxes, biggest["w"], biggest["h"],
-                min(f["w"] for f in found), min(f["h"] for f in found), boxes))
+                min(f["w"] for f in found), min(f["h"] for f in found), boxes, ICON_TOOL))
 
 
 def _hollow_sentence(f):
@@ -3227,15 +3228,25 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
 # Offered as the starting value, so the field is not an empty box nobody knows how to
 # fill. Everything here is drawn by the page itself: nothing is fetched, so a run stays
 # reproducible and nobody's licence is borrowed by accident.
+# Absolute, because a round runs with its working directory set to the run's own
+# folder rather than the tool's, so a relative path would point at nothing.
+ICON_TOOL = Path(__file__).resolve().parent / "scripts" / "icon.py"
+
 MATERIALS_DEFAULT = (
-    "Inline SVG for icons and for any curved or radial shape (gauges, rings, arcs, "
-    "wifi and signal glyphs). CSS conic-gradient and radial-gradient for dials and "
+    "A consistent icon set is bundled and offline: run "
+    "`python '{tool}' --find <word>` to search it by name or keyword, then "
+    "`python '{tool}' <name> [<name>...] --size N --stroke '#RRGGBB'` for markup to "
+    "paste straight in. Take every icon on the page from it rather than drawing them "
+    "one at a time, which is how a page ends up with glyphs that do not match each "
+    "other. Inline SVG for any curved or radial shape it does not cover: gauges, "
+    "rings, arcs, signal bars. CSS conic-gradient and radial-gradient for dials and "
     "glows, blur and rgba fills for translucent panels. Prefer drawing inline, so the "
     "page stays self-contained. The one exception is a real 3D object: WebGL renders "
     "here and three.js from a CDN works, so build it as one rather than faking it flat. "
     "Render a single frame and do not animate, because anything still moving between "
     "screenshots is excluded from the score rather than matched against the design."
-)
+).format(tool=ICON_TOOL)
+
 
 STARTERS = {
     "url": "http://localhost:5173/",

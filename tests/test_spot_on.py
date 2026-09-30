@@ -1789,6 +1789,68 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
 
 
+class TheIconSetIsBundled(unittest.TestCase):
+    """One consistent set, offline, instead of a glyph invented per empty well."""
+
+    def tool(self, *args):
+        out = subprocess.run([sys.executable, str(TOOL.parent / "scripts" / "icon.py")] + list(args),
+                             capture_output=True, text=True, encoding="utf-8")
+        return out.returncode, (out.stdout or ""), (out.stderr or "")
+
+    def test_the_index_is_there_with_its_licence(self):
+        idx = TOOL.parent / "assets" / "icons" / "lucide.json"
+        self.assertTrue(idx.exists(), "no icon index")
+        self.assertTrue((TOOL.parent / "assets" / "icons" / "LICENSE-lucide").exists(),
+                        "the set is vendored without its licence")
+        doc = json.loads(idx.read_text(encoding="utf-8"))
+        self.assertEqual(doc["license"], "ISC")
+        self.assertGreater(len(doc["icons"]), 1000)
+        for needed in ("house", "calendar", "settings", "wifi", "cpu"):
+            self.assertIn(needed, doc["icons"], needed)
+
+    def test_an_icon_comes_back_ready_to_paste(self):
+        code, out, _ = self.tool("house")
+        self.assertEqual(code, 0)
+        self.assertIn("<svg", out)
+        self.assertIn("</svg>", out)
+        self.assertIn("viewBox", out)
+        # Inlined, never fetched: a run must not depend on the network to render.
+        self.assertNotIn("http://", out.replace("http://www.w3.org/2000/svg", ""))
+
+    def test_size_and_colour_can_be_set_to_match_the_design(self):
+        code, out, _ = self.tool("house", "--size", "34", "--stroke", "#7FD4F5",
+                                 "--stroke-width", "1.5")
+        self.assertEqual(code, 0)
+        self.assertIn('width="34"', out)
+        self.assertIn('stroke="#7FD4F5"', out)
+        self.assertIn('stroke-width="1.5"', out)
+
+    def test_searching_finds_an_icon_by_meaning_not_only_by_name(self):
+        code, out, _ = self.tool("--find", "weather")
+        self.assertEqual(code, 0)
+        self.assertTrue(out.strip(), "no hits for a word that is a tag rather than a name")
+
+    def test_a_name_that_is_not_there_says_so_and_suggests(self):
+        code, _, err = self.tool("deffinitelynotanicon")
+        self.assertEqual(code, 1)
+        self.assertIn("no icon called", err)
+
+    def test_every_round_is_told_the_set_exists(self):
+        self.assertIn("icon set is bundled", so.MATERIALS_DEFAULT)
+        # Absolute: a round runs in its own run folder, not the tool's.
+        self.assertIn(str(so.ICON_TOOL), so.MATERIALS_DEFAULT)
+        self.assertTrue(so.ICON_TOOL.is_absolute())
+        self.assertTrue(so.ICON_TOOL.exists())
+
+    def test_the_empty_container_line_points_at_it(self):
+        found = [{"w": 90, "h": 82, "n": 3}, {"w": 40, "h": 40, "n": 5},
+                 {"w": 27, "h": 27, "n": 7}]
+        line = so._hollow_summary(found)
+        self.assertIn(str(so.ICON_TOOL), line)
+        self.assertIn("15 boxes in all", line)
+        self.assertIn("90x82px", line)
+
+
 class PanelFillIsMeasured(unittest.TestCase):
     """A translucent panel at the wrong alpha, which nothing else here could see."""
 
