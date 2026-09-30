@@ -2441,7 +2441,9 @@ def _b64(path):
 # installed as shims here, and the prompt carries the whole page source, so a real
 # rebuild goes over and the CLI dies with "The command line is too long." A trivial
 # prompt works, which is why this only showed up on a real page.
-ARG_SAFE_CHARS = 6000
+ARG_SAFE_CHARS = 6000       # kept: the point past which a prompt is worth a file
+CMD_SHIM_LIMIT = 8000       # cmd.exe dies at 8191; a .cmd or .bat shim goes through it
+CREATE_PROCESS_LIMIT = 31000  # CreateProcess dies at 32767; a real .exe goes through it
 
 
 def _prompt_on_disk(prompt, cwd):
@@ -2459,16 +2461,37 @@ def _run_cli_agent(agent, prompt, cwd, timeout=600):
     if exe is None and agent == "gemini":
         exe = str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
     prompt = NO_TOOLS_PREFACE.get(agent, "") + prompt
-    if len(prompt) > ARG_SAFE_CHARS and str(exe or "").lower().endswith((".cmd", ".bat")):
-        prompt = _prompt_on_disk(prompt, cwd)
-    if agent == "claude":
-        cmd = [exe, "-p", prompt, "--output-format", "json",
-               "--model", _model_for("claude"),
-               "--json-schema", json.dumps(ITERATE_SCHEMA)]
-    elif agent == "codex":
-        cmd = [exe, "exec", "--skip-git-repo-check", prompt]
-    else:
-        cmd = [exe, "-p", prompt, "--print-timeout", "300s"]
+
+    def build(text):
+        if agent == "claude":
+            return [exe, "-p", text, "--output-format", "json",
+                    "--model", _model_for("claude"),
+                    "--json-schema", json.dumps(ITERATE_SCHEMA)]
+        if agent == "codex":
+            return [exe, "exec", "--skip-git-repo-check", text]
+        return [exe, "-p", text, "--print-timeout", "300s"]
+
+    # Measured against the whole command line, not the prompt alone, and against the
+    # limit of the launcher actually being used. A .cmd or .bat shim goes through
+    # cmd.exe and dies at 8191 characters; a real .exe goes through CreateProcess and
+    # dies at 32767. The old rule only rescued the shims, on the reasoning that 32767
+    # was out of reach. The report has since grown element scores and several more
+    # sentences, and a real page now clears it: 32185 characters of prompt against a
+    # 22787-character attempt, which failed as WinError 206 rather than anything that
+    # named the cause.
+    shim = str(exe or "").lower().endswith((".cmd", ".bat"))
+    limit = CMD_SHIM_LIMIT if shim else CREATE_PROCESS_LIMIT
+    cmd = build(prompt)
+    if sum(len(part) + 3 for part in cmd) > limit:
+        if not CLI_READS_FILES.get(agent, False):
+            # Nothing left to try: it cannot take an argument this long and cannot be
+            # sent to read a file. Say so, rather than let the launcher fail obscurely.
+            raise RuntimeError(
+                "the prompt is {} characters, past the {} that {} can take on a command "
+                "line, and it cannot be asked to read a file instead. Shorten the run's "
+                "code or use an agent that reads files.".format(
+                    len(prompt), limit, AGENT_LABELS[agent]))
+        cmd = build(_prompt_on_disk(prompt, cwd))
     # A CLI with an open stdin can wait forever for input that never comes.
     with open(os.devnull, "rb") as devnull:
         proc = _run_tree(cmd, timeout, cwd=str(cwd), stdin=devnull,

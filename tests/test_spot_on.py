@@ -943,14 +943,14 @@ class LongPromptsSurviveWindowsShims(unittest.TestCase):
         # Regression: it reached for a tool unprompted, headless mode auto-denied the
         # permission, and it returned nothing at all with the reason only on stderr.
         # Every round silently came back a draft short.
-        so.shutil.which = lambda name: "C:\bin\agy.exe"
+        so.shutil.which = lambda name: "C:/bin/agy.exe"
         so._run_cli_agent("gemini", "make it match", self.tmp)
         sent = " ".join(str(c) for c in self.seen["cmd"])
         self.assertIn("Do not use any tools", sent)
         self.assertIn("make it match", sent)
 
     def test_the_others_are_not_told_that(self):
-        so.shutil.which = lambda name: "C:\bin\claude.exe"
+        so.shutil.which = lambda name: "C:/bin/claude.exe"
         so._run_cli_agent("claude", "make it match", self.tmp)
         self.assertNotIn("Do not use any tools", " ".join(str(c) for c in self.seen["cmd"]))
 
@@ -961,6 +961,42 @@ class LongPromptsSurviveWindowsShims(unittest.TestCase):
         so._run_cli_agent("claude", long_prompt, self.tmp)
         self.assertIn(long_prompt, self.seen["cmd"])
         self.assertFalse((self.tmp / "prompt.txt").exists())
+
+
+    def test_a_real_executable_also_has_a_limit_and_a_real_page_reaches_it(self):
+        # Regression, the second time this bit. The earlier fix rescued only .cmd and
+        # .bat shims, reasoning that CreateProcess's 32767 was out of reach. Then the
+        # report grew element scores and several more sentences, and the hud-concept
+        # rerun died with WinError 206: 32185 characters of prompt around a 22787
+        # character attempt, on claude.exe, which is not a shim.
+        so.shutil.which = lambda name: "C:/bin/claude.exe"
+        huge = "filler " * 5000
+        self.assertGreater(len(huge), so.CREATE_PROCESS_LIMIT)
+        so._run_cli_agent("claude", huge, self.tmp)
+        passed = " ".join(str(c) for c in self.seen["cmd"])
+        self.assertIn("prompt.txt", passed)
+        self.assertLess(len(passed), so.CREATE_PROCESS_LIMIT)
+        self.assertEqual((self.tmp / "prompt.txt").read_text(encoding="utf-8"), huge)
+
+    def test_the_limit_is_measured_on_the_whole_command_line(self):
+        # claude's command line carries the json schema and the model name as well as
+        # the prompt, so a prompt just under the limit still puts the line over it.
+        so.shutil.which = lambda name: "C:/bin/claude.exe"
+        near = "x" * (so.CREATE_PROCESS_LIMIT - 200)
+        so._run_cli_agent("claude", near, self.tmp)
+        self.assertIn("prompt.txt", " ".join(str(c) for c in self.seen["cmd"]))
+
+    def test_an_agent_that_cannot_read_files_says_so_instead_of_failing_obscurely(self):
+        # gemini is told not to use tools, so it cannot be pointed at prompt.txt. With
+        # no argument long enough and no file to read, the honest move is an error that
+        # names the reason rather than whatever the launcher happens to raise.
+        so.shutil.which = lambda name: "C:/npm/gemini.CMD"
+        huge = "filler " * 5000
+        with self.assertRaises(RuntimeError) as caught:
+            so._run_cli_agent("gemini", huge, self.tmp)
+        said = str(caught.exception)
+        self.assertIn("cannot be asked to read a file", said)
+        self.assertIn(str(len(huge) + len(so.NO_TOOLS_PREFACE["gemini"])), said)
 
 
 class PanelOfModels(unittest.TestCase):
