@@ -1927,6 +1927,179 @@ class MaterialsDoNotGoStale(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TheRoundCanRunTheIconScript(unittest.TestCase):
+    """Bundling a set the round is not allowed to run is the same as not bundling it."""
+
+    def setUp(self):
+        self.saved_run, self.saved_which = so._run_tree, so.shutil.which
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-perm-"))
+        self.seen = {}
+
+        def fake(cmd, timeout=None, **kw):
+            self.seen["cmd"] = cmd
+
+            class R:
+                returncode = 0
+                stdout = "```\n<svg>ok</svg>\n```"
+                stderr = ""
+            return R()
+
+        so._run_tree = fake
+        so.shutil.which = lambda name: "C:/bin/claude.exe"
+
+    def tearDown(self):
+        so._run_tree, so.shutil.which = self.saved_run, self.saved_which
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_one_command_is_permitted(self):
+        # Regression: twelve rounds in a row were told the icon set was there, and
+        # every one of them answered that icon.py needed an approval it could not get
+        # and hand-drew its glyphs instead. Headless mode auto-denies anything that
+        # asks, so the set was advertised and unusable.
+        so._run_cli_agent("claude", "make it match", self.tmp)
+        cmd = [str(c) for c in self.seen["cmd"]]
+        self.assertIn("--allowedTools", cmd)
+        self.assertEqual(cmd[cmd.index("--allowedTools") + 1], so.ICON_RULE)
+
+    def test_and_nothing_else_is(self):
+        # The CLI's own suggestion is --dangerously-skip-permissions, which approves
+        # every tool on the machine to get one page of HTML back.
+        so._run_cli_agent("claude", "make it match", self.tmp)
+        passed = " ".join(str(c) for c in self.seen["cmd"])
+        self.assertNotIn("dangerously", passed)
+        self.assertNotIn("bypassPermissions", passed)
+        self.assertNotIn("acceptEdits", passed)
+        # One rule, naming one command, not a bare tool name that would allow any.
+        self.assertTrue(so.ICON_RULE.startswith("Bash(python icons.py"), so.ICON_RULE)
+        self.assertNotEqual(so.ICON_RULE, "Bash")
+
+    def test_the_shim_is_there_to_be_run(self):
+        so._run_cli_agent("claude", "make it match", self.tmp)
+        shim = self.tmp / so.ICON_SHIM
+        self.assertTrue(shim.exists(), "the permitted command names a file that is not there")
+        out = subprocess.run([sys.executable, so.ICON_SHIM, "house"], cwd=str(self.tmp),
+                             capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("<svg", out.stdout)
+
+    def test_what_the_round_is_told_to_type_is_what_is_allowed(self):
+        # The rule matches the literal text of the command, so the sentence that asks
+        # for it and the rule that permits it cannot be allowed to drift apart.
+        self.assertTrue(so.ICON_RULE.startswith("Bash(" + so.ICON_CMD))
+        self.assertIn(so.ICON_CMD, so.MATERIALS_DEFAULT)
+        self.assertNotIn(str(so.ICON_TOOL), so.MATERIALS_DEFAULT)
+        found = [{"w": 90, "h": 82, "n": 3}, {"w": 40, "h": 40, "n": 5},
+                 {"w": 27, "h": 27, "n": 7}]
+        self.assertIn(so.ICON_CMD, so._hollow_summary(found))
+
+    def test_the_shim_points_at_the_real_script_by_absolute_path(self):
+        # It is written into the run folder, which is not the tool's folder.
+        path = so.write_icon_shim(self.tmp)
+        self.assertIn(str(so.ICON_TOOL), path.read_text(encoding="utf-8"))
+        self.assertTrue(so.ICON_TOOL.is_absolute())
+
+
+class AStaleReportIsRefreshedBeforeARoundReadsIt(unittest.TestCase):
+    """A stored report is the list of faults a round is asked to fix."""
+
+    def setUp(self):
+        self.saved = so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-stale-"))
+        so.RUNS_DIR = self.tmp
+        so.create_run("stale", "html", reference_bytes=_png_bytes(DESIGN))
+        self.d = self.tmp / "stale" / "attempts"
+        CASES["close"].save(self.d / "001.png")
+        (self.d / "001.code").write_text("<div></div>", encoding="utf-8")
+
+    def tearDown(self):
+        so.RUNS_DIR = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write(self, report, match=None):
+        rec = {"n": 1, "match": match if match is not None else report["match"],
+               "report": report}
+        (self.d / "001.json").write_text(json.dumps(rec), encoding="utf-8")
+        return rec
+
+    def test_a_report_from_an_older_scorer_is_rescored(self):
+        # Regression: the hud-concept rerun was set up to test a reordered problem
+        # list, and its first round was handed the order from before the change,
+        # because the base attempt's report was the copy stored on the day it ran.
+        old = score("close")
+        old["problems"] = ["something the scorer no longer says"]
+        del old["scorer"]
+        self.write(old)
+        base, _ = so.iteration_base(so._attempts("stale"), "stale")
+        self.assertEqual(base["report"]["scorer"], so.SCORER_VERSION)
+        self.assertNotIn("something the scorer no longer says", base["report"]["problems"])
+
+    def test_a_current_report_is_left_alone(self):
+        fresh = score("close")
+        fresh["problems"] = ["kept verbatim"]
+        self.write(fresh)
+        base, _ = so.iteration_base(so._attempts("stale"), "stale")
+        self.assertEqual(base["report"]["problems"], ["kept verbatim"])
+
+    def test_the_number_is_kept_when_a_rescore_moves_it(self):
+        # Ranking across a run only means anything while every attempt in it was
+        # scored the same way. Refreshing one attempt's number is how a run ends up
+        # comparing two metrics, which is what reported a false +1.3 once already.
+        old = score("close")
+        del old["scorer"]
+        self.write(old, match=old["match"] + 9.0)
+        base, _ = so.iteration_base(so._attempts("stale"), "stale")
+        self.assertAlmostEqual(base["match"], old["match"] + 9.0)
+        self.assertAlmostEqual(base["report"]["match"], old["match"] + 9.0)
+        self.assertAlmostEqual(base["rescored_from"], old["match"] + 9.0)
+        self.assertEqual(so._load_run("stale").get("rescore_needed"), [1],
+                         "a run whose numbers came from two scorers says so")
+
+    def test_a_run_whose_numbers_still_agree_is_not_flagged(self):
+        old = score("close")
+        del old["scorer"]
+        self.write(old)
+        so.iteration_base(so._attempts("stale"), "stale")
+        self.assertIsNone(so._load_run("stale").get("rescore_needed"))
+
+    def test_the_refresh_is_written_down_not_redone_every_round(self):
+        old = score("close")
+        del old["scorer"]
+        self.write(old)
+        so.iteration_base(so._attempts("stale"), "stale")
+        stored = json.loads((self.d / "001.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["report"]["scorer"], so.SCORER_VERSION)
+        calls = []
+        saved = so.score_images
+        so.score_images = lambda *a, **k: calls.append(1) or saved(*a, **k)
+        try:
+            so.iteration_base(so._attempts("stale"), "stale")
+        finally:
+            so.score_images = saved
+        self.assertEqual(calls, [], "a fresh report was scored again")
+
+    def test_a_missing_render_leaves_the_old_report_standing(self):
+        old = score("close")
+        del old["scorer"]
+        self.write(old)
+        (self.d / "001.png").unlink()
+        base, _ = so.iteration_base(so._attempts("stale"), "stale")
+        self.assertNotIn("scorer", base["report"])
+
+    def test_the_caller_that_only_wants_the_best_attempt_touches_nothing(self):
+        old = score("close")
+        del old["scorer"]
+        self.write(old)
+        base, _ = so.iteration_base(so._attempts("stale"))
+        self.assertNotIn("scorer", base["report"])
+        stored = json.loads((self.d / "001.json").read_text(encoding="utf-8"))
+        self.assertNotIn("scorer", stored["report"])
+
+    def test_every_report_says_which_scorer_wrote_it(self):
+        self.assertEqual(score("close")["scorer"], so.SCORER_VERSION)
+        shallow, _, _ = so.score_images(DESIGN, CASES["close"], deep=False)
+        self.assertEqual(shallow["scorer"], so.SCORER_VERSION)
+
+
 class TheIconSetIsBundled(unittest.TestCase):
     """One consistent set, offline, instead of a glyph invented per empty well."""
 
@@ -1975,16 +2148,18 @@ class TheIconSetIsBundled(unittest.TestCase):
 
     def test_every_round_is_told_the_set_exists(self):
         self.assertIn("icon set is bundled", so.MATERIALS_DEFAULT)
-        # Absolute: a round runs in its own run folder, not the tool's.
-        self.assertIn(str(so.ICON_TOOL), so.MATERIALS_DEFAULT)
-        self.assertTrue(so.ICON_TOOL.is_absolute())
+        # Named as the command the round is permitted to run, which is a fixed
+        # relative name: the absolute path lives in the shim that name points at,
+        # because a permission rule matches the literal text of a command and an
+        # absolute Windows path has several spellings that all mean the same thing.
+        self.assertIn(so.ICON_CMD, so.MATERIALS_DEFAULT)
         self.assertTrue(so.ICON_TOOL.exists())
 
     def test_the_empty_container_line_points_at_it(self):
         found = [{"w": 90, "h": 82, "n": 3}, {"w": 40, "h": 40, "n": 5},
                  {"w": 27, "h": 27, "n": 7}]
         line = so._hollow_summary(found)
-        self.assertIn(str(so.ICON_TOOL), line)
+        self.assertIn(so.ICON_CMD, line)
         self.assertIn("15 boxes in all", line)
         self.assertIn("90x82px", line)
 

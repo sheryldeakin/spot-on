@@ -1072,7 +1072,7 @@ def _hollow_summary(found):
             "the bundled set ({}) and fill them all "
             "from it, so they match each other.".format(
                 len(found), boxes, biggest["w"], biggest["h"],
-                min(f["w"] for f in found), min(f["h"] for f in found), boxes, ICON_TOOL))
+                min(f["w"] for f in found), min(f["h"] for f in found), boxes, ICON_CMD))
 
 
 def _hollow_sentence(f):
@@ -1599,6 +1599,12 @@ def _cell_name(cell):
     return "{}, {}".format(_ROW_WORDS[cell["row"]], _COL_WORDS[cell["col"]])
 
 
+# Bumped whenever score_images changes what it computes or what it says. A stored
+# report carrying an older number, or none at all, was written by a scorer that no
+# longer exists, and the sentences in it are the ones a round is asked to act on.
+SCORER_VERSION = 1
+
+
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
                  regions=True, deep=True, how=None):
     """Compare two same-size RGB images and return the full score report.
@@ -1728,6 +1734,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     worst = sorted(cells, key=lambda c: -c["rmse"])[:3]
 
     report = {
+        "scorer": SCORER_VERSION,
         "match": round(match, 1),
         "components": {
             "structure": round(structure, 1),
@@ -2544,11 +2551,21 @@ def _run_cli_agent(agent, prompt, cwd, timeout=600, schema=True):
     if exe is None and agent == "gemini":
         exe = str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
     prompt = NO_TOOLS_PREFACE.get(agent, "") + prompt
+    # `python icons.py` only means anything from the folder the round runs in.
+    write_icon_shim(cwd)
 
     def build(text):
         if agent == "claude":
             cmd = [exe, "-p", text, "--output-format", "json",
-                   "--model", _model_for("claude")]
+                   "--model", _model_for("claude"),
+                   # Headless mode auto-denies every tool that needs approval, so the
+                   # bundled icon set was advertised to twelve rounds in a row and run
+                   # by none of them: each one said so and hand-drew its glyphs
+                   # instead. This permits exactly one command and leaves everything
+                   # else denied, which --dangerously-skip-permissions would not:
+                   # that auto-approves every tool on the machine to make one page of
+                   # HTML come back.
+                   "--allowedTools", ICON_RULE]
             # The iteration schema asks for {code, changes}. A caller after prose gets
             # its answer wrapped in a code field if it is left on.
             return cmd + (["--json-schema", json.dumps(ITERATE_SCHEMA)] if schema else [])
@@ -2649,14 +2666,20 @@ def rejected_changes(history, base, limit=6):
     return out
 
 
-def iteration_base(history):
+def iteration_base(history, slug=None):
     """The attempt the next round builds on: the best so far, not the latest.
 
     A round that scores lower is a failed experiment. Building on it compounds the
     mistake, which is exactly what happens when a person keeps saying "closer".
+
+    Given the run it belongs to, the base's report is brought up to the current scorer
+    before it is handed over, because it is about to be read out to a model as the list
+    of things to fix. See refresh_report.
     """
     best = max(history, key=lambda a: (a["match"], a["n"]))
     latest = history[-1]
+    if slug is not None:
+        best = refresh_report(slug, best)
     return best, (latest if latest["n"] != best["n"] else None)
 
 
@@ -2852,7 +2875,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     history = _attempts(slug)
     if not history:
         raise ValueError("render a first attempt before iterating")
-    base, discarded = iteration_base(history)
+    base, discarded = iteration_base(history, slug)
     n = base["n"]
     code = (d / "attempts" / "{:03d}.code".format(n)).read_text(encoding="utf-8")
     report = base["report"]
@@ -3032,6 +3055,58 @@ def _unstable_mask(slug, run, code):
     if mask_file.exists():
         return np.asarray(Image.open(mask_file).convert("L")) > 127
     return None
+
+
+def refresh_report(slug, att):
+    """Bring one attempt's report up to the current scorer, keeping its number.
+
+    A report is stored on the attempt that produced it and never looked at again, so a
+    round reads whatever the scorer said on the day. That went wrong twice: once when
+    the colour metric changed under a stored score, and once when the problems were
+    reordered and the round that was meant to test the new order was handed the old
+    one. Re-scoring is cheap (about a second) and only the attempt a round builds on
+    needs it, so it happens here rather than in a pass over the whole run.
+
+    The number is deliberately left alone. Ranking across a run's history only means
+    something while every attempt in it was scored the same way, and refreshing one
+    attempt's number is exactly how a run ends up comparing two metrics. When a
+    re-score does move the number, that is recorded and the run is flagged: the
+    sentences are worth fixing now, the numbers need a pass over every attempt.
+    """
+    report = att.get("report") or {}
+    if report.get("scorer") == SCORER_VERSION:
+        return att
+    d = _run_dir(slug)
+    png = d / "attempts" / "{:03d}.png".format(att["n"])
+    code_file = d / "attempts" / "{:03d}.code".format(att["n"])
+    if not png.exists() or not code_file.exists():
+        return att            # nothing to re-score against; the old report stands
+    run = _load_run(slug)
+    ref_img = Image.open(d / "reference.png").convert("RGB")
+    att_img = Image.open(png).convert("RGB")
+    px_per_css = run["width"] / float(run.get("css_width", run["width"]))
+    fresh, _, _ = score_images(ref_img, att_img, px_per_css=px_per_css,
+                               ignore=_unstable_mask(slug, run, code_file.read_text(encoding="utf-8")),
+                               design_fonts=run.get("design_fonts"))
+    stored = att["match"]
+    if abs(fresh["match"] - stored) > 1e-9:
+        att["rescored_from"] = stored
+        fresh["match"] = stored
+        _flag_rescore_needed(slug, att["n"])
+    att["report"] = fresh
+    (d / "attempts" / "{:03d}.json".format(att["n"])).write_text(
+        json.dumps(att, indent=2), encoding="utf-8")
+    return att
+
+
+def _flag_rescore_needed(slug, n):
+    """Note that this run's stored numbers were made by more than one scorer."""
+    with _run_lock(slug):
+        run = _load_run(slug)
+        seen = set(run.get("rescore_needed") or [])
+        seen.add(n)
+        run["rescore_needed"] = sorted(seen)
+        _save_run(slug, run)
 
 
 def record_attempt(slug, code, source="manual", changes="", meta=None):
@@ -3244,10 +3319,34 @@ def create_run(name, kind, reference_bytes=None, reference_path=None, scale=1.0,
 # folder rather than the tool's, so a relative path would point at nothing.
 ICON_TOOL = Path(__file__).resolve().parent / "scripts" / "icon.py"
 
+# A round runs in its own run folder and cannot be handed a permission rule for an
+# absolute Windows path: the rule is matched against the literal text of the command,
+# and the same path has several spellings (quoted, unquoted, backslash, forward slash)
+# that all mean the same thing and only one of which matches. A fixed relative name has
+# one spelling. So each round gets a two-line shim written beside its attempt, and the
+# rule names that.
+ICON_SHIM = "icons.py"
+ICON_CMD = "python " + ICON_SHIM
+ICON_RULE = "Bash({}:*)".format(ICON_CMD)
+ICON_SHIM_SOURCE = '''# Written by Spot On for each round: a fixed name the permission rule can allow.
+import runpy, sys
+TOOL = r"{tool}"
+sys.argv[0] = TOOL
+runpy.run_path(TOOL, run_name="__main__")
+'''
+
+
+def write_icon_shim(cwd):
+    """Put the icon script within one permitted command of the round's folder."""
+    path = Path(cwd) / ICON_SHIM
+    path.write_text(ICON_SHIM_SOURCE.format(tool=ICON_TOOL), encoding="utf-8")
+    return path
+
+
 MATERIALS_DEFAULT = (
     "A consistent icon set is bundled and offline: run "
-    "`python '{tool}' --find <word>` to search it by name or keyword, then "
-    "`python '{tool}' <name> [<name>...] --size N --stroke '#RRGGBB'` for markup to "
+    "`{cmd} --find <word>` to search it by name or keyword, then "
+    "`{cmd} <name> [<name>...] --size N --stroke '#RRGGBB'` for markup to "
     "paste straight in. Take every icon on the page from it rather than drawing them "
     "one at a time, which is how a page ends up with glyphs that do not match each "
     "other. Inline SVG for any curved or radial shape it does not cover: gauges, "
@@ -3257,7 +3356,7 @@ MATERIALS_DEFAULT = (
     "here and three.js from a CDN works, so build it as one rather than faking it flat. "
     "Render a single frame and do not animate, because anything still moving between "
     "screenshots is excluded from the score rather than matched against the design."
-).format(tool=ICON_TOOL)
+).format(cmd=ICON_CMD)
 
 
 NEEDS_PROMPT = (
@@ -4858,7 +4957,7 @@ class Handler(BaseHTTPRequestHandler):
                 history = _attempts(q["run"])
                 if not history:
                     raise ValueError("render a first attempt before iterating")
-                base, discarded = iteration_base(history)
+                base, discarded = iteration_base(history, q["run"])
                 d = _run_dir(q["run"])
                 code = (d / "attempts" / "{:03d}.code".format(base["n"])).read_text(encoding="utf-8")
                 self._send_json(200, {
