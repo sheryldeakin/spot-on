@@ -1973,7 +1973,8 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         self.assertTrue(so.ICON_RULE.startswith("Bash(python icons.py"), so.ICON_RULE)
         self.assertNotEqual(so.ICON_RULE, "Bash")
         for rule in so.ICON_RULE.split(","):
-            self.assertRegex(rule, r"^Bash\(python3? (\./)?icons\.py:\*\)$", rule)
+            self.assertRegex(rule, r"^(Bash|PowerShell)\(python3? (\./|\.\\)?icons\.py:\*\)$",
+                             rule)
 
     def test_the_shim_is_there_to_be_run(self):
         so._run_cli_agent("claude", "make it match", self.tmp)
@@ -2079,14 +2080,22 @@ class WhichIconsThePageActuallyUses(unittest.TestCase):
 class TheSpellingsOfOneCommandAreAllPermitted(unittest.TestCase):
     """A rule matches text, so a command that means the same thing is a different one."""
 
-    def test_the_two_a_model_reaches_for_are_covered(self):
+    def test_the_spellings_a_model_reaches_for_are_covered(self):
         # Measured against the real CLI: `python icons.py house` ran, while
         # `python ./icons.py house` and `python3 icons.py house` were both refused
-        # under a rule naming only the first. One candidate ran the script while
-        # another in the same round reported it as not permitted.
+        # under a rule naming only the first.
         for spelling in ("python icons.py", "python ./icons.py",
                          "python3 icons.py", "python3 ./icons.py"):
             self.assertIn("Bash({}:*)".format(spelling), so.ICON_RULE, spelling)
+
+    def test_the_tool_it_reaches_for_first_on_windows_is_covered(self):
+        # Regression, read off a real round: it tried the PowerShell tool four times,
+        # was refused each time because only Bash was named, and only then fell back
+        # to Bash. Two candidates in one run gave up before getting that far and
+        # reported the script as not permitted.
+        self.assertIn("PowerShell(python icons.py:*)", so.ICON_RULE)
+        for tool in so.ICON_TOOLS:
+            self.assertIn("{}(python icons.py:*)".format(tool), so.ICON_RULE)
 
     def test_and_nothing_beyond_them(self):
         rules = so.ICON_RULE.split(",")
@@ -2094,9 +2103,11 @@ class TheSpellingsOfOneCommandAreAllPermitted(unittest.TestCase):
         for rule in rules:
             self.assertIn(so.ICON_SHIM, rule)
             # No rule may end the prefix before the script name, which would allow
-            # any python at all.
-            self.assertNotIn("Bash(python:*)", rule)
-            self.assertNotIn("Bash(python3:*)", rule)
+            # any python at all, and no rule may name a tool outright.
+            for tool in so.ICON_TOOLS:
+                self.assertNotIn("{}(python:*)".format(tool), rule)
+                self.assertNotIn("{}(python3:*)".format(tool), rule)
+                self.assertNotEqual(rule, tool)
 
     def test_the_round_is_told_it_may_run_it(self):
         # Regression: a candidate declined with "the file edit and script run were

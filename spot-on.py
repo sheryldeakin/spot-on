@@ -3349,16 +3349,21 @@ ICON_TOOL = Path(__file__).resolve().parent / "scripts" / "icon.py"
 # rule names that.
 ICON_SHIM = "icons.py"
 ICON_CMD = "python " + ICON_SHIM
-# A rule matches the literal start of the command, so a spelling that means the same
-# thing to the shell means nothing to the matcher. Measured: `python icons.py house`
-# runs, `python ./icons.py house` and `python3 icons.py house` are both refused, and
-# those are the two a model reaches for unprompted. One round ran the script while
-# another in the same round reported it as not permitted, which is what that looks
-# like from the outside. All four spellings of the same command are allowed; nothing
-# else is.
-ICON_SPELLINGS = ("python " + ICON_SHIM, "python ./" + ICON_SHIM,
-                  "python3 " + ICON_SHIM, "python3 ./" + ICON_SHIM)
-ICON_RULE = ",".join("Bash({}:*)".format(c) for c in ICON_SPELLINGS)
+# A rule matches the literal start of the command, under the name of the tool that
+# runs it, so the same command written another way is a different command. Read off a
+# real round rather than reasoned about: on Windows the first thing reached for is the
+# PowerShell tool, not Bash, and with only Bash named it was refused five times over
+# ("This PowerShell command contains multiple operations. The following part requires
+# approval: python icons.py --find sun") before falling back to Bash and working. A
+# round with a page to rebuild does not always spend five calls finding that out: two
+# candidates in one run gave up and reported the script as not permitted. The
+# spellings are the same reason one rule is not enough: `python icons.py house` ran
+# while `python ./icons.py house` and `python3 icons.py house` were both refused.
+ICON_TOOLS = ("Bash", "PowerShell")
+ICON_SPELLINGS = ("python {}", "python ./{}", "python .\\{}",
+                  "python3 {}", "python3 ./{}")
+ICON_RULE = ",".join("{}({}:*)".format(tool, spelling.format(ICON_SHIM))
+                     for tool in ICON_TOOLS for spelling in ICON_SPELLINGS)
 ICON_SHIM_SOURCE = '''# Written by Spot On for each round: a fixed name the permission rule can allow.
 import runpy, sys
 TOOL = r"{tool}"
