@@ -87,6 +87,7 @@ LAYOUT_TRUST = 0.8       # how far the ink profile is trusted against the pixels
 ELEMENT_SCORES = 8       # elements kept in the report, worst first
 ELEMENT_MIN = 16         # px; below this a box is a glyph, not something to be told about
 ELEMENT_BEHIND = 10      # points below the page score at which an element is worth naming
+FILL_DELTA = 3.0         # levels of surface brightness before a panel's fill is wrong
 ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
 ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
@@ -885,6 +886,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
             a["emphasis"] = _emphasis_metrics(g_att, a)
         d["inside"] = _interior_detail(g_ref, d)
         a["inside"] = _interior_detail(g_att, a)
+        d["fill"], a["fill"] = _fill_level(g_ref, d), _fill_level(g_att, a)
 
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
@@ -893,7 +895,8 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
             "type": _type_findings(matched, css, size),
             "alignment": _alignment(matched, css),
             "emphasis": _emphasis_findings(matched, css, size),
-            "hollow": _hollow(matched, css, size, limit=8)}
+            "hollow": _hollow(matched, css, size, limit=8),
+            "fill": _fill_findings(matched, css, size)}
 
 
 def _type_metrics(g, el):
@@ -942,6 +945,70 @@ def _interior_detail(g, el, inset=0.22):
     if crop.size < 40 or crop.shape[0] < 3 or crop.shape[1] < 3:
         return None
     return float(np.abs(np.diff(crop, axis=1)).mean() + np.abs(np.diff(crop, axis=0)).mean())
+
+
+def _fill_level(g, el, inset=0.18):
+    """How bright a container's own surface is, ignoring what is drawn on it.
+
+    Taken from inside the border and at the fortieth percentile, so the reading is the
+    panel itself rather than its text, its glyphs or its edge glow.
+    """
+    ix, iy = int(el["w"] * inset), int(el["h"] * inset)
+    crop = g[el["y"] + iy:el["y"] + el["h"] - iy, el["x"] + ix:el["x"] + el["w"] - ix]
+    return float(np.percentile(crop, 40)) if crop.size >= 200 else None
+
+
+def _fill_findings(matched, css, size, limit=2):
+    """Panels whose surface is the wrong brightness, which is usually the wrong alpha.
+
+    A translucent panel over a dark page is one of the things a rebuild gets close but
+    not right, and nothing else here can see it. Its geometry is correct, so no element
+    line fires; it holds too little of the page to move the palette, and it is not the
+    page behind the content, so neither colour sentence fires either. Measured on a
+    rebuilt dashboard every panel came out five to nine levels too light, consistently,
+    and the report said nothing at all.
+
+    Reported only when several panels are wrong the same way. One panel off is that
+    panel; four off in the same direction is the fill rule behind all of them.
+    """
+    seen = []
+    for d, a in matched:
+        if d["kind"] != "box" or d["w"] * d["h"] < 12000:
+            continue
+        want, got = d.get("fill"), a.get("fill")
+        if want is None or got is None:
+            continue
+        if abs(got - want) >= FILL_DELTA:
+            seen.append({"x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
+                         "h": css(d["h"]), "where": _where(d, size),
+                         "design": round(want, 1), "attempt": round(got, 1),
+                         "delta": round(got - want, 1)})
+    if len(seen) < 2:
+        return []
+    same = [f for f in seen if (f["delta"] > 0) == (seen[0]["delta"] > 0)]
+    if len(same) < 2:
+        return []
+    same.sort(key=lambda f: -abs(f["delta"]))
+    return same[:limit] + [{"n": len(same), "summary": True,
+                            "mean": round(sum(f["delta"] for f in same) / len(same), 1),
+                            "lighter": same[0]["delta"] > 0}]
+
+
+def _fill_sentence(found):
+    body = [f for f in found if not f.get("summary")]
+    tail = [f for f in found if f.get("summary")][0]
+    where = ", ".join("the {}x{}px panel at x {}, y {}".format(f["w"], f["h"], f["x"], f["y"])
+                      for f in body)
+    return (
+        "{} panels are the wrong shade: {} on a 0 to 255 scale, {} than the design by {:.1f} on "
+        "average. {} reads {:.1f} where the design reads {:.1f}. Their size and position are "
+        "right, so this is the fill rather than the layout: if they are translucent over the "
+        "page, the alpha is too {}; if they are solid, the fill colour is too {}."
+        .format(tail["n"], "brighter" if tail["lighter"] else "darker",
+                "lighter" if tail["lighter"] else "darker", abs(tail["mean"]),
+                where[0].upper() + where[1:], body[0]["attempt"], body[0]["design"],
+                "high" if tail["lighter"] else "low",
+                "light" if tail["lighter"] else "dark"))
 
 
 def _hollow(matched, css, size, limit=2):
@@ -2039,11 +2106,48 @@ def _problems(report):
                    "right place still differ in shape, so the font family or weight is wrong. Fix "
                    "the font before moving any boxes.".format(glyph["weak_share"] * 100))
         said.add("type")
+        # This is the one type line that stays above the absent things below it: the
+        # wrong family makes every box around it measure wrong too, so fixing it first
+        # deletes complaints rather than adding one. The per-element type details do
+        # not cascade like that, and they now sit underneath.
         fonts = report.get("design_fonts") or []
         if fonts:
             out.append("The design's own source asks for {}. Use that rather than guessing from "
                        "the letter shapes; if it is not installed, say so instead of "
                        "substituting.".format(", ".join(fonts)))
+
+    # Empty containers, and the panels whose fill is wrong, come before the element
+    # geometry. Both used to sit below it and neither was ever reached. The list is read
+    # in order and a round changes at most three things, so position is priority, and
+    # ranking by geometric magnitude put "this box is 4% narrow" above "seven icon wells
+    # are empty" and "every panel is the wrong shade". A thing that is absent, or wrong
+    # everywhere at once, is worth more than a thing that is present and slightly off.
+    hollow_findings = els.get("hollow") or []
+    art_cells = set()
+    if report.get("artwork"):
+        art_cells = {tuple(c) for c in report["artwork"].get("cells", [])}
+    if art_cells:
+        # Only a large element sitting in artwork defers to the artwork line. The cells
+        # are coarse, so a photographic background puts half the page inside one, and
+        # filtering on the cell alone silenced a row of empty icon wells that had
+        # nothing to do with the artwork.
+        grid = report["artwork"].get("grid", 6)
+        w_img, h_img = report["size"]
+        page_area = float(max(w_img * h_img, 1))
+        hollow_findings = [
+            f for f in hollow_findings
+            if not ((int(f["cy"] * grid / max(h_img, 1)),
+                     int(f["cx"] * grid / max(w_img, 1))) in art_cells
+                    and (f["w"] * f["h"]) / page_area > 0.06)]
+    summary = _hollow_summary(hollow_findings)
+    if summary:
+        out.append(summary)
+    else:
+        out.extend(_hollow_sentence(f) for f in hollow_findings[:2])
+    fill_findings = els.get("fill") or []
+    if fill_findings:
+        out.append(_fill_sentence(fill_findings))
+        said.add("colour")
 
     # Type before the element boxes: a wrong font-size is reported again by every box
     # around it as a wrong width and a wrong height, so fixing it first removes several
@@ -2069,28 +2173,6 @@ def _problems(report):
     element_score_lines = _element_score_sentences(
         report, already=[(i["x"], i["y"]) for g in groups for i in g])
     out.extend(element_score_lines)
-    hollow_findings = els.get("hollow") or []
-    art_cells = set()
-    if report.get("artwork"):
-        art_cells = {tuple(c) for c in report["artwork"].get("cells", [])}
-    if art_cells:
-        # Only a large element sitting in artwork defers to the artwork line. The cells
-        # are coarse, so a photographic background puts half the page inside one, and
-        # filtering on the cell alone silenced a row of empty icon wells that had
-        # nothing to do with the artwork.
-        grid = report["artwork"].get("grid", 6)
-        w_img, h_img = report["size"]
-        page_area = float(max(w_img * h_img, 1))
-        hollow_findings = [
-            f for f in hollow_findings
-            if not ((int(f["cy"] * grid / max(h_img, 1)),
-                     int(f["cx"] * grid / max(w_img, 1))) in art_cells
-                    and (f["w"] * f["h"]) / page_area > 0.06)]
-    summary = _hollow_summary(hollow_findings)
-    if summary:
-        out.append(summary)
-    else:
-        out.extend(_hollow_sentence(f) for f in hollow_findings[:2])
     if element_lines or hollow_findings or element_score_lines:
         said.add("element")
     # Spacing after the elements themselves: a gap is only worth changing once the
@@ -3942,6 +4024,9 @@ function openRun(slug) {
       setStatus("Ready. Paste an attempt or insert the starter.");
     }
     renderAll();
+    try {
+      history.replaceState(null, "", "?run=" + encodeURIComponent(slug));
+    } catch (e) { /* file:// and the like have no history to write */ }
     return run;
   });
 }
@@ -4595,7 +4680,13 @@ syncKindUi();
 loadAgents();
 renderAll();
 loadRuns().then(function (runs) {
-  if (runs.length) openRun(runs[0].slug);
+  if (!runs.length) return;
+  // ?run=<slug> opens that run directly, so a particular run can be linked, bookmarked
+  // or handed to someone rather than described as "the third one down".
+  var want = new URLSearchParams(location.search).get("run");
+  var match = want && runs.filter(function (r) { return r.slug === want; })[0];
+  if (want && !match) setStatus("No run called " + want + " here. Showing the most recent.");
+  return openRun((match || runs[0]).slug);
 });
 </script>
 </body>

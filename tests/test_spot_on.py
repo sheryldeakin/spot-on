@@ -1789,6 +1789,94 @@ class ServerAndScreenshots(unittest.TestCase):
         self.assertTrue("127.0.0.1:{}".format(self.port) in html, "port not substituted")
 
 
+class PanelFillIsMeasured(unittest.TestCase):
+    """A translucent panel at the wrong alpha, which nothing else here could see."""
+
+    def page(self, panel_fill, n=4):
+        # A dark page with panels on it, the way a dark interface is built.
+        img = Image.new("RGB", (520, 400), "#06121A")
+        d = ImageDraw.Draw(img)
+        for i in range(n):
+            x, y = 20 + (i % 2) * 260, 20 + (i // 2) * 190
+            d.rectangle([x, y, x + 220, y + 150], fill=panel_fill, outline="#2E6B85")
+            d.rectangle([x + 16, y + 20, x + 150, y + 40], fill="#CFE6F2")
+            d.rectangle([x + 16, y + 60, x + 120, y + 74], fill="#7FB4C9")
+        return img
+
+    def found(self, design, attempt):
+        rep = so.score_images(design, attempt)[0]
+        return (rep["elements"] or {}).get("fill") or []
+
+    def test_panels_that_are_too_light_are_named(self):
+        found = self.found(self.page("#0C2230"), self.page("#1E4457"))
+        self.assertTrue(found, "four panels the wrong shade and nothing said")
+        tail = [f for f in found if f.get("summary")][0]
+        self.assertTrue(tail["lighter"])
+        self.assertGreaterEqual(tail["n"], 2)
+        line = so._fill_sentence(found)
+        self.assertIn("wrong shade", line)
+        self.assertIn("brighter", line)
+        self.assertIn("alpha is too high", line)
+
+    def test_panels_that_are_too_dark_are_named_the_other_way(self):
+        found = self.found(self.page("#1E4457"), self.page("#0C2230"))
+        self.assertTrue(found)
+        self.assertFalse([f for f in found if f.get("summary")][0]["lighter"])
+        self.assertIn("darker", so._fill_sentence(found))
+
+    def test_matching_panels_say_nothing(self):
+        self.assertEqual(self.found(self.page("#0C2230"), self.page("#0C2230")), [])
+
+    def test_one_panel_off_is_that_panel_not_the_fill_rule(self):
+        # Two is the floor on purpose. A single panel off is a local mistake; several
+        # off the same way is the rule behind all of them, and that is the useful claim.
+        design, attempt = self.page("#0C2230"), self.page("#0C2230")
+        ImageDraw.Draw(attempt).rectangle([20, 20, 240, 170], fill="#24505F",
+                                          outline="#2E6B85")
+        self.assertEqual(self.found(design, attempt), [])
+
+
+class AbsentThingsOutrankSlightlyWrongThings(unittest.TestCase):
+    """What a round reaches. The list is read in order and a round changes three things."""
+
+    def report(self):
+        d = Path("runs/hud-concept")
+        if not (d / "attempts" / "053.png").exists():
+            self.skipTest("the hud-concept run is not on this machine")
+        with Image.open(d / "reference.png") as r, Image.open(d / "attempts" / "053.png") as a:
+            return so.score_images(r, a)[0]
+
+    def rank(self, problems, needle):
+        for i, p in enumerate(problems):
+            if needle in p:
+                return i
+        return None
+
+    def test_empty_containers_and_wrong_fill_come_before_element_geometry(self):
+        # Regression: the empty-container line was correct and sat at position 11 of 16,
+        # below four lines about boxes a few percent too narrow. A round changes three
+        # things, so seven empty icon wells were named every round and never reached.
+        problems = self.report()["problems"]
+        empty = self.rank(problems, "leave it empty")
+        fill = self.rank(problems, "wrong shade")
+        geometry = self.rank(problems, "% narrower")
+        self.assertIsNotNone(empty, "the empty-container line stopped firing")
+        self.assertIsNotNone(fill, "the panel-fill line stopped firing")
+        self.assertIsNotNone(geometry, "no element geometry line to rank against")
+        self.assertLess(empty, geometry)
+        self.assertLess(fill, geometry)
+        self.assertLess(empty, 4, "an absent thing this far down is a thing nobody reaches")
+
+    def test_the_font_family_line_still_leads(self):
+        # The one exception, and it earns it: the wrong family makes every box around it
+        # measure wrong too, so it deletes complaints rather than adding one.
+        problems = self.report()["problems"]
+        glyph = self.rank(problems, "letters themselves do not match")
+        if glyph is None:
+            self.skipTest("the glyph line did not fire on this attempt")
+        self.assertLess(glyph, self.rank(problems, "leave it empty"))
+
+
 class ColourIsMeasuredPerceptually(unittest.TestCase):
     """How far apart two colours look, not how far apart their numbers are."""
 
