@@ -90,6 +90,7 @@ ELEMENT_BEHIND = 10      # points below the page score at which an element is wo
 FILL_DELTA = 3.0         # levels of surface brightness before a panel's fill is wrong
 INK_ABOVE = 18           # levels from the local median before a pixel counts as marked
 HOLLOW_INK_GAP = 20.0    # points more of the interior marked in the design than the attempt
+RESCORE_WITHIN = 20.0    # points below the best an attempt must be within to be re-scored
 ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
 ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
@@ -2812,6 +2813,10 @@ def iteration_base(history, slug=None):
     before it is handed over, because it is about to be read out to a model as the list
     of things to fix. See refresh_report.
     """
+    if slug is not None:
+        # Before picking, make the numbers being compared comparable.
+        if restate_run(slug):
+            history = _attempts(slug)
     best = max(history, key=lambda a: (a["match"], a["n"]))
     latest = history[-1]
     if slug is not None:
@@ -3281,13 +3286,95 @@ def refresh_report(slug, att):
                                design_fonts=run.get("design_fonts"))
     stored = att["match"]
     if abs(fresh["match"] - stored) > 1e-9:
+        # The attempt keeps the number the run has always ranked it by, and the report
+        # keeps the number today's scorer gives. They are left disagreeing on purpose:
+        # the disagreement is the only evidence that this attempt needs restating, and
+        # an earlier version overwrote the report with the stored number, which made
+        # the attempt look settled and hid the drift from restate_run entirely.
         att["rescored_from"] = stored
-        fresh["match"] = stored
         _flag_rescore_needed(slug, att["n"])
     att["report"] = fresh
     (d / "attempts" / "{:03d}.json".format(att["n"])).write_text(
         json.dumps(att, indent=2), encoding="utf-8")
     return att
+
+
+def restate_run(slug, within=RESCORE_WITHIN):
+    """Put every attempt that could be the best of a run onto the current scorer.
+
+    A run's whole history hangs off its stored numbers: `record_attempt` decides
+    whether a new attempt is the best by comparing against `best_match`, and every
+    round builds on whichever attempt that points at. Those numbers were each written
+    by whatever the scorer was on the day, and nothing recorded which. Measured across
+    every run on one machine: eight of twelve had drifted by 0.4 or less, one by -1.3,
+    one by +6.5, and one by +13.2 points. That last one believed its best was attempt
+    10 at 54.3 when attempt 4 scores 72.8 today, so every round of it had been built
+    on the wrong page.
+
+    Refreshing one attempt cannot fix that, and deliberately does not try: comparing a
+    re-scored number against stale ones is how a run ends up holding two metrics, which
+    is the bug. The whole contending set has to move together, which is what this does.
+
+    Only attempts within `within` points of the best are re-scored. Scoring a hundred
+    attempts takes minutes, and an attempt far below the best cannot become the best:
+    the largest drift ever seen here is 13.2 points, and the margin is 20. The original
+    number is kept on each attempt as `rescored_from`, because it is what the run's own
+    history said at the time and the audit trail is the point.
+    """
+    history = _attempts(slug)
+    if not history:
+        return []
+    target = max(a["match"] for a in history) - within
+    # Settled means two things: scored by the current scorer, and carrying the number
+    # that scorer gave. refresh_report deliberately stamps an attempt while keeping its
+    # old number, to protect a ranking it cannot fix on its own, so the stamp alone
+    # would mark exactly the attempts that most need restating as already done.
+    def settled(a):
+        rep = a.get("report") or {}
+        return (rep.get("scorer") == SCORER_VERSION
+                and abs(a["match"] - rep.get("match", a["match"])) <= 1e-9)
+
+    stale = [a for a in history if a["match"] >= target and not settled(a)]
+    if not stale:
+        return []
+    d = _run_dir(slug)
+    run = _load_run(slug)
+    try:
+        ref_img = Image.open(d / "reference.png").convert("RGB")
+    except OSError:
+        return []
+    px_per_css = run["width"] / float(run.get("css_width", run["width"]))
+    moved = []
+    for att in stale:
+        png = d / "attempts" / "{:03d}.png".format(att["n"])
+        code_file = d / "attempts" / "{:03d}.code".format(att["n"])
+        if not png.exists() or not code_file.exists():
+            continue
+        try:
+            fresh, _, _ = score_images(
+                ref_img, Image.open(png).convert("RGB"), px_per_css=px_per_css,
+                ignore=_unstable_mask(slug, run, code_file.read_text(encoding="utf-8")),
+                design_fonts=run.get("design_fonts"))
+        except Exception:
+            continue
+        was = att["match"]
+        att["report"] = fresh
+        if abs(fresh["match"] - was) > 1e-9:
+            att.setdefault("rescored_from", was)
+            att["match"] = fresh["match"]
+            moved.append((att["n"], was, fresh["match"]))
+        (d / "attempts" / "{:03d}.json".format(att["n"])).write_text(
+            json.dumps(att, indent=2), encoding="utf-8")
+    with _run_lock(slug):
+        latest = _load_run(slug)
+        current = _attempts(slug)
+        if current:
+            best = max(current, key=lambda a: (a["match"], a["n"]))
+            latest["best_match"] = best["match"]
+            latest["best_attempt"] = best["n"]
+        latest.pop("rescore_needed", None)
+        _save_run(slug, latest)
+    return moved
 
 
 def _flag_rescore_needed(slug, n):
@@ -3342,6 +3429,11 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
     # takes seconds, so that copy is stale by now, and two attempts finishing together
     # each wrote their own view of the best score. The later write won whether or not
     # it was the better attempt, leaving best_attempt pointing at the wrong one.
+    # The incumbent has to be on the same scorer as the challenger or the comparison
+    # means nothing. On one run the stored best was 54.3 while the same pixels scored
+    # 67.5, so anything above 54.3 was recorded as an improvement on a page it was
+    # actually well behind.
+    restate_run(slug)
     with _run_lock(slug):
         latest = _load_run(slug)
         if report["match"] > latest.get("best_match", -1):

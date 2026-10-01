@@ -2012,6 +2012,106 @@ def _marked(small=True):
     return img
 
 
+class AllTheContendersAreOnOneScorer(unittest.TestCase):
+    """A run's whole history hangs off which attempt it thinks is best."""
+
+    def setUp(self):
+        self.saved = so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-restate-"))
+        so.RUNS_DIR = self.tmp
+        so.create_run("drift", "html", reference_bytes=_png_bytes(DESIGN))
+        self.d = self.tmp / "drift" / "attempts"
+
+    def tearDown(self):
+        so.RUNS_DIR = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def put(self, n, case, match, scorer=None, report_match=None):
+        """An attempt whose stored number may disagree with its own pixels."""
+        CASES[case].save(self.d / ("%03d.png" % n))
+        (self.d / ("%03d.code" % n)).write_text("<div>%d</div>" % n, encoding="utf-8")
+        rep = score(case)
+        if scorer is None:
+            rep.pop("scorer", None)
+        else:
+            rep["scorer"] = scorer
+        if report_match is not None:
+            rep["match"] = report_match
+        (self.d / ("%03d.json" % n)).write_text(
+            json.dumps({"n": n, "match": match, "report": rep}), encoding="utf-8")
+
+    def best(self):
+        r = so._load_run("drift")
+        return r.get("best_attempt"), r.get("best_match")
+
+    def test_an_attempt_from_an_older_scorer_is_restated(self):
+        # Regression, measured on a real run: it believed its best was attempt 10 at
+        # 54.3 when attempt 4 scored 72.8 under the current code, so every round had
+        # been built on the wrong page. Eight of twelve runs had drifted under half a
+        # point; two had drifted by 6.5 and 13.2.
+        self.put(1, "close", 40.0)
+        self.put(2, "half", 45.0)
+        so._save_run("drift", dict(so._load_run("drift"), best_match=45.0, best_attempt=2))
+        moved = so.restate_run("drift")
+        self.assertTrue(moved)
+        n, m = self.best()
+        self.assertEqual(n, 1, "the better page is the one that scores higher now")
+        self.assertAlmostEqual(m, score("close")["match"], places=1)
+
+    def test_the_number_the_run_used_to_rank_by_is_kept(self):
+        self.put(1, "close", 40.0)
+        so.restate_run("drift")
+        rec = json.loads((self.d / "001.json").read_text(encoding="utf-8"))
+        self.assertAlmostEqual(rec["rescored_from"], 40.0)
+        self.assertNotAlmostEqual(rec["match"], 40.0)
+
+    def test_it_is_done_once(self):
+        self.put(1, "close", 40.0)
+        self.assertTrue(so.restate_run("drift"))
+        self.assertEqual(so.restate_run("drift"), [])
+
+    def test_an_attempt_too_far_behind_to_win_is_left_alone(self):
+        # Scoring every attempt of a long run takes minutes, and the largest drift
+        # ever seen was 13.2 points against a margin of 20.
+        self.put(1, "exact", 99.0, scorer=so.SCORER_VERSION)
+        self.put(2, "blank", 5.0)
+        so._save_run("drift", dict(so._load_run("drift"), best_match=99.0, best_attempt=1))
+        so.restate_run("drift")
+        rec = json.loads((self.d / "002.json").read_text(encoding="utf-8"))
+        self.assertAlmostEqual(rec["match"], 5.0, msg="a hopeless attempt was re-scored")
+
+    def test_a_stamped_attempt_whose_number_disagrees_is_not_settled(self):
+        # Regression on the interaction between the two: refresh_report stamps an
+        # attempt while deliberately keeping its old number, so a check on the stamp
+        # alone marked exactly the attempts that needed restating as already done.
+        self.put(1, "close", 40.0, scorer=so.SCORER_VERSION,
+                 report_match=score("close")["match"])
+        rec = json.loads((self.d / "001.json").read_text(encoding="utf-8"))
+        self.assertNotAlmostEqual(rec["match"], rec["report"]["match"])
+        self.assertTrue(so.restate_run("drift"), "a stamped-but-stale attempt was skipped")
+
+    def test_refreshing_a_report_leaves_the_disagreement_visible(self):
+        # An earlier version overwrote the report with the stored number, which made
+        # the attempt look settled and hid the drift from restate_run entirely.
+        self.put(1, "close", 40.0)
+        att = [a for a in so._attempts("drift") if a["n"] == 1][0]
+        so.refresh_report("drift", att)
+        rec = json.loads((self.d / "001.json").read_text(encoding="utf-8"))
+        self.assertAlmostEqual(rec["match"], 40.0, msg="refresh moved the ranking number")
+        self.assertNotAlmostEqual(rec["report"]["match"], 40.0,
+                                  msg="refresh hid what today's scorer says")
+
+    def test_a_new_attempt_is_weighed_against_a_restated_best(self):
+        # On one run the stored best was 54.3 while the same pixels scored 67.5, so
+        # anything above 54.3 was recorded as an improvement on a page it was behind.
+        self.put(1, "close", 20.0)
+        so._save_run("drift", dict(so._load_run("drift"), best_match=20.0, best_attempt=1))
+        rec = so.record_attempt("drift", "<div>worse</div>")
+        n, m = self.best()
+        self.assertNotEqual(n, rec["n"],
+                            "a weaker attempt beat a stale number instead of the page")
+
+
 class AnEmptyContainerHasToBeEmpty(unittest.TestCase):
     """Texture cannot tell a missing glyph from a thinner stroke. Coverage can."""
 
@@ -2497,19 +2597,21 @@ class AStaleReportIsRefreshedBeforeARoundReadsIt(unittest.TestCase):
         base, _ = so.iteration_base(so._attempts("stale"), "stale")
         self.assertEqual(base["report"]["problems"], ["kept verbatim"])
 
-    def test_the_number_is_kept_when_a_rescore_moves_it(self):
-        # Ranking across a run only means anything while every attempt in it was
-        # scored the same way. Refreshing one attempt's number is how a run ends up
-        # comparing two metrics, which is what reported a false +1.3 once already.
+    def test_a_rescore_restates_the_number_and_says_what_it_was(self):
+        # This used to assert the opposite, that the stored number was kept. That was
+        # the right answer while only the base attempt could be refreshed: moving one
+        # number and leaving its rivals on an older scorer is how a run ends up
+        # comparing two metrics, which reported a false +1.3 once. restate_run moves
+        # the whole contending set together, so the number can now be corrected, and
+        # it has to be: one real run believed its best was 54.3 when the same pixels
+        # scored 67.5 and a different attempt scored 72.8.
         old = score("close")
         del old["scorer"]
         self.write(old, match=old["match"] + 9.0)
         base, _ = so.iteration_base(so._attempts("stale"), "stale")
-        self.assertAlmostEqual(base["match"], old["match"] + 9.0)
-        self.assertAlmostEqual(base["report"]["match"], old["match"] + 9.0)
+        self.assertAlmostEqual(base["match"], old["match"], places=1)
+        self.assertAlmostEqual(base["report"]["match"], old["match"], places=1)
         self.assertAlmostEqual(base["rescored_from"], old["match"] + 9.0)
-        self.assertEqual(so._load_run("stale").get("rescore_needed"), [1],
-                         "a run whose numbers came from two scorers says so")
 
     def test_a_run_whose_numbers_still_agree_is_not_flagged(self):
         old = score("close")
