@@ -2898,14 +2898,98 @@ def run_agent(agent, prompt, cwd, images, schema=True):
     return _run_api_agent(agent, prompt, images)
 
 
+WORKLIST_MAX = 12        # items carried; past this the oldest untouched ones drop off
+WORKLIST_WORDS = 14      # an item is a line, not a paragraph
+
 ITERATE_SCHEMA = {
     "type": "object",
     "properties": {
         "code": {"type": "string", "description": "the full replacement source, no fences"},
         "changes": {"type": "string", "description": "one line on what was changed and why"},
+        "blocked": {
+            "type": "array", "items": {"type": "string"},
+            "description": "things you could not do and why, one short line each: a typeface "
+                           "that is not installed, a photograph you do not have, a command you "
+                           "were not allowed to run. Empty if nothing blocked you.",
+        },
+        "next": {
+            "type": "array", "items": {"type": "string"},
+            "description": "things you did not do this round that still want doing, one short "
+                           "line each. Empty if you did everything worth doing.",
+        },
+        "done": {
+            "type": "array", "items": {"type": "string"},
+            "description": "lines copied exactly from the open list you were given, for items "
+                           "this round's code actually finished. Name none if you finished none.",
+        },
     },
     "required": ["code", "changes"],
 }
+
+
+def _trim_item(text):
+    """One line, not a paragraph."""
+    words = " ".join(str(text or "").split()).split(" ")
+    if not words or not words[0]:
+        return ""
+    return " ".join(words[:WORKLIST_WORDS]) + ("..." if len(words) > WORKLIST_WORDS else "")
+
+
+def worklist(history):
+    """What the rounds say they could not do, and what they say is still left.
+
+    Taken from fields the round fills in rather than parsed out of its prose. A third
+    of the notes on this machine already volunteer this unasked, but in wording too
+    varied to read reliably: "the font is not installed", "I could not work out which
+    values to use", "the file write was denied". Asking for it as a field costs
+    nothing, because the round already answers in JSON.
+
+    An item stays open until a later round copies it into `done`. The loop is handed
+    the open list, so the round that closes something is the round that says so.
+
+    A round's word is not proof, and has been wrong here in both directions: one
+    candidate reported a script as blocked in the same round another ran it
+    successfully, and rounds have claimed work they had not done. Anything a detector
+    backs will go on being named by the report regardless, which is the real check;
+    the rest is the round's own account and is shown as that.
+    """
+    open_items, blocked, closed = [], [], set()
+    for a in sorted(history, key=lambda r: r["n"]):
+        for said in (a.get("done") or []):
+            got = _trim_item(said).lower()
+            if got:
+                closed.add(got)
+        for item in (a.get("next") or []):
+            t = _trim_item(item)
+            if t and t.lower() not in {i["text"].lower() for i in open_items}:
+                open_items.append({"text": t, "since": a["n"]})
+        for item in (a.get("blocked") or []):
+            t = _trim_item(item)
+            if t and t.lower() not in {i["text"].lower() for i in blocked}:
+                blocked.append({"text": t, "since": a["n"]})
+    still = [i for i in open_items if i["text"].lower() not in closed]
+    return {"open": still[-WORKLIST_MAX:], "blocked": blocked[-WORKLIST_MAX:],
+            "done": sorted(closed)}
+
+
+def _worklist_section(lists):
+    """Hand the round the list it has been building, so it can close things off."""
+    if not lists:
+        return []
+    out = []
+    if lists.get("open"):
+        out.append("Left over from earlier rounds, by their own account:")
+        for item in lists["open"]:
+            out.append("  {} (since attempt {})".format(item["text"], item["since"]))
+        out += ["Finish one and copy its line into `done` exactly. Do not name one you did not",
+                "do: the report measures the page, not this list.", ""]
+    if lists.get("blocked"):
+        out.append("Reported as impossible here. Leave them unless you can see something the")
+        out.append("earlier rounds could not:")
+        for item in lists["blocked"]:
+            out.append("  {}".format(item["text"]))
+        out.append("")
+    return out
 
 
 def rejected_changes(history, base, limit=6):
@@ -3041,7 +3125,7 @@ def _stuck_section(stuck):
 
 
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    images="read", stuck=(), spent=()):
+                    images="read", stuck=(), spent=(), lists=None):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
@@ -3083,6 +3167,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     ]
     parts += _stuck_section(stuck)
     parts += _spent_section(spent)
+    parts += _worklist_section(lists)
     if discarded:
         parts += [
             "Your most recent attempt ({}) scored {:.1f}, below this one at {:.1f}, so it was "
@@ -3171,14 +3256,14 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
         raw = run_agent(which, prompt, cwd, images)
         code, changes = _parse_iteration(raw)
         if not code or not _looks_like(code, kind):
-            return which, None, " ".join((code or "").split())[:240]
-        return which, code, changes
+            return which, None, " ".join((code or "").split())[:240], {}
+        return which, code, changes, round_lists(raw)
 
     out, refusals = [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
-        for which, code, changes in pool.map(one, chosen_panel):
+        for which, code, changes, lists in pool.map(one, chosen_panel):
             if code:
-                out.append((code, changes, which))
+                out.append((code, changes, which, lists))
             else:
                 refusals.append("{}: {}".format(AGENT_LABELS.get(which, which), changes))
     return out, refusals
@@ -3228,7 +3313,8 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
     spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
-                             rejected_changes(history, base), image_access, stuck, spent)
+                             rejected_changes(history, base), image_access, stuck, spent,
+                             worklist(history))
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -3244,8 +3330,8 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     # Recorded against the agent that actually wrote it, so the history shows which
     # model won a round rather than crediting the one the run was started with.
     records = [record_attempt(slug, c, source=who, changes=ch,
-                              meta={"candidate_of": n, "candidates": len(drafts)})
-               for c, ch, who in drafts]
+                              meta=dict({"candidate_of": n, "candidates": len(drafts)}, **lists))
+               for c, ch, who, lists in drafts]
     best = choose_attempt(records, floor=_load_run(slug).get("best_match"))
     best["candidate_scores"] = [r["match"] for r in records]
     # What the round was pressed on, and whether it moved. This is the part the page
@@ -3313,12 +3399,32 @@ def _looks_like(code, kind):
     return "<" in c and ">" in c
 
 
+def _payload(stdout):
+    """The agent's answer as an object, or None if it did not send one."""
+    try:
+        out = json.loads(stdout)
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def round_lists(stdout):
+    """The three lists a round reports beside its code, if it reported any.
+
+    Read from the same payload as the code rather than from a second parse, so the two
+    cannot disagree about what the round said.
+    """
+    payload = _payload(stdout) or {}
+    said = payload.get("structured_output")
+    if not isinstance(said, dict):
+        said = payload if "code" in payload else {}
+    return {k: [_trim_item(x) for x in (said.get(k) or []) if isinstance(x, str) and x.strip()]
+            for k in ("blocked", "next", "done")}
+
+
 def _parse_iteration(stdout):
     """Pull the code out of headless output, whether structured or fenced."""
-    try:
-        payload = json.loads(stdout)
-    except Exception:
-        payload = None
+    payload = _payload(stdout)
     if isinstance(payload, dict):
         so = payload.get("structured_output")
         if isinstance(so, dict) and so.get("code"):
@@ -4464,6 +4570,7 @@ PAGE_HTML = r"""<!doctype html>
           <div class="rule13" style="margin: 20px 0 8px;"></div>
           <div id="problems"></div>
           <div id="element-scores" style="margin-top: 16px;"></div>
+          <div id="worklist" style="margin-top: 18px;"></div>
           <div id="palette-row" style="display: flex; align-items: center; gap: 14px; margin-top: 12px; flex-wrap: wrap;"></div>
         </div>
       </div>
@@ -5173,6 +5280,77 @@ var COMPONENT_HELP = {
   coverage: "Share of the design with something drawn within 6px of it. Missing content caps the whole score."
 };
 
+// What the rounds said, as against what the measurement says. The report above is the
+// page; this is the loop's own account of what it could not do and what it left. The
+// two are kept apart on purpose: a round has claimed work it had not done, and has
+// called a script blocked in the same round another ran it.
+function renderWorklist() {
+  var host = $("worklist");
+  host.innerHTML = "";
+  var open = [], blocked = [], closed = {};
+  (state.attempts || []).slice().sort(function (a, b) { return a.n - b.n; })
+    .forEach(function (a) {
+      (a.done || []).forEach(function (d) { closed[String(d).toLowerCase()] = a.n; });
+      (a.next || []).forEach(function (t) {
+        if (!open.some(function (o) { return o.text.toLowerCase() === String(t).toLowerCase(); }))
+          open.push({ text: String(t), since: a.n });
+      });
+      (a.blocked || []).forEach(function (t) {
+        if (!blocked.some(function (o) { return o.toLowerCase() === String(t).toLowerCase(); }))
+          blocked.push(String(t));
+      });
+    });
+  if (!open.length && !blocked.length) return;
+
+  function heading(text, note) {
+    var h = document.createElement("div");
+    h.className = "mono";
+    h.style.cssText = "font-size:10px; letter-spacing:0.14em; text-transform:uppercase;"
+      + " color:var(--muted); margin: 14px 0 7px;";
+    h.textContent = text;
+    if (note) h.title = note;
+    return h;
+  }
+  function bullet(text, done, since) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex; gap:9px; align-items:baseline; font-size:12px;"
+      + " line-height:1.6; color:" + (done ? "var(--faint)" : "var(--ink)") + ";";
+    var mark = document.createElement("span");
+    mark.textContent = done ? "x" : "-";
+    mark.className = "mono";
+    mark.style.cssText = "color:var(--muted); flex:none; width:9px;";
+    var body = document.createElement("span");
+    body.textContent = text;
+    if (done) body.style.textDecoration = "line-through";
+    row.appendChild(mark);
+    row.appendChild(body);
+    if (since !== undefined) {
+      var when = document.createElement("span");
+      when.className = "mono";
+      when.style.cssText = "color:var(--faint); font-size:10px; flex:none;";
+      when.textContent = done ? "done " + since : "since " + since;
+      row.appendChild(when);
+    }
+    return row;
+  }
+
+  var still = open.filter(function (o) { return !closed[o.text.toLowerCase()]; });
+  var finished = open.filter(function (o) { return closed[o.text.toLowerCase()]; });
+  if (still.length || finished.length) {
+    host.appendChild(heading("what the rounds say is left",
+      "Written by the rounds themselves, not measured. An item is crossed off when a later round says it finished it."));
+    still.forEach(function (o) { host.appendChild(bullet(o.text, false, o.since)); });
+    finished.forEach(function (o) {
+      host.appendChild(bullet(o.text, true, closed[o.text.toLowerCase()]));
+    });
+  }
+  if (blocked.length) {
+    host.appendChild(heading("reported as impossible here",
+      "A round said it could not do this: a typeface that is not installed, artwork it does not have, a command it was not allowed to run."));
+    blocked.forEach(function (t) { host.appendChild(bullet(t, false)); });
+  }
+}
+
 function renderScore() {
   var rec = current();
   if (!rec) { $("score-body").hidden = true; $("score-empty").hidden = false; $("score-raw").textContent = ""; return; }
@@ -5252,6 +5430,7 @@ function renderScore() {
     grid.appendChild(cell);
   });
 
+  renderWorklist();
   var pr = $("problems");
   pr.innerHTML = "";
   rep.problems.forEach(function (p, i) {

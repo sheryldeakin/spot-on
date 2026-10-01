@@ -2060,6 +2060,89 @@ class TheDesignIsAskedAgainWhenTheQuestionChanges(unittest.TestCase):
         self.assertEqual(len(self.asked), 1)
 
 
+class TheRoundsKeepAListBetweenThem(unittest.TestCase):
+    """What they could not do, and what they say is still left."""
+
+    def round(self, n, nxt=(), blocked=(), done=()):
+        return {"n": n, "next": list(nxt), "blocked": list(blocked), "done": list(done)}
+
+    def test_what_a_round_says_is_left_becomes_an_open_item(self):
+        w = so.worklist([self.round(1, nxt=["fill the four Recent Apps wells"])])
+        self.assertEqual([i["text"] for i in w["open"]], ["fill the four Recent Apps wells"])
+        self.assertEqual(w["open"][0]["since"], 1)
+
+    def test_a_later_round_closes_it_by_naming_it(self):
+        w = so.worklist([self.round(1, nxt=["brighten the globe", "fill the wells"]),
+                         self.round(2, done=["brighten the globe"])])
+        self.assertEqual([i["text"] for i in w["open"]], ["fill the wells"])
+        self.assertIn("brighten the globe", w["done"])
+
+    def test_closing_is_not_case_sensitive_or_whitespace_sensitive(self):
+        w = so.worklist([self.round(1, nxt=["Brighten  the globe"]),
+                         self.round(2, done=["brighten the globe"])])
+        self.assertEqual(w["open"], [])
+
+    def test_what_blocked_a_round_is_kept_apart_and_does_not_close(self):
+        # These are not work to be done, they are reasons work cannot be.
+        w = so.worklist([self.round(1, blocked=["the typeface is not installed"]),
+                         self.round(2, done=["the typeface is not installed"])])
+        self.assertEqual([i["text"] for i in w["blocked"]], ["the typeface is not installed"])
+
+    def test_the_same_item_twice_is_one_item(self):
+        w = so.worklist([self.round(1, nxt=["fill the wells"]),
+                         self.round(2, nxt=["fill the wells"])])
+        self.assertEqual(len(w["open"]), 1)
+        self.assertEqual(w["open"][0]["since"], 1, "it should date from when it was first said")
+
+    def test_a_paragraph_is_cut_to_a_line(self):
+        long = " ".join("word%d" % i for i in range(40))
+        w = so.worklist([self.round(1, nxt=[long])])
+        self.assertLessEqual(len(w["open"][0]["text"].split()), so.WORKLIST_WORDS + 1)
+        self.assertTrue(w["open"][0]["text"].endswith("..."))
+
+    def test_the_list_does_not_grow_without_end(self):
+        many = [self.round(i, nxt=["item %d" % i]) for i in range(1, so.WORKLIST_MAX + 6)]
+        self.assertEqual(len(so.worklist(many)["open"]), so.WORKLIST_MAX)
+
+    def test_attempts_from_before_the_lists_existed_are_fine(self):
+        self.assertEqual(so.worklist([{"n": 1, "match": 50.0}]),
+                         {"open": [], "blocked": [], "done": []})
+
+    def test_the_lists_are_read_from_the_same_answer_as_the_code(self):
+        out = json.dumps({"structured_output": {
+            "code": "<div/>", "changes": "did a thing",
+            "blocked": ["the typeface is not installed"],
+            "next": ["fill the wells"], "done": []}})
+        self.assertEqual(so._parse_iteration(out), ("<div/>", "did a thing"))
+        got = so.round_lists(out)
+        self.assertEqual(got["blocked"], ["the typeface is not installed"])
+        self.assertEqual(got["next"], ["fill the wells"])
+
+    def test_an_answer_with_no_lists_reports_none(self):
+        out = json.dumps({"structured_output": {"code": "<div/>", "changes": "x"}})
+        self.assertEqual(so.round_lists(out), {"blocked": [], "next": [], "done": []})
+        self.assertEqual(so.round_lists("not json at all"),
+                         {"blocked": [], "next": [], "done": []})
+
+    def test_the_next_round_is_handed_the_open_list(self):
+        text = "\n".join(so._worklist_section(so.worklist(
+            [self.round(1, nxt=["fill the wells"], blocked=["the typeface is not installed"])])))
+        self.assertIn("fill the wells", text)
+        self.assertIn("since attempt 1", text)
+        self.assertIn("the typeface is not installed", text)
+
+    def test_it_is_told_that_claiming_an_item_proves_nothing(self):
+        # Rounds have claimed work they had not done, and one reported a script as
+        # blocked in the same round another ran it. The page is what is measured.
+        text = "\n".join(so._worklist_section(so.worklist([self.round(1, nxt=["fill the wells"])])))
+        self.assertIn("Do not name one you did not", text)
+        self.assertIn("measures the page", text)
+
+    def test_nothing_is_said_when_there_is_nothing_to_say(self):
+        self.assertEqual(so._worklist_section(so.worklist([])), [])
+        self.assertEqual(so._worklist_section(None), [])
+
+
 class ThereIsNoLimitOnWhatARoundMayChange(unittest.TestCase):
     """The budget was never measured, and measuring it was how it ended."""
 
@@ -2743,7 +2826,8 @@ class ARoundCostsWhatItSaysItCosts(unittest.TestCase):
 
         def fake(agent, prompt, cwd, images, count, kind, panel=False):
             self.asked.append(count)
-            return [("<div>a{}</div>".format(i), "changed", "claude")
+            # Each draft carries the lists the round reported beside its code.
+            return [("<div>a{}</div>".format(i), "changed", "claude", {})
                     for i in range(count)], []
 
         so.gather_candidates = fake
