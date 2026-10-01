@@ -2201,6 +2201,44 @@ class TheRoundsKeepAListBetweenThem(unittest.TestCase):
                          self.round(2, done=["the typeface is not installed"])])
         self.assertEqual([i["text"] for i in w["blocked"]], ["the typeface is not installed"])
 
+    def test_the_same_job_said_three_ways_is_one_item(self):
+        # Regression, from the first real use: three rounds on one page produced
+        # "Measure the row pitch for items 14 and 15 from the design image", "Measure
+        # the rows for items 14 and 15 before moving them" and "Measure the row pitch
+        # for items 14 and 15 from reference.png". Exact matching kept all three, and
+        # a list capped at twelve fills with restatements at that rate.
+        w = so.worklist([
+            self.round(1, nxt=["Measure the row pitch for items 14 and 15 from the design image"]),
+            self.round(2, nxt=["Measure the rows for items 14 and 15 before moving them"]),
+            self.round(3, nxt=["Measure the row pitch for items 14 and 15 from reference.png"]),
+        ])
+        self.assertEqual(len(w["open"]), 1, [i["text"] for i in w["open"]])
+        self.assertEqual(w["open"][0]["since"], 1, "the first wording should win")
+
+    def test_item_numbers_are_what_make_two_lines_the_same(self):
+        # They are two characters long and were being dropped as too short, which is
+        # what let the three above through.
+        self.assertIn("14", so._item_words("items 14 and 15 need the row measured"))
+
+    def test_different_jobs_are_not_merged(self):
+        w = so.worklist([self.round(1, nxt=[
+            "Measure the row pitch for items 14 and 15",
+            "Redraw the top frame line at x 373 as the design's angled edge",
+            "Item 12 and 13: the Tasks list gaps are not touched"])])
+        self.assertEqual(len(w["open"]), 3)
+
+    def test_two_short_items_are_compared_whole(self):
+        # A couple of words can share most of a tiny vocabulary by accident.
+        w = so.worklist([self.round(1, nxt=["fix the logo", "fix the globe"])])
+        self.assertEqual(len(w["open"]), 2)
+
+    def test_a_round_is_told_not_to_ask_for_what_already_happens(self):
+        # Two of twelve items on first use were "render and score this attempt",
+        # which the tool does the moment the answer arrives.
+        said = so.ITERATE_SCHEMA["properties"]["next"]["description"]
+        self.assertIn("rendered and", said)
+        self.assertIn("Reuse the exact wording", said)
+
     def test_the_same_item_twice_is_one_item(self):
         w = so.worklist([self.round(1, nxt=["fill the wells"]),
                          self.round(2, nxt=["fill the wells"])])

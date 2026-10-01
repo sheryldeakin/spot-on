@@ -1687,7 +1687,9 @@ def _cell_name(cell):
 # glyph it can see before choosing one.
 # Bumped to 6 when the empty-container finding was gated on interior coverage, which
 # changes which boxes it names on every run already on disk.
-SCORER_VERSION = 6
+# Bumped to 7 when each problem gained a plain-words headline, so an attempt scored
+# before that gains one the next time its report is read rather than never.
+SCORER_VERSION = 7
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
@@ -2980,6 +2982,10 @@ PLATEAU_GAIN = 0.1       # improvement over those rounds that still counts as no
 ASKS_MAX = 20            # standing requests kept on a run
 WORKLIST_MAX = 12        # items carried; past this the oldest untouched ones drop off
 WORKLIST_WORDS = 14      # an item is a line, not a paragraph
+WORKLIST_SAME = 0.5      # share of content words two items must have to be one item
+WORKLIST_STOP = frozenset(
+    "the a an of to for and or in on at from this that by is are be it its with before "
+    "after any still them then than as into not do so if when which what".split())
 
 ITERATE_SCHEMA = {
     "type": "object",
@@ -2995,7 +3001,11 @@ ITERATE_SCHEMA = {
         "next": {
             "type": "array", "items": {"type": "string"},
             "description": "things you did not do this round that still want doing, one short "
-                           "line each. Empty if you did everything worth doing.",
+                           "line each. Empty if you did everything worth doing. Do not list "
+                           "rendering, screenshotting or scoring: every answer is rendered and "
+                           "scored for you the moment you send it. Reuse the exact wording an "
+                           "earlier round used for a job that is still open, rather than saying "
+                           "the same thing a new way.",
         },
         "done": {
             "type": "array", "items": {"type": "string"},
@@ -3005,6 +3015,47 @@ ITERATE_SCHEMA = {
     },
     "required": ["code", "changes"],
 }
+
+
+def _item_stem(word):
+    """Enough of a stem that row and rows, measure and measured, are one word."""
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(word) > 4 and word.endswith(suffix):
+            return word[:-len(suffix)]
+    return word
+
+
+def _item_words(text):
+    """The words that carry the meaning, for telling two wordings of one job apart.
+
+    Numbers are kept however short. On the page this was built against the item
+    numbers are the whole identity of a job: "items 14 and 15" is what makes three
+    differently worded lines the same task, and dropping them for being two
+    characters long left all three in the list.
+    """
+    found = re.findall(r"[a-z0-9]+", str(text or "").lower())
+    return set(_item_stem(w) for w in found
+               if w not in WORKLIST_STOP and (w.isdigit() or len(w) > 2))
+
+
+def _same_item(a, b):
+    """Are these two lines the same job said differently?
+
+    Exact matching was not enough, which three rounds on one page showed immediately:
+    "Measure the row pitch for items 14 and 15 from the design image", "Measure the
+    rows for items 14 and 15 before moving them" and "Measure the row pitch for items
+    14 and 15 from reference.png" are one task in three wordings, and a list capped at
+    twelve fills with restatements at that rate. Those three share half to three
+    quarters of their content words while every other pair on that page shares under
+    0.45, so the line sits between them.
+
+    Both sides need a few words of their own before this applies: two short items can
+    share most of a tiny vocabulary without being the same thing.
+    """
+    first, second = _item_words(a), _item_words(b)
+    if len(first) < 3 or len(second) < 3:
+        return " ".join(str(a).lower().split()) == " ".join(str(b).lower().split())
+    return len(first & second) / float(min(len(first), len(second))) >= WORKLIST_SAME
 
 
 def _trim_item(text):
@@ -3070,13 +3121,15 @@ def worklist(history, asks=()):
                 closed.add(got)
         for item in (a.get("next") or []):
             t = _trim_item(item)
-            if t and t.lower() not in {i["text"].lower() for i in open_items}:
+            # The first wording wins: it dates from the round that first raised it.
+            if t and not any(_same_item(t, i["text"]) for i in open_items):
                 open_items.append({"text": t, "since": a["n"], "asked": False})
         for item in (a.get("blocked") or []):
             t = _trim_item(item)
-            if t and t.lower() not in {i["text"].lower() for i in blocked}:
+            if t and not any(_same_item(t, i["text"]) for i in blocked):
                 blocked.append({"text": t, "since": a["n"]})
-    still = [i for i in open_items if i["text"].lower() not in closed]
+    still = [i for i in open_items
+             if not any(_same_item(i["text"], shut) for shut in closed)]
     mine = [i for i in still if i.get("asked")]
     theirs = [i for i in still if not i.get("asked")]
     return {"open": mine + theirs[-WORKLIST_MAX:], "blocked": blocked[-WORKLIST_MAX:],
