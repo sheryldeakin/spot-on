@@ -2012,6 +2012,52 @@ def _marked(small=True):
     return img
 
 
+class TheDesignIsAskedAgainWhenTheQuestionChanges(unittest.TestCase):
+    """The answer describes a picture that cannot move. The question is the tool's."""
+
+    def setUp(self):
+        self.saved = so.RUNS_DIR
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-needs-"))
+        so.RUNS_DIR = self.tmp
+        so.create_run("needs", "html", reference_bytes=_png_bytes(DESIGN))
+        self.asked = []
+        self.saved_agent = so.run_agent
+        so.run_agent = lambda *a, **k: self.asked.append(1) or "45 icons and a globe."
+
+    def tearDown(self):
+        so.run_agent = self.saved_agent
+        so.RUNS_DIR = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_it_is_asked_once_and_kept(self):
+        so.describe_needs("needs", "claude")
+        so.describe_needs("needs", "claude")
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(so._load_run("needs")["design_needs"], "45 icons and a globe.")
+
+    def test_it_records_which_question_it_answered(self):
+        so.describe_needs("needs", "claude")
+        self.assertEqual(so._load_run("needs")["design_needs_version"], so.NEEDS_VERSION)
+
+    def test_a_better_question_is_put_again(self):
+        # Regression: the wording of NEEDS_PROMPT is the tool's, so improving it used
+        # to leave every run already on disk answering the old question forever.
+        so.describe_needs("needs", "claude")
+        run = so._load_run("needs")
+        run["design_needs_version"] = so.NEEDS_VERSION - 1
+        so._save_run("needs", run)
+        so.describe_needs("needs", "claude")
+        self.assertEqual(len(self.asked), 2)
+        self.assertEqual(so._load_run("needs")["design_needs_version"], so.NEEDS_VERSION)
+
+    def test_an_answer_from_the_same_question_is_not_paid_for_twice(self):
+        so.describe_needs("needs", "claude")
+        run = so._load_run("needs")
+        self.assertIsNotNone(run.get("design_needs"))
+        so.describe_needs("needs", "claude", run)
+        self.assertEqual(len(self.asked), 1)
+
+
 class AllTheContendersAreOnOneScorer(unittest.TestCase):
     """A run's whole history hangs off which attempt it thinks is best."""
 

@@ -3060,7 +3060,8 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     # what this design actually needs rather than working it out from the picture again.
     # It never blocks a round: a failure here leaves the field unset and the round goes
     # ahead with the materials line alone.
-    if run.get("design_needs") is None:
+    if (run.get("design_needs") is None
+            or run.get("design_needs_version") != NEEDS_VERSION):
         describe_needs(slug, chosen, run)
         run = _load_run(slug)
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
@@ -3225,6 +3226,16 @@ def _unstable_mask(slug, run, code):
     """The parts of a running page that move, measured once and reused.
 
     Only running pages need it: pasted code renders the same every time.
+
+    Measured once and never again, which is a real limit and is recorded rather than
+    hidden: the mask decides which pixels are excluded from every later score, so if
+    the page gains or loses motion afterwards every score since is measuring a
+    different area and nothing says so. The reading now carries the time it was taken
+    and how many attempts the run already had, so its age is legible. Re-measuring on
+    a schedule is not implemented, because there is no running page here to test it
+    against and untested re-measurement of the thing that governs every score is worse
+    than a stale reading that admits its date. To force a new one, delete the run's
+    `stability` and `unstable.png`.
     """
     if run["kind"] != "url":
         return None
@@ -3240,6 +3251,8 @@ def _unstable_mask(slug, run, code):
             # Excluding most of the page would leave nothing to score, and every
             # attempt would come back a meaningless 100.
             stats["unscoreable"] = stats["ignored_pct"] > 60
+            stats["measured_at"] = time.time()
+            stats["measured_after"] = len(_attempts(slug))
             if moving.any() and not stats["unscoreable"]:
                 Image.fromarray((moving * 255).astype(np.uint8), mode="L").save(mask_file)
             run["stability"] = stats
@@ -3722,6 +3735,12 @@ MATERIALS_DEFAULT = (
 ).format(cmd=ICON_CMD)
 
 
+# Bumped whenever NEEDS_PROMPT changes. The answer is safe to freeze, because the
+# design does not change, but the question is not: improving the wording used to leave
+# every run already on disk answering the old one forever. Same shape as
+# SCORER_VERSION, and the same bug it was written for.
+NEEDS_VERSION = 1
+
 NEEDS_PROMPT = (
     "Look at this design and list what a rebuild of it will have to draw. Name the "
     "concrete things: how many icons and roughly what they are, whether any panel is "
@@ -3744,9 +3763,16 @@ def describe_needs(slug, agent=None, run=None):
     Kept separate from the materials line rather than replacing it: the tool's half
     goes stale when the tool gains something, and this half does not, so they are not
     the same kind of text and should not share a field.
+
+    Asked again when the question changes, never because the design might have. The
+    answer describes a picture that cannot move, so re-asking it on a whim would spend
+    a call to get the same words back; but the wording of NEEDS_PROMPT is the tool's,
+    and improving it used to leave every run already on disk answering the old
+    question for the rest of its life.
     """
     run = run or _load_run(slug)
-    if run.get("design_needs") is not None:
+    if (run.get("design_needs") is not None
+            and run.get("design_needs_version") == NEEDS_VERSION):
         return run["design_needs"]
     d = _run_dir(slug)
     chosen = pick_agent(agent)
@@ -3764,6 +3790,7 @@ def describe_needs(slug, agent=None, run=None):
         latest = _load_run(slug)
         latest["design_needs"] = text
         latest["design_needs_by"] = chosen
+        latest["design_needs_version"] = NEEDS_VERSION
         _save_run(slug, latest)
     return text
 
