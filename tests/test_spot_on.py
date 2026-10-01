@@ -2003,6 +2003,79 @@ class TheRoundCanRunTheIconScript(unittest.TestCase):
         self.assertTrue(so.ICON_TOOL.is_absolute())
 
 
+def _marked(small=True):
+    """The calibration scene plus a 20x20 mark worth 0.33% of the canvas."""
+    img = scene()
+    d = ImageDraw.Draw(img)
+    if small:
+        d.rectangle([340, 260, 359, 279], fill="#2F6FA8")
+    return img
+
+
+class TheSameComparisonAggregatedSeveralWays(unittest.TestCase):
+    """One number over a whole page is an average, and an average hides small things."""
+
+    def test_the_page_view_is_the_score_itself(self):
+        r = score("close")
+        self.assertEqual(r["views"]["page"], r["match"])
+
+    def test_sections_is_the_mean_of_the_tiles(self):
+        r = score("close")
+        marks = [x["match"] for x in r["region_scores"]]
+        self.assertAlmostEqual(r["views"]["sections"],
+                               round(sum(marks) / len(marks), 1), places=1)
+
+    def test_elements_counts_every_element_not_the_handful_printed(self):
+        r = score("close")
+        self.assertGreaterEqual(r["views"]["element_count"], len(r["element_scores"]))
+        self.assertLessEqual(len(r["element_scores"]), so.ELEMENT_SCORES)
+
+    def test_a_small_element_moves_the_element_view_far_more_than_the_page(self):
+        # The whole reason the views exist. A 20x20 mark is 0.33% of a 400x300 page,
+        # so losing it is nearly invisible to a pixel-weighted score and plain to a
+        # score that gives every element one vote.
+        design, missing = _marked(True), _marked(False)
+        whole = so.score_images(design, design)[0]["views"]
+        gone = so.score_images(design, missing)[0]["views"]
+        page_drop = whole["page"] - gone["page"]
+        element_drop = whole["elements"] - gone["elements"]
+        self.assertGreater(element_drop, page_drop * 3,
+                           "the element view is no more sensitive than the page view")
+
+    def test_the_weighted_view_sits_between_the_other_two(self):
+        # Weighting by the square root of area is the middle position: a small thing
+        # counts without counting the same as the hero.
+        design, missing = _marked(True), _marked(False)
+        whole = so.score_images(design, design)[0]["views"]
+        gone = so.score_images(design, missing)[0]["views"]
+        drops = {k: whole[k] - gone[k] for k in ("page", "elements_sqrt", "elements")}
+        self.assertLess(drops["page"], drops["elements_sqrt"])
+        self.assertLess(drops["elements_sqrt"], drops["elements"])
+
+    def test_the_tail_view_averages_the_worst_and_no_fewer_than_its_floor(self):
+        made = [{"in_place": float(i), "area": 100} for i in range(100)]
+        v = so._views(50.0, [], made)
+        want = sum(range(10)) / 10.0          # a tenth of 100 elements, worst first
+        self.assertAlmostEqual(v["elements_tail"], round(want, 1), places=1)
+        few = so._views(50.0, [], made[:4])
+        self.assertAlmostEqual(few["elements_tail"], round(sum(range(4)) / 4.0, 1), places=1)
+
+    def test_a_page_with_nothing_detected_says_so_rather_than_dividing_by_zero(self):
+        v = so._views(42.0, [], [])
+        self.assertEqual(v["page"], 42.0)
+        self.assertIsNone(v["elements"])
+        self.assertIsNone(v["sections"])
+        self.assertEqual(v["element_count"], 0)
+
+    def test_nothing_selects_on_them_yet(self):
+        # Recorded so the question can be answered from runs that already happened.
+        # The day that changes, this test should change with it, deliberately.
+        history = [{"n": 1, "match": 60.0, "report": {"views": {"page": 60.0, "elements": 10.0}}},
+                   {"n": 2, "match": 55.0, "report": {"views": {"page": 55.0, "elements": 90.0}}}]
+        base, _ = so.iteration_base(history)
+        self.assertEqual(base["n"], 1, "the loop started choosing on a view")
+
+
 class TheEmptyBoxesAreNamedWhereTheyAre(unittest.TestCase):
     """The one item a round can actually close was the only one with no position."""
 

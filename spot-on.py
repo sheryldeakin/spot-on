@@ -1639,7 +1639,9 @@ def _cell_name(cell):
 # Bumped to 2 when the empty-container sentence started naming where the boxes are:
 # nothing about the numbers changed, and a report that still gave only a size range
 # would have gone on being read out for the rest of every run already on disk.
-SCORER_VERSION = 2
+# Bumped to 4 when the views were added, so that a report fetched from an older attempt
+# carries them too and the comparison can be made over runs already finished.
+SCORER_VERSION = 4
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
@@ -1829,15 +1831,18 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     shift_css = (off["vertical"] or {}).get("css_shift", 0)
     try:
         report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css, how=how)
-        report["element_scores"] = _element_scores(
-            ref_img, att_img, g_ref, g_att, px_per_css, how=how)
+        every_element = _element_scores(
+            ref_img, att_img, g_ref, g_att, px_per_css, how=how, limit=None)
+        report["element_scores"] = every_element[:ELEMENT_SCORES]
     except ImportError:
         report["elements"] = None  # scipy missing: page-wide feedback only
         report["element_scores"] = []
+        every_element = []
     # Known only when the design is a live page, and only used to name the typeface.
     report["design_fonts"] = list(design_fonts or [])
     report["artwork"] = _artwork(ref, att)
     report["region_scores"] = _region_scores(ref_img, att_img) if regions else []
+    report["views"] = _views(match, report["region_scores"], every_element)
     report["problems"] = _problems(report)
     return report, per_px, ground
 
@@ -1992,7 +1997,62 @@ def _element_scores(ref_img, att_img, g_ref, g_att, px_per_css=1.0, how=None,
     # Worst first, but weighted by size: a 20px label scoring 40 is not the page's
     # problem when a card the size of a quarter of it scores 55.
     out.sort(key=lambda e: (100.0 - e["in_place"]) * math.sqrt(e["area"]), reverse=True)
-    return out[:limit]
+    # limit=None asks for every element rather than the handful the report prints.
+    # The whole list is computed either way; the cap was only ever about how much
+    # prose a round should be handed.
+    return out if limit is None else out[:limit]
+
+
+ELEMENT_TAIL = 0.10      # share of elements the worst-tail view averages
+ELEMENT_TAIL_MIN = 8     # never fewer than this many, so the tail is not one element
+
+
+def _views(match, regions, elements):
+    """The same comparison aggregated several ways, recorded side by side.
+
+    Nothing selects on these. They are here so that "would weighting it differently
+    have chosen a different page?" can be answered from runs that already happened,
+    rather than by changing what the loop optimises and finding out slowly.
+
+    They differ in what they treat as a unit, which is the whole point. `page` weights
+    every pixel equally, so a 30x24 icon well on a 1536x1024 page is worth 0.046% of it
+    and a loop optimising the score will never spend a round on one: measured, filling
+    eight of them moved the score from 73.9 to 73.9. `sections` weights each ninth of
+    the canvas equally, which sounds different and is not, because equal tiles averaged
+    equally is the same arithmetic as equal pixels: that box is 0.412% of its tile and
+    the tile is a ninth of the mean, so it is worth 0.046% again.
+
+    The three element views are the ones that can see a small thing, and they disagree
+    with each other on purpose, because asked separately both foreign models warned off
+    the obvious one. `elements` is the plain mean, one vote per element: it is the most
+    sensitive and the most gameable, since a page can win on it by drawing forty small
+    things right while one large element stays wrong, and its denominator moves with
+    however many elements the detector happens to find. `elements_sqrt` weights each by
+    the square root of its area, so a 1200x400 banner outweighs a 30x24 icon by 25 to 1
+    instead of 667 to 1: small things count without ceasing to be small. `elements_tail`
+    averages the worst tenth, never fewer than eight, which is the aggregate that makes
+    a few badly wrong elements impossible to average away.
+
+    All of them are computed over the elements of the DESIGN, never the attempt, so a
+    candidate cannot improve its own score by drawing extra small things.
+    """
+    out = {"page": round(match, 1)}
+    marks = [r["match"] for r in regions or []]
+    out["sections"] = round(float(np.mean(marks)), 1) if marks else None
+    scored = [e for e in elements or [] if e.get("in_place") is not None]
+    place = [e["in_place"] for e in scored]
+    if not place:
+        out.update({"elements": None, "elements_sqrt": None, "elements_tail": None,
+                    "element_count": 0, "worst_element": None})
+        return out
+    out["elements"] = round(float(np.mean(place)), 1)
+    weight = np.sqrt([max(1.0, e.get("area") or 1.0) for e in scored])
+    out["elements_sqrt"] = round(float(np.average(place, weights=weight)), 1)
+    tail = max(ELEMENT_TAIL_MIN, int(math.ceil(ELEMENT_TAIL * len(place))))
+    out["elements_tail"] = round(float(np.mean(sorted(place)[:min(tail, len(place))])), 1)
+    out["element_count"] = len(place)
+    out["worst_element"] = round(min(place), 1)
+    return out
 
 
 def _region_scores(ref_img, att_img, n=3):
