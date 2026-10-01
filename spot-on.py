@@ -2955,6 +2955,34 @@ def iteration_base(history, slug=None):
     return best, (latest if latest["n"] != best["n"] else None)
 
 
+def change_cap(match):
+    """How many things a round may change. Nothing: there is no cap, and there was.
+
+    From 2026-09-15 a round that scored 60 or more was told to change at most three
+    things, because at that distance a broad edit was held to break what already
+    matches. The number was never measured and the reasoning does not survive being
+    looked at: the loop keeps the best of several candidates and builds on the best
+    attempt it has, so a reckless edit is discarded. It costs a round, not the page.
+
+    Measured three times before removing it, same seed and rounds per arm, only the
+    instruction differing. At 72.6 a cap of three gained 5.8 against 20.0 uncapped. At
+    85.5, which is the close page the rule was written for, 1.6 against 4.7. On an
+    unrelated design at 79.6, 1.0 against 3.1. The protection it claims did not appear
+    in any of them: rounds that produced nothing better than the page they started
+    from were 1 of 4 either way at 85.5, and 2 of 3 either way at 79.6.
+
+    It also bound hardest where there was most to do. The report names most faults in
+    the middle of a run, 16 to 18 of them through the sixties and seventies, falling
+    to about 6 by the time a page reaches the low nineties. Three changes against
+    eighteen faults is six rounds to touch each once; near the ceiling, where the cap
+    was meant to protect, the list has already shrunk on its own.
+
+    Kept as a function rather than deleted so the decision has somewhere to live and
+    so reinstating a cap means changing one thing.
+    """
+    return None
+
+
 def _spent_section(spent):
     """Tell the round what not to spend its three changes on.
 
@@ -3080,18 +3108,18 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         "restructure working parts for their own sake. Return the complete source, not a patch.",
         "",
     ]
-    if report["match"] < 60:
-        parts += [
-            "The page is still far from the design, so fix everything the report names this round,",
-            "including whole elements that are missing or built the wrong way.",
-        ]
-    else:
-        parts += [
-            "The page is close now, so change at most three things, each on a specific element the",
-            "report names{}. Never apply one rule to every element (for".format(
-                "" if images == "none" else " or the difference map shows"),
-            "example a line height on all text): at this distance that breaks what already matches.",
-        ]
+    cap = change_cap(report["match"])
+    parts += [
+        "Fix what the report names, starting at the top, including whole elements that are",
+        "missing or built the wrong way{}. There is no limit on how many".format(
+            "" if images == "none" else " and anything the difference map shows"),
+        "things you change: a page that scores worse than this one is discarded, so the cost of",
+        "trying something is the round, not the page.",
+        "Never apply one rule to every element (for",
+        "example a line height on all text): at this distance that breaks what already matches.",
+    ]
+    if cap is not None:
+        parts += ["Change at most {} things this round.".format(cap)]
     if run["kind"] == "canvas":
         parts.append("The code is a function body with ctx, W and H already in scope.")
     # What the rebuild is allowed to reach for. A model left to guess writes plain

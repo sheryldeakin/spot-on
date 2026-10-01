@@ -705,15 +705,17 @@ class BestOfN(unittest.TestCase):
 
 
 class PromptShape(unittest.TestCase):
-    def test_far_off_pages_are_told_to_fix_everything(self):
-        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
-                                  1, "<div></div>", score("wrong"), "")
-        self.assertIn("fix everything the report names", text)
-
-    def test_close_pages_are_held_to_three_changes(self):
-        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
-                                  1, "<div></div>", score("close"), "")
-        self.assertIn("at most three things", text)
+    def test_every_page_is_told_to_fix_what_the_report_names(self):
+        # These were two tests, one asserting that a far-off page is told to fix
+        # everything and one that a close page may change at most three things. The
+        # budget is gone, measured three times as costing gain and preventing nothing
+        # (see change_cap), and with it the reason for the pages to be told different
+        # things. What is left is the same instruction at any distance.
+        for case in ("wrong", "close"):
+            text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                      1, "<div></div>", score(case), "")
+            self.assertIn("Fix what the report names", text, case)
+            self.assertNotIn("at most", text, case)
 
     def test_an_agent_that_is_sent_the_images_is_told_they_are_attached(self):
         text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
@@ -2056,6 +2058,49 @@ class TheDesignIsAskedAgainWhenTheQuestionChanges(unittest.TestCase):
         self.assertIsNotNone(run.get("design_needs"))
         so.describe_needs("needs", "claude", run)
         self.assertEqual(len(self.asked), 1)
+
+
+class ThereIsNoLimitOnWhatARoundMayChange(unittest.TestCase):
+    """The budget was never measured, and measuring it was how it ended."""
+
+    def prompt(self, match):
+        rep = score("close")
+        rep["match"] = match
+        return so._iterate_prompt({"name": "x", "kind": "html", "width": W, "height": H},
+                                  1, "<div></div>", rep, "", None, (), "read")
+
+    def test_no_cap_at_any_score(self):
+        for match in (10.0, 45.0, 59.9, 60.0, 72.6, 85.5, 96.0):
+            self.assertIsNone(so.change_cap(match), match)
+
+    def test_the_round_is_not_told_a_number(self):
+        # Regression: from 2026-09-15 a page at 60 or more was told to change at most
+        # three things. Measured three times, same seed and rounds per arm: at 72.6
+        # the cap gained 5.8 against 20.0 uncapped, at 85.5 it was 1.6 against 4.7,
+        # and on an unrelated design at 79.6 it was 1.0 against 3.1.
+        for match in (45.0, 72.6, 90.0):
+            self.assertNotIn("at most", self.prompt(match), match)
+
+    def test_the_round_is_told_why_trying_is_cheap(self):
+        # Which is the reason the cap was never needed: the loop keeps the best of
+        # several candidates and builds on the best attempt, so a reckless edit is
+        # discarded and costs a round rather than the page.
+        self.assertIn("discarded", self.prompt(90.0))
+
+    def test_a_cap_can_be_put_back_in_one_place(self):
+        saved = so.change_cap
+        try:
+            so.change_cap = lambda m: 2
+            self.assertIn("at most 2 things", self.prompt(90.0))
+        finally:
+            so.change_cap = saved
+
+    def test_a_close_page_and_a_far_one_are_told_the_same_thing(self):
+        # The two-branch split went with the cap: there is nothing left to differ.
+        far = [l for l in self.prompt(20.0).splitlines() if "Fix what the report names" in l]
+        close = [l for l in self.prompt(95.0).splitlines() if "Fix what the report names" in l]
+        self.assertEqual(far, close)
+        self.assertTrue(far)
 
 
 class WhatTheReportAskedForAndDidNotGet(unittest.TestCase):
