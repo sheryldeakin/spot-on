@@ -2060,6 +2060,119 @@ class TheDesignIsAskedAgainWhenTheQuestionChanges(unittest.TestCase):
         self.assertEqual(len(self.asked), 1)
 
 
+class EveryProblemHasAPlainHeadline(unittest.TestCase):
+    """Sixteen sentences is four thousand characters. The short version is for reading."""
+
+    def every_sentence(self):
+        out = []
+        for name in CASES:
+            out += score(name).get("problems") or []
+        return out
+
+    def test_every_sentence_the_report_makes_has_one(self):
+        # The check that makes a second wording safe to keep: a template that changes
+        # its words loses its headline here rather than quietly in the page.
+        missed = [p for p in self.every_sentence() if so.problem_headline(p) is None]
+        self.assertEqual(missed, [], "sentences with no headline: %s" % missed[:2])
+
+    def test_a_headline_is_short_enough_to_scan(self):
+        for p in self.every_sentence():
+            head = so.problem_headline(p)
+            self.assertLessEqual(len(head), 60, head)
+            self.assertLess(len(head), len(p), head)
+
+    def test_it_says_where_when_the_sentence_does(self):
+        head = so.problem_headline(
+            "The text at x 11, y 12 (the top, left of the page) is heavier than the "
+            "design: 25% of its box is ink against 16%. That is font-weight.")
+        self.assertIn("Text the wrong weight", head)
+        self.assertIn("top, left", head)
+
+    def test_a_sentence_with_no_place_gets_a_bare_headline(self):
+        head = so.problem_headline(
+            "The letters themselves do not match: 62% of the text lines that are in the "
+            "right place still differ in shape, so the font family or weight is wrong.")
+        self.assertEqual(head, "Wrong typeface")
+
+    def test_an_unknown_sentence_is_admitted_rather_than_guessed_at(self):
+        self.assertIsNone(so.problem_headline("Something nobody has written a rule for."))
+        items = so.problem_items({"problems": ["Something nobody has written a rule for."]})
+        self.assertEqual(items[0]["short"], "Something else")
+
+    def test_the_pairs_match_the_sentences_one_for_one(self):
+        rep = score("wrong")
+        items = so.problem_items(rep)
+        self.assertEqual([i["text"] for i in items], rep["problems"])
+
+    def test_the_report_carries_them(self):
+        rep = score("close")
+        self.assertEqual(len(rep["problem_items"]), len(rep["problems"]))
+        self.assertTrue(all(i["short"] for i in rep["problem_items"]))
+
+    def test_the_sentence_is_kept_not_replaced(self):
+        # The headline cannot be acted on: it does not say which text or by how much.
+        rep = score("close")
+        for item in rep["problem_items"]:
+            self.assertGreater(len(item["text"]), len(item["short"]))
+
+
+class ThingsThePersonWantsFixed(unittest.TestCase):
+    """At a point the score stops being the thing worth chasing."""
+
+    def rounds(self, marks):
+        return [{"n": i + 1, "match": m, "round_seconds": 1.0} for i, m in enumerate(marks)]
+
+    def test_what_the_person_asked_for_comes_first_and_is_marked(self):
+        w = so.worklist([{"n": 1, "next": ["brighten the globe"]}],
+                        [{"text": "the panels are not translucent enough"}])
+        self.assertEqual(w["open"][0]["text"], "the panels are not translucent enough")
+        self.assertTrue(w["open"][0]["asked"])
+        self.assertFalse(w["open"][1]["asked"])
+
+    def test_a_round_closes_it_the_same_way_as_its_own_items(self):
+        w = so.worklist([{"n": 1, "done": ["the logo is too simple"]}],
+                        [{"text": "the logo is too simple"}])
+        self.assertEqual(w["open"], [])
+        self.assertIn("the logo is too simple", w["done"])
+
+    def test_the_round_is_told_these_outrank_the_score(self):
+        text = "\n".join(so._worklist_section(
+            so.worklist([], [{"text": "the panels are not translucent enough"}])))
+        self.assertIn("Asked for by the person", text)
+        self.assertIn("matter more than the", text)
+        self.assertIn("the panels are not translucent enough", text)
+
+    def test_the_person_s_items_are_not_dropped_for_age(self):
+        # The rounds' own list is capped; these are not, because someone looked at
+        # the page and said them.
+        asks = [{"text": "item %d" % i} for i in range(so.WORKLIST_MAX + 5)]
+        w = so.worklist([], asks)
+        self.assertEqual(len([i for i in w["open"] if i["asked"]]), len(asks))
+
+    def test_a_run_that_has_stopped_moving_says_so(self):
+        # Measured over 35 three-round windows on the runs here: the best improved by
+        # less than 0.1 in 37% of them and by less than 0.3 in 69%, so a tenth of a
+        # point separates stopped from slow while a third would cry stall constantly.
+        self.assertTrue(so.has_stalled(self.rounds([70.0, 70.0, 70.05, 70.05, 70.05])))
+        self.assertFalse(so.has_stalled(self.rounds([70.0, 71.0, 72.0, 73.0, 74.0])))
+
+    def test_a_young_run_is_not_called_stalled(self):
+        self.assertFalse(so.has_stalled(self.rounds([70.0, 70.0])))
+        self.assertFalse(so.has_stalled([]))
+
+    def test_only_finished_rounds_count_towards_it(self):
+        # Candidates that were scored and discarded are not rounds.
+        hist = self.rounds([70.0, 70.0, 70.0, 70.0])
+        hist.append({"n": 99, "match": 90.0})          # a candidate, no round_seconds
+        self.assertTrue(so.has_stalled(hist))
+
+    def test_the_page_uses_the_same_two_numbers(self):
+        # They are written twice, once in the tool and once in the page script.
+        page = TOOL.read_text(encoding="utf-8")
+        self.assertIn("var PLATEAU_ROUNDS = %d, PLATEAU_GAIN = %s;"
+                      % (so.PLATEAU_ROUNDS, so.PLATEAU_GAIN), page)
+
+
 class TheRoundsKeepAListBetweenThem(unittest.TestCase):
     """What they could not do, and what they say is still left."""
 

@@ -1890,6 +1890,7 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     report["region_scores"] = _region_scores(ref_img, att_img) if regions else []
     report["views"] = _views(match, report["region_scores"], every_element)
     report["problems"] = _problems(report)
+    report["problem_items"] = problem_items(report)
     residuals = _finding_residuals(ref_img, att_img, report, px_per_css)
     report["repair"], report["penalty"] = repair_objective(match, residuals)
     report["views"]["repair"] = report["repair"]
@@ -2292,6 +2293,82 @@ def _artwork(ref, att, cells=6):
                     int(min(f["row"] for f in found) * h / cells),
                     int((max(f["col"] for f in found) + 1) * w / cells),
                     int((max(f["row"] for f in found) + 1) * h / cells)]}
+
+
+# A sentence from the report says exactly what is wrong, in the units someone would
+# edit, and sixteen of them is four thousand characters of prose. These are the same
+# faults in a few words, for reading down the list; the sentence stays underneath,
+# because the short version is not enough to act on and is not meant to be.
+#
+# Matched on the phrase each template is built around rather than on how it opens,
+# since the coordinates come early and make 504 distinct openings out of a handful of
+# shapes. The pairing is checked against every sentence in every stored report, so a
+# template that changes its wording fails a test rather than quietly losing its
+# headline.
+PROBLEM_HEADLINES = [
+    (r"letters themselves do not match", "Wrong typeface"),
+    (r"source asks for .* Use that rather than guessing", "Typeface named in the source"),
+    (r"draw a container the right size in the right place and leave it empty",
+     "Icon wells left empty"),
+    (r"(is|are) the right size in the right place but empty", "Container left empty"),
+    (r"The palette is off by", "Colours slightly off"),
+    (r"panels are the wrong shade", "Panels the wrong alpha"),
+    (r"That is font-size", "Text the wrong size"),
+    (r"That is font-weight", "Text the wrong weight"),
+    (r"That is font-style", "Text slanted wrongly"),
+    (r"is bold in the design and is not here|set heavier in the design than in the attempt",
+     "A phrase should be bold"),
+    (r"page behind the content is the wrong colour", "Page colour wrong"),
+    (r"Colours in the design with no close match", "Colours missing"),
+    (r"has nothing drawn near it", "Part of the design not drawn"),
+    (r"Nothing in the attempt matches", "Element missing"),
+    (r"scores [\d.]+ on its own against", "Element badly wrong"),
+    (r"items in the row at y", "Row spacing wrong"),
+    (r"The gap above the (box|text) at y", "Gap the wrong size"),
+    (r"share a left edge", "Edges not lined up"),
+    (r"is not underlined in the|underlined", "Underline missing"),
+    (r"lines of text at y .* sit \d+px apart", "Lines too far apart or too close"),
+    (r"content sits about \d+px (lower|higher)", "Lower part of the page shifted"),
+    (r"sit \d+px to the (left|right), compared", "Elements shifted sideways"),
+    (r"sit \d+px (higher|lower), compared", "Elements shifted up or down"),
+    (r"is \d+px (taller|shorter)", "Box the wrong height"),
+    (r"scores [\d.]+ where the design", "Element badly wrong"),
+    (r"(wider|narrower) \(\d+px against", "Element the wrong width"),
+    (r"is artwork rather than layout", "Artwork, not something to code"),
+    (r"The page is uneven", "Uneven across the page"),
+    (r"The worst area is", "Worst area"),
+    (r"Content sits about .*px further", "Everything shifted"),
+    (r"Close on every axis", "As close as pixels go"),
+    (r"narrower|shorter|sits \d+px", "Box wrong size or place"),
+
+]
+
+
+def _where_in(sentence):
+    """The plain-words location the sentence already carries, if it carries one."""
+    found = re.search(r"\(([^()]*?(?:top|middle|bottom|centre|left|right)[^()]*?)\)", sentence)
+    if not found:
+        return ""
+    where = found.group(1)
+    where = re.sub(r"^\d+x\d+px,\s*", "", where).replace(" of the page", "").strip()
+    where = re.sub(r"^the\s+", "", where)
+    return where if len(where) < 40 else ""
+
+
+def problem_headline(sentence):
+    """Three or four words for a sentence, or None if nothing matches it."""
+    flat = " ".join((sentence or "").split())
+    for pattern, label in PROBLEM_HEADLINES:
+        if re.search(pattern, flat):
+            where = _where_in(flat)
+            return "{} ({})".format(label, where) if where else label
+    return None
+
+
+def problem_items(report):
+    """Each problem as a headline and the sentence it stands for."""
+    return [{"short": problem_headline(p) or "Something else", "text": p}
+            for p in (report.get("problems") or [])]
 
 
 def _problems(report):
@@ -2898,6 +2975,9 @@ def run_agent(agent, prompt, cwd, images, schema=True):
     return _run_api_agent(agent, prompt, images)
 
 
+PLATEAU_ROUNDS = 3       # rounds of no real gain before the page asks what else is wrong
+PLATEAU_GAIN = 0.1       # improvement over those rounds that still counts as none
+ASKS_MAX = 20            # standing requests kept on a run
 WORKLIST_MAX = 12        # items carried; past this the oldest untouched ones drop off
 WORKLIST_WORDS = 14      # an item is a line, not a paragraph
 
@@ -2935,7 +3015,30 @@ def _trim_item(text):
     return " ".join(words[:WORKLIST_WORDS]) + ("..." if len(words) > WORKLIST_WORDS else "")
 
 
-def worklist(history):
+def has_stalled(history, rounds=PLATEAU_ROUNDS, gain=PLATEAU_GAIN):
+    """Has the best score stopped moving?
+
+    Measured over the runs here: across 35 windows of three consecutive rounds, the
+    best score improved by less than 0.1 in 37% of them and by less than 0.3 in 69%.
+    So a tenth of a point over three rounds separates a run that has stopped from one
+    that is merely slow, while a third of a point would call two runs in three stalled
+    and say so constantly.
+
+    This is only used to ask the person whether anything still bothers them. Nothing
+    about the loop changes: at this distance the score has stopped being the thing
+    worth chasing, and they can see what it cannot.
+    """
+    best, seen = -1.0, []
+    for a in sorted(history, key=lambda r: r["n"]):
+        best = max(best, a["match"])
+        if "round_seconds" in a:
+            seen.append(best)
+    if len(seen) <= rounds:
+        return False
+    return seen[-1] - seen[-1 - rounds] < gain
+
+
+def worklist(history, asks=()):
     """What the rounds say they could not do, and what they say is still left.
 
     Taken from fields the round fills in rather than parsed out of its prose. A third
@@ -2954,6 +3057,12 @@ def worklist(history):
     the rest is the round's own account and is shown as that.
     """
     open_items, blocked, closed = [], [], set()
+    # The person's own items come first and are never dropped for age: the rounds
+    # raise what they noticed, these are what someone looked at the page and wanted.
+    for ask in (asks or []):
+        t = _trim_item(ask.get("text") if isinstance(ask, dict) else ask)
+        if t:
+            open_items.append({"text": t, "since": None, "asked": True})
     for a in sorted(history, key=lambda r: r["n"]):
         for said in (a.get("done") or []):
             got = _trim_item(said).lower()
@@ -2962,13 +3071,15 @@ def worklist(history):
         for item in (a.get("next") or []):
             t = _trim_item(item)
             if t and t.lower() not in {i["text"].lower() for i in open_items}:
-                open_items.append({"text": t, "since": a["n"]})
+                open_items.append({"text": t, "since": a["n"], "asked": False})
         for item in (a.get("blocked") or []):
             t = _trim_item(item)
             if t and t.lower() not in {i["text"].lower() for i in blocked}:
                 blocked.append({"text": t, "since": a["n"]})
     still = [i for i in open_items if i["text"].lower() not in closed]
-    return {"open": still[-WORKLIST_MAX:], "blocked": blocked[-WORKLIST_MAX:],
+    mine = [i for i in still if i.get("asked")]
+    theirs = [i for i in still if not i.get("asked")]
+    return {"open": mine + theirs[-WORKLIST_MAX:], "blocked": blocked[-WORKLIST_MAX:],
             "done": sorted(closed)}
 
 
@@ -2977,10 +3088,19 @@ def _worklist_section(lists):
     if not lists:
         return []
     out = []
-    if lists.get("open"):
+    mine = [i for i in lists.get("open") or [] if i.get("asked")]
+    theirs = [i for i in lists.get("open") or [] if not i.get("asked")]
+    if mine:
+        out.append("Asked for by the person whose design this is. These matter more than the")
+        out.append("score: they looked at the page and these are what they want fixed.")
+        for item in mine:
+            out.append("  {}".format(item["text"]))
+        out.append("")
+    if theirs:
         out.append("Left over from earlier rounds, by their own account:")
-        for item in lists["open"]:
+        for item in theirs:
             out.append("  {} (since attempt {})".format(item["text"], item["since"]))
+    if mine or theirs:
         out += ["Finish one and copy its line into `done` exactly. Do not name one you did not",
                 "do: the report measures the page, not this list.", ""]
     if lists.get("blocked"):
@@ -3314,7 +3434,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
                              rejected_changes(history, base), image_access, stuck, spent,
-                             worklist(history))
+                             worklist(history, run.get("asks")))
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -4249,7 +4369,16 @@ PAGE_HTML = r"""<!doctype html>
     transition: transform 150ms ease; }
   #code-fold[open] .code-summary::before { transform: rotate(90deg); }
   #code-fold[open] .code-summary { margin-bottom: 8px; }
-  .comp-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 12px; align-items: center; min-height: 30px; }
+  .scroll-pane::-webkit-scrollbar { width: 7px; }
+.scroll-pane::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 4px;
+}
+.scroll-pane::-webkit-scrollbar-track { background: transparent; }
+.pane-count {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint); margin: 0 0 6px;
+}
+.comp-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 12px; align-items: center; min-height: 30px; }
   .comp-name { font-size: 13px; font-weight: 500; }
   .comp-val { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; font-weight: 500; color: var(--deep); font-variant-numeric: tabular-nums; }
 
@@ -4568,9 +4697,16 @@ PAGE_HTML = r"""<!doctype html>
           </div>
 
           <div class="rule13" style="margin: 20px 0 8px;"></div>
-          <div id="problems"></div>
-          <div id="element-scores" style="margin-top: 16px;"></div>
-          <div id="worklist" style="margin-top: 18px;"></div>
+          <div class="scroll-pane" id="problems" style="max-height: 300px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
+          <div class="scroll-pane" id="element-scores" style="margin-top: 16px; max-height: 300px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
+          <div class="scroll-pane" id="worklist" style="margin-top: 18px; max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
+          <div id="ask-row" style="display: flex; gap: 8px; margin-top: 10px;">
+            <input type="text" id="ask-text" class="text-input" maxlength="200"
+                   placeholder="Something that still bothers you, for example the panels are not translucent enough"
+                   style="flex: 1; min-width: 200px;">
+            <button id="ask-add" class="btn">Add</button>
+          </div>
+          <div id="ask-nudge" hidden style="margin-top: 9px; font-size: 12px; line-height: 1.5; color: var(--muted);"></div>
           <div id="palette-row" style="display: flex; align-items: center; gap: 14px; margin-top: 12px; flex-wrap: wrap;"></div>
         </div>
       </div>
@@ -4927,6 +5063,8 @@ function handleFile(file) {
   reader.readAsDataURL(file);
 }
 
+$("ask-add").addEventListener("click", addAsk);
+$("ask-text").addEventListener("keydown", function (e) { if (e.key === "Enter") addAsk(); });
 $("pick-file").addEventListener("click", function () { $("file-input").click(); });
 $("file-input").addEventListener("change", function (e) {
   if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
@@ -5300,7 +5438,7 @@ function renderWorklist() {
           blocked.push(String(t));
       });
     });
-  if (!open.length && !blocked.length) return;
+  if (!open.length && !blocked.length && !(state.run && (state.run.asks || []).length)) return;
 
   function heading(text, note) {
     var h = document.createElement("div");
@@ -5311,7 +5449,7 @@ function renderWorklist() {
     if (note) h.title = note;
     return h;
   }
-  function bullet(text, done, since) {
+  function bullet(text, done, since, asked) {
     var row = document.createElement("div");
     row.style.cssText = "display:flex; gap:9px; align-items:baseline; font-size:12px;"
       + " line-height:1.6; color:" + (done ? "var(--faint)" : "var(--ink)") + ";";
@@ -5324,6 +5462,20 @@ function renderWorklist() {
     if (done) body.style.textDecoration = "line-through";
     row.appendChild(mark);
     row.appendChild(body);
+    if (asked && !done) {
+      var drop = document.createElement("button");
+      drop.textContent = "x";
+      drop.title = "Remove this from the list";
+      drop.className = "mono";
+      drop.style.cssText = "background:none; border:0; color:var(--faint); cursor:pointer;"
+        + " font-size:11px; padding:0 2px; flex:none;";
+      drop.addEventListener("click", function () {
+        api("/asks", { run: state.run.slug, remove: text }).then(function (run) {
+          state.run = run; renderWorklist();
+        });
+      });
+      row.appendChild(drop);
+    }
     if (since !== undefined) {
       var when = document.createElement("span");
       when.className = "mono";
@@ -5334,15 +5486,34 @@ function renderWorklist() {
     return row;
   }
 
+  (state.run && state.run.asks || []).slice().reverse().forEach(function (a) {
+    var t = String(a.text || a);
+    if (!open.some(function (o) { return o.text.toLowerCase() === t.toLowerCase(); }))
+      open.unshift({ text: t, asked: true });
+  });
   var still = open.filter(function (o) { return !closed[o.text.toLowerCase()]; });
   var finished = open.filter(function (o) { return closed[o.text.toLowerCase()]; });
   if (still.length || finished.length) {
     host.appendChild(heading("what the rounds say is left",
       "Written by the rounds themselves, not measured. An item is crossed off when a later round says it finished it."));
-    still.forEach(function (o) { host.appendChild(bullet(o.text, false, o.since)); });
-    finished.forEach(function (o) {
-      host.appendChild(bullet(o.text, true, closed[o.text.toLowerCase()]));
+    still.forEach(function (o) {
+      host.appendChild(bullet(o.text, false, o.since, o.asked));
     });
+    finished.forEach(function (o) {
+      host.appendChild(bullet(o.text, true, closed[o.text.toLowerCase()], o.asked));
+    });
+  }
+  var nudge = $("ask-nudge");
+  // Asked, never switched. Past a point the score stops being the thing worth
+  // chasing: a perfect repair of seven icon wells on one page was worth 0.3 of it.
+  // The person can see what it cannot, so the page asks rather than deciding.
+  if (state.stalled && !still.some(function (o) { return o.asked; })) {
+    nudge.hidden = false;
+    nudge.textContent = "The score has not moved in the last few rounds. If something still"
+      + " looks wrong to you, add it above: the rounds will work on it by name, and it will"
+      + " be crossed off here when one of them says it is done.";
+  } else {
+    nudge.hidden = true;
   }
   if (blocked.length) {
     host.appendChild(heading("reported as impossible here",
@@ -5350,6 +5521,18 @@ function renderWorklist() {
     blocked.forEach(function (t) { host.appendChild(bullet(t, false)); });
   }
 }
+
+function addAsk() {
+  var box = $("ask-text");
+  var text = (box.value || "").trim();
+  if (!text || !state.run) return;
+  api("/asks", { run: state.run.slug, add: text }).then(function (run) {
+    state.run = run;
+    box.value = "";
+    renderWorklist();
+  });
+}
+
 
 function renderScore() {
   var rec = current();
@@ -5433,11 +5616,39 @@ function renderScore() {
   renderWorklist();
   var pr = $("problems");
   pr.innerHTML = "";
-  rep.problems.forEach(function (p, i) {
+  if (rep.problems.length) {
+    var count = document.createElement("div");
+    count.className = "mono pane-count";
+    count.textContent = rep.problems.length + " things to fix, worst first";
+    pr.appendChild(count);
+  }
+  // The headline is for reading down the list; the sentence under it is what can be
+  // acted on, and says the numbers and the units. Both, because neither alone does
+  // the job: sixteen sentences is four thousand characters, and "text the wrong size"
+  // does not say which text or by how much.
+  var items = rep.problem_items || rep.problems.map(function (t) { return { short: null, text: t }; });
+  items.forEach(function (it, i) {
     var row = document.createElement("div");
     row.className = "problem";
-    row.innerHTML = '<span class="n">' + ("0" + (i + 1)).slice(-2) + '</span><span></span>';
-    row.lastChild.textContent = p;
+    row.style.cssText = "align-items: baseline;";
+    var num = document.createElement("span");
+    num.className = "n";
+    num.textContent = ("0" + (i + 1)).slice(-2);
+    var body = document.createElement("span");
+    if (it.short) {
+      var head = document.createElement("div");
+      head.textContent = it.short;
+      head.style.cssText = "font-weight: 500;";
+      var full = document.createElement("div");
+      full.textContent = it.text;
+      full.style.cssText = "font-size: 11px; line-height: 1.5; color: var(--muted); margin-top: 2px;";
+      body.appendChild(head);
+      body.appendChild(full);
+    } else {
+      body.textContent = it.text;
+    }
+    row.appendChild(num);
+    row.appendChild(body);
     pr.appendChild(row);
   });
 
@@ -5688,7 +5899,24 @@ window.addEventListener("scroll", function () {
   if (cur !== state.track) { state.track = cur; renderTrack(); }
 }, { passive: true });
 
+// The same rule as has_stalled in the tool: the best score improving by less than
+// PLATEAU_GAIN over PLATEAU_ROUNDS rounds. A test checks these two numbers against
+// the tool's, because they are written twice and would otherwise drift apart.
+var PLATEAU_ROUNDS = 3, PLATEAU_GAIN = 0.1;
+
+function hasStalled(attempts) {
+  var best = -1, seen = [];
+  (attempts || []).slice().sort(function (a, b) { return a.n - b.n; }).forEach(function (a) {
+    best = Math.max(best, a.match);
+    if (a.round_seconds !== undefined) seen.push(best);
+  });
+  if (seen.length <= PLATEAU_ROUNDS) return false;
+  return seen[seen.length - 1] - seen[seen.length - 1 - PLATEAU_ROUNDS] < PLATEAU_GAIN;
+}
+
+
 function renderAll() {
+  state.stalled = hasStalled(state.attempts);
   $("attempt-meta").textContent = state.run
     ? state.attempts.length + " attempts, best " + (state.run.best_match >= 0 ? state.run.best_match.toFixed(1) : "-")
     : "";
@@ -5856,6 +6084,18 @@ class Handler(BaseHTTPRequestHandler):
                 run["materials_custom"] = True
                 _save_run(payload["run"], run)
                 run["materials"] = materials_for(run)
+                self._send_json(200, run)
+            elif path == "/asks":
+                run = _load_run(payload["run"])
+                asks = list(run.get("asks") or [])
+                text = " ".join((payload.get("add") or "").split())[:200]
+                if text:
+                    asks.append({"text": text, "added": time.time()})
+                drop = (payload.get("remove") or "").strip().lower()
+                if drop:
+                    asks = [a for a in asks if a.get("text", "").lower() != drop]
+                run["asks"] = asks[-ASKS_MAX:]
+                _save_run(payload["run"], run)
                 self._send_json(200, run)
             elif path == "/kind":
                 run = _load_run(payload["run"])
