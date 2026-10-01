@@ -1,0 +1,2111 @@
+{
+ "designs": 7,
+ "totals": {
+  "boxes": 92,
+  "readable": 64,
+  "absent": 42,
+  "named": 2,
+  "no_opinion": 48
+ },
+ "runs": [
+  {
+   "run": "ab-one-job",
+   "boxes": [
+    {
+     "x": 639,
+     "y": 411,
+     "w": 25,
+     "h": 21,
+     "top": [
+      [
+       "shield",
+       0.962
+      ],
+      [
+       "shield-ellipsis",
+       0.932
+      ],
+      [
+       "shield-alert",
+       0.887
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 373,
+     "y": 411,
+     "w": 29,
+     "h": 21,
+     "top": [
+      [
+       "book-open",
+       0.879
+      ],
+      [
+       "book-open-check",
+       0.766
+      ],
+      [
+       "book-open-text",
+       0.757
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 901,
+     "y": 411,
+     "w": 27,
+     "h": 21,
+     "top": [
+      [
+       "lasso",
+       0.75
+      ],
+      [
+       "presentation",
+       0.684
+      ],
+      [
+       "laptop-2",
+       0.668
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 98,
+     "y": 20,
+     "w": 57,
+     "h": 49,
+     "top": [
+      [
+       "ferris-wheel",
+       0.716
+      ],
+      [
+       "shield-half",
+       0.707
+      ],
+      [
+       "dessert",
+       0.684
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.716
+     }
+    }
+   ]
+  },
+  {
+   "run": "bl-with",
+   "boxes": [
+    {
+     "x": 542,
+     "y": 497,
+     "w": 39,
+     "h": 30,
+     "top": [
+      [
+       "heart",
+       0.984
+      ],
+      [
+       "heart-minus",
+       0.918
+      ],
+      [
+       "heart-plus",
+       0.9
+      ]
+     ],
+     "verdict": {
+      "name": "heart",
+      "score": 0.984
+     }
+    },
+    {
+     "x": 1106,
+     "y": 431,
+     "w": 30,
+     "h": 25,
+     "top": [
+      [
+       "badge",
+       0.956
+      ],
+      [
+       "circle",
+       0.953
+      ],
+      [
+       "circle-ellipsis",
+       0.928
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 47,
+     "y": 380,
+     "w": 27,
+     "h": 25,
+     "top": [
+      [
+       "map-pin-plus-inside",
+       0.94
+      ],
+      [
+       "map-pin-x-inside",
+       0.93
+      ],
+      [
+       "map-pin-check-inside",
+       0.894
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1106,
+     "y": 543,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "badge",
+       0.928
+      ],
+      [
+       "circle",
+       0.927
+      ],
+      [
+       "circle-small",
+       0.913
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 634,
+     "y": 928,
+     "w": 29,
+     "h": 23,
+     "top": [
+      [
+       "circle",
+       0.928
+      ],
+      [
+       "badge",
+       0.927
+      ],
+      [
+       "circle-small",
+       0.918
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 634,
+     "y": 861,
+     "w": 29,
+     "h": 23,
+     "top": [
+      [
+       "circle-small",
+       0.924
+      ],
+      [
+       "badge",
+       0.916
+      ],
+      [
+       "circle",
+       0.895
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 634,
+     "y": 894,
+     "w": 29,
+     "h": 23,
+     "top": [
+      [
+       "badge",
+       0.923
+      ],
+      [
+       "circle",
+       0.92
+      ],
+      [
+       "circle-small",
+       0.918
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1435,
+     "y": 665,
+     "w": 51,
+     "h": 37,
+     "top": [
+      [
+       "wifi",
+       0.922
+      ],
+      [
+       "wifi-off",
+       0.599
+      ],
+      [
+       "layer-arrow-down",
+       0.596
+      ]
+     ],
+     "verdict": {
+      "name": "wifi",
+      "score": 0.922
+     }
+    },
+    {
+     "x": 1106,
+     "y": 468,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "circle",
+       0.914
+      ],
+      [
+       "badge",
+       0.902
+      ],
+      [
+       "circle-small",
+       0.894
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 973,
+     "y": 264,
+     "w": 30,
+     "h": 33,
+     "top": [
+      [
+       "lightbulb",
+       0.911
+      ],
+      [
+       "venus",
+       0.882
+      ],
+      [
+       "ice-cream",
+       0.858
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1106,
+     "y": 394,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "circle-small",
+       0.905
+      ],
+      [
+       "badge",
+       0.903
+      ],
+      [
+       "circle",
+       0.885
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1106,
+     "y": 505,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "circle-small",
+       0.904
+      ],
+      [
+       "badge",
+       0.901
+      ],
+      [
+       "circle",
+       0.889
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 634,
+     "y": 961,
+     "w": 29,
+     "h": 23,
+     "top": [
+      [
+       "circle-small",
+       0.904
+      ],
+      [
+       "badge",
+       0.881
+      ],
+      [
+       "circle",
+       0.866
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1473,
+     "y": 829,
+     "w": 23,
+     "h": 18,
+     "top": [
+      [
+       "plus",
+       0.903
+      ],
+      [
+       "move",
+       0.749
+      ],
+      [
+       "arrow-down-to-dot",
+       0.742
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 367,
+     "y": 926,
+     "w": 33,
+     "h": 27,
+     "top": [
+      [
+       "dot",
+       0.895
+      ],
+      [
+       "wifi-zero",
+       0.829
+      ],
+      [
+       "signal-zero",
+       0.829
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 885,
+     "y": 961,
+     "w": 32,
+     "h": 25,
+     "top": [
+      [
+       "dot",
+       0.889
+      ],
+      [
+       "ship-wheel",
+       0.845
+      ],
+      [
+       "cog",
+       0.794
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 970,
+     "y": 496,
+     "w": 36,
+     "h": 32,
+     "top": [
+      [
+       "locate",
+       0.869
+      ],
+      [
+       "virus",
+       0.845
+      ],
+      [
+       "loader",
+       0.783
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 178,
+     "y": 612,
+     "w": 42,
+     "h": 35,
+     "top": [
+      [
+       "dot",
+       0.865
+      ],
+      [
+       "wifi-zero",
+       0.81
+      ],
+      [
+       "signal-zero",
+       0.81
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 713,
+     "y": 49,
+     "w": 28,
+     "h": 22,
+     "top": [
+      [
+       "check-square",
+       0.86
+      ],
+      [
+       "scaling",
+       0.715
+      ],
+      [
+       "check-square-2",
+       0.705
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 987,
+     "y": 45,
+     "w": 30,
+     "h": 25,
+     "top": [
+      [
+       "settings",
+       0.854
+      ],
+      [
+       "shield-plus",
+       0.78
+      ],
+      [
+       "shield-keyhole",
+       0.768
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 621,
+     "y": 46,
+     "w": 30,
+     "h": 25,
+     "top": [
+      [
+       "calendar-1",
+       0.843
+      ],
+      [
+       "calendar-minus-2",
+       0.838
+      ],
+      [
+       "calendar",
+       0.837
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1470,
+     "y": 35,
+     "w": 27,
+     "h": 33,
+     "top": [
+      [
+       "clef-treble",
+       0.842
+      ],
+      [
+       "bluetooth",
+       0.794
+      ],
+      [
+       "bluetooth-connected",
+       0.766
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 755,
+     "y": 151,
+     "w": 37,
+     "h": 31,
+     "top": [
+      [
+       "calendar-days",
+       0.842
+      ],
+      [
+       "calendar-range",
+       0.839
+      ],
+      [
+       "calendar-1",
+       0.8
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 441,
+     "y": 44,
+     "w": 31,
+     "h": 25,
+     "top": [
+      [
+       "dot",
+       0.839
+      ],
+      [
+       "signal-zero",
+       0.741
+      ],
+      [
+       "wifi-zero",
+       0.741
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 78,
+     "y": 698,
+     "w": 44,
+     "h": 37,
+     "top": [
+      [
+       "circle-small",
+       0.834
+      ],
+      [
+       "omega",
+       0.797
+      ],
+      [
+       "hexagon",
+       0.736
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 112,
+     "y": 27,
+     "w": 18,
+     "h": 21,
+     "top": [
+      [
+       "music-3",
+       0.827
+      ],
+      [
+       "corner-right-up",
+       0.718
+      ],
+      [
+       "tally-2",
+       0.583
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 591,
+     "y": 691,
+     "w": 21,
+     "h": 14,
+     "top": [
+      [
+       "dot",
+       0.815
+      ],
+      [
+       "bluetooth",
+       0.761
+      ],
+      [
+       "wifi-zero",
+       0.734
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 754,
+     "y": 598,
+     "w": 39,
+     "h": 28,
+     "top": [
+      [
+       "book-open",
+       0.804
+      ],
+      [
+       "mailbox",
+       0.763
+      ],
+      [
+       "book-open-text",
+       0.751
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 134,
+     "y": 28,
+     "w": 31,
+     "h": 21,
+     "top": [
+      [
+       "drafting-compass",
+       0.797
+      ],
+      [
+       "traffic-cone",
+       0.648
+      ],
+      [
+       "concierge-bell",
+       0.636
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 542,
+     "y": 265,
+     "w": 38,
+     "h": 32,
+     "top": [
+      [
+       "circle-power",
+       0.794
+      ],
+      [
+       "face-slightly-smiling-plus",
+       0.776
+      ],
+      [
+       "circle-star",
+       0.749
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.794
+     }
+    },
+    {
+     "x": 1134,
+     "y": 61,
+     "w": 43,
+     "h": 34,
+     "top": [
+      [
+       "plus",
+       0.79
+      ],
+      [
+       "git-commit",
+       0.75
+      ],
+      [
+       "bluetooth-connected",
+       0.741
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.79
+     }
+    },
+    {
+     "x": 177,
+     "y": 695,
+     "w": 44,
+     "h": 39,
+     "top": [
+      [
+       "cog",
+       0.785
+      ],
+      [
+       "ship-wheel",
+       0.768
+      ],
+      [
+       "virus",
+       0.758
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.785
+     }
+    },
+    {
+     "x": 53,
+     "y": 960,
+     "w": 29,
+     "h": 26,
+     "top": [
+      [
+       "dot",
+       0.783
+      ],
+      [
+       "briefcase-conveyor-belt",
+       0.752
+      ],
+      [
+       "luggage",
+       0.748
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.783
+     }
+    },
+    {
+     "x": 272,
+     "y": 694,
+     "w": 42,
+     "h": 37,
+     "top": [
+      [
+       "dot",
+       0.782
+      ],
+      [
+       "signal-zero",
+       0.731
+      ],
+      [
+       "wifi-zero",
+       0.731
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.782
+     }
+    },
+    {
+     "x": 272,
+     "y": 612,
+     "w": 42,
+     "h": 33,
+     "top": [
+      [
+       "dot",
+       0.78
+      ],
+      [
+       "tree-pine",
+       0.703
+      ],
+      [
+       "signal-zero",
+       0.671
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.78
+     }
+    },
+    {
+     "x": 53,
+     "y": 860,
+     "w": 29,
+     "h": 26,
+     "top": [
+      [
+       "dot",
+       0.763
+      ],
+      [
+       "briefcase-conveyor-belt",
+       0.74
+      ],
+      [
+       "luggage",
+       0.726
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.763
+     }
+    },
+    {
+     "x": 53,
+     "y": 893,
+     "w": 29,
+     "h": 26,
+     "top": [
+      [
+       "dot",
+       0.758
+      ],
+      [
+       "briefcase-conveyor-belt",
+       0.744
+      ],
+      [
+       "luggage",
+       0.732
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.758
+     }
+    },
+    {
+     "x": 931,
+     "y": 691,
+     "w": 22,
+     "h": 23,
+     "top": [
+      [
+       "ribbon",
+       0.752
+      ],
+      [
+       "tally-2",
+       0.713
+      ],
+      [
+       "chess-rook",
+       0.699
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 53,
+     "y": 927,
+     "w": 29,
+     "h": 26,
+     "top": [
+      [
+       "dot",
+       0.751
+      ],
+      [
+       "luggage",
+       0.735
+      ],
+      [
+       "briefcase-conveyor-belt",
+       0.734
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.751
+     }
+    },
+    {
+     "x": 348,
+     "y": 430,
+     "w": 27,
+     "h": 21,
+     "top": [
+      [
+       "git-commit-vertical",
+       0.748
+      ],
+      [
+       "git-commit",
+       0.746
+      ],
+      [
+       "sun",
+       0.691
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 348,
+     "y": 464,
+     "w": 28,
+     "h": 22,
+     "top": [
+      [
+       "git-commit-vertical",
+       0.74
+      ],
+      [
+       "git-commit",
+       0.739
+      ],
+      [
+       "signal-zero",
+       0.709
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 530,
+     "y": 45,
+     "w": 30,
+     "h": 26,
+     "top": [
+      [
+       "pentagon",
+       0.739
+      ],
+      [
+       "power",
+       0.737
+      ],
+      [
+       "circle-small",
+       0.716
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.739
+     }
+    },
+    {
+     "x": 894,
+     "y": 47,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "chevron-down-circle",
+       0.738
+      ],
+      [
+       "disc",
+       0.734
+      ],
+      [
+       "radius",
+       0.721
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.738
+     }
+    },
+    {
+     "x": 891,
+     "y": 861,
+     "w": 21,
+     "h": 24,
+     "top": [
+      [
+       "award",
+       0.732
+      ],
+      [
+       "music-3",
+       0.709
+      ],
+      [
+       "bitcoin",
+       0.689
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 78,
+     "y": 615,
+     "w": 45,
+     "h": 31,
+     "top": [
+      [
+       "radio",
+       0.73
+      ],
+      [
+       "radio-off",
+       0.627
+      ],
+      [
+       "smartphone-nfc",
+       0.615
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.73
+     }
+    },
+    {
+     "x": 170,
+     "y": 28,
+     "w": 27,
+     "h": 21,
+     "top": [
+      [
+       "flag-off",
+       0.721
+      ],
+      [
+       "flag",
+       0.666
+      ],
+      [
+       "users-2",
+       0.626
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 885,
+     "y": 928,
+     "w": 31,
+     "h": 25,
+     "top": [
+      [
+       "dot",
+       0.71
+      ],
+      [
+       "ship-wheel",
+       0.69
+      ],
+      [
+       "shopping-basket",
+       0.687
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.71
+     }
+    },
+    {
+     "x": 230,
+     "y": 790,
+     "w": 21,
+     "h": 14,
+     "top": [
+      [
+       "spline",
+       0.707
+      ],
+      [
+       "maximize-2",
+       0.543
+      ],
+      [
+       "repeat",
+       0.542
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 367,
+     "y": 892,
+     "w": 33,
+     "h": 28,
+     "top": [
+      [
+       "bus-front",
+       0.707
+      ],
+      [
+       "package-open",
+       0.701
+      ],
+      [
+       "ship-cargo",
+       0.699
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.707
+     }
+    },
+    {
+     "x": 803,
+     "y": 47,
+     "w": 29,
+     "h": 24,
+     "top": [
+      [
+       "cylinder",
+       0.695
+      ],
+      [
+       "calendar-fold",
+       0.686
+      ],
+      [
+       "file-minus-2",
+       0.655
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.695
+     }
+    },
+    {
+     "x": 364,
+     "y": 609,
+     "w": 41,
+     "h": 38,
+     "top": [
+      [
+       "dot",
+       0.694
+      ],
+      [
+       "signal-zero",
+       0.626
+      ],
+      [
+       "wifi-zero",
+       0.626
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.694
+     }
+    },
+    {
+     "x": 200,
+     "y": 29,
+     "w": 30,
+     "h": 20,
+     "top": [
+      [
+       "chevron-down",
+       0.684
+      ],
+      [
+       "navigation",
+       0.597
+      ],
+      [
+       "ice-cream",
+       0.56
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 362,
+     "y": 691,
+     "w": 45,
+     "h": 40,
+     "top": [
+      [
+       "package-open",
+       0.677
+      ],
+      [
+       "philippine-peso",
+       0.661
+      ],
+      [
+       "ship-wheel",
+       0.644
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.677
+     }
+    },
+    {
+     "x": 252,
+     "y": 29,
+     "w": 26,
+     "h": 21,
+     "top": [
+      [
+       "cooking-pot",
+       0.661
+      ],
+      [
+       "ship-cargo",
+       0.644
+      ],
+      [
+       "notepad-text",
+       0.629
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 369,
+     "y": 861,
+     "w": 30,
+     "h": 24,
+     "top": [
+      [
+       "share-2",
+       0.661
+      ],
+      [
+       "shuffle",
+       0.599
+      ],
+      [
+       "dot",
+       0.558
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.661
+     }
+    },
+    {
+     "x": 367,
+     "y": 959,
+     "w": 33,
+     "h": 27,
+     "top": [
+      [
+       "barrel",
+       0.653
+      ],
+      [
+       "flower",
+       0.645
+      ],
+      [
+       "contact",
+       0.643
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.653
+     }
+    },
+    {
+     "x": 887,
+     "y": 895,
+     "w": 28,
+     "h": 22,
+     "top": [
+      [
+       "telescope",
+       0.613
+      ],
+      [
+       "dot",
+       0.587
+      ],
+      [
+       "wheat",
+       0.577
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 349,
+     "y": 499,
+     "w": 24,
+     "h": 20,
+     "top": [
+      [
+       "dot",
+       0.597
+      ],
+      [
+       "turkish-lira",
+       0.582
+      ],
+      [
+       "euro",
+       0.567
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1021,
+     "y": 489,
+     "w": 31,
+     "h": 50,
+     "top": [
+      [
+       "italic",
+       0.596
+      ],
+      [
+       "flower-2",
+       0.578
+      ],
+      [
+       "hourglass",
+       0.562
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.596
+     }
+    },
+    {
+     "x": 1500,
+     "y": 994,
+     "w": 18,
+     "h": 15,
+     "top": [
+      [
+       "wheat",
+       0.554
+      ],
+      [
+       "pill",
+       0.547
+      ],
+      [
+       "paintbrush",
+       0.533
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 1473,
+     "y": 193,
+     "w": 22,
+     "h": 14,
+     "top": [
+      [
+       "dot",
+       0.54
+      ],
+      [
+       "reply",
+       0.509
+      ],
+      [
+       "turtle",
+       0.508
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 700,
+     "y": 514,
+     "w": 27,
+     "h": 27,
+     "top": [
+      [
+       "mouse-pointer-ban",
+       0.529
+      ],
+      [
+       "wifi-sync",
+       0.527
+      ],
+      [
+       "tractor",
+       0.509
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.529
+     }
+    },
+    {
+     "x": 1473,
+     "y": 233,
+     "w": 22,
+     "h": 15,
+     "top": [
+      [
+       "dot",
+       0.517
+      ],
+      [
+       "reply",
+       0.517
+      ],
+      [
+       "arrow-up-wide-narrow",
+       0.502
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 835,
+     "y": 347,
+     "w": 31,
+     "h": 32,
+     "top": [
+      [
+       "japanese-yen",
+       0.509
+      ],
+      [
+       "sprout",
+       0.491
+      ],
+      [
+       "martini",
+       0.471
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.509
+     }
+    },
+    {
+     "x": 940,
+     "y": 168,
+     "w": 56,
+     "h": 49,
+     "top": [
+      [
+       "chevron-last",
+       0.446
+      ],
+      [
+       "citrus",
+       0.4
+      ],
+      [
+       "pickaxe",
+       0.379
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.446
+     }
+    }
+   ]
+  },
+  {
+   "run": "blog-cdn-cmarix-com-blog-wp-content-uploads-2018",
+   "boxes": [
+    {
+     "x": 566,
+     "y": 357,
+     "w": 21,
+     "h": 27,
+     "top": [
+      [
+       "tally-1",
+       0.815
+      ],
+      [
+       "text-cursor",
+       0.765
+      ],
+      [
+       "move-down",
+       0.75
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 632,
+     "y": 412,
+     "w": 29,
+     "h": 37,
+     "top": [
+      [
+       "music-3",
+       0.673
+      ],
+      [
+       "lens-convex",
+       0.646
+      ],
+      [
+       "bottle-wine",
+       0.624
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.673
+     }
+    },
+    {
+     "x": 663,
+     "y": 411,
+     "w": 30,
+     "h": 30,
+     "top": [
+      [
+       "flower-2",
+       0.672
+      ],
+      [
+       "luggage",
+       0.66
+      ],
+      [
+       "ribbon",
+       0.659
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.672
+     }
+    }
+   ]
+  },
+  {
+   "run": "cf-fidelity",
+   "boxes": [
+    {
+     "x": 771,
+     "y": 441,
+     "w": 19,
+     "h": 14,
+     "top": [
+      [
+       "signal-zero",
+       0.949
+      ],
+      [
+       "wifi-zero",
+       0.949
+      ],
+      [
+       "dot",
+       0.902
+      ]
+     ],
+     "verdict": null
+    }
+   ]
+  },
+  {
+   "run": "cm-cap3",
+   "boxes": [
+    {
+     "x": 36,
+     "y": 63,
+     "w": 53,
+     "h": 46,
+     "top": [
+      [
+       "dot",
+       0.81
+      ],
+      [
+       "ship-wheel",
+       0.761
+      ],
+      [
+       "signal-zero",
+       0.695
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 881,
+     "y": 273,
+     "w": 25,
+     "h": 16,
+     "top": [
+      [
+       "turtle",
+       0.772
+      ],
+      [
+       "rainbow",
+       0.749
+      ],
+      [
+       "usb-c-port",
+       0.736
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 96,
+     "y": 352,
+     "w": 44,
+     "h": 38,
+     "top": [
+      [
+       "ship-wheel",
+       0.752
+      ],
+      [
+       "dot",
+       0.746
+      ],
+      [
+       "dessert",
+       0.74
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.752
+     }
+    },
+    {
+     "x": 959,
+     "y": 271,
+     "w": 24,
+     "h": 34,
+     "top": [
+      [
+       "music-3",
+       0.723
+      ],
+      [
+       "lens-convex",
+       0.657
+      ],
+      [
+       "corner-right-up",
+       0.606
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.723
+     }
+    },
+    {
+     "x": 799,
+     "y": 263,
+     "w": 30,
+     "h": 34,
+     "top": [
+      [
+       "move-up",
+       0.698
+      ],
+      [
+       "text-cursor",
+       0.684
+      ],
+      [
+       "move-vertical",
+       0.678
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.698
+     }
+    },
+    {
+     "x": 1097,
+     "y": 268,
+     "w": 42,
+     "h": 34,
+     "top": [
+      [
+       "faucet",
+       0.69
+      ],
+      [
+       "dot",
+       0.674
+      ],
+      [
+       "roller-coaster",
+       0.624
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.69
+     }
+    },
+    {
+     "x": 96,
+     "y": 617,
+     "w": 41,
+     "h": 35,
+     "top": [
+      [
+       "tally-1",
+       0.657
+      ],
+      [
+       "circle-dollar-sign",
+       0.608
+      ],
+      [
+       "plus",
+       0.567
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.657
+     }
+    },
+    {
+     "x": 985,
+     "y": 273,
+     "w": 28,
+     "h": 25,
+     "top": [
+      [
+       "chess-rook",
+       0.615
+      ],
+      [
+       "moon-star",
+       0.584
+      ],
+      [
+       "zodiac-taurus",
+       0.569
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.615
+     }
+    },
+    {
+     "x": 140,
+     "y": 617,
+     "w": 41,
+     "h": 35,
+     "top": [
+      [
+       "circle-dollar-sign",
+       0.601
+      ],
+      [
+       "bluetooth",
+       0.571
+      ],
+      [
+       "octagon-x",
+       0.56
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.601
+     }
+    },
+    {
+     "x": 181,
+     "y": 237,
+     "w": 42,
+     "h": 29,
+     "top": [
+      [
+       "tractor",
+       0.578
+      ],
+      [
+       "grip-horizontal",
+       0.568
+      ],
+      [
+       "chart-no-axes-column-decreasing",
+       0.563
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.578
+     }
+    },
+    {
+     "x": 826,
+     "y": 260,
+     "w": 55,
+     "h": 37,
+     "top": [
+      [
+       "ampersands",
+       0.567
+      ],
+      [
+       "voicemail",
+       0.566
+      ],
+      [
+       "case-lower",
+       0.561
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.567
+     }
+    },
+    {
+     "x": 184,
+     "y": 617,
+     "w": 41,
+     "h": 35,
+     "top": [
+      [
+       "git-commit",
+       0.567
+      ],
+      [
+       "japanese-yen",
+       0.55
+      ],
+      [
+       "asterisk",
+       0.547
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.567
+     }
+    },
+    {
+     "x": 447,
+     "y": 236,
+     "w": 35,
+     "h": 29,
+     "top": [
+      [
+       "heading-3",
+       0.556
+      ],
+      [
+       "between-vertical-start",
+       0.544
+      ],
+      [
+       "heading-5",
+       0.52
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.556
+     }
+    }
+   ]
+  },
+  {
+   "run": "reddit-com",
+   "boxes": [
+    {
+     "x": 577,
+     "y": 349,
+     "w": 37,
+     "h": 31,
+     "top": [
+      [
+       "square",
+       0.961
+      ],
+      [
+       "dice-1",
+       0.953
+      ],
+      [
+       "dice-2",
+       0.944
+      ]
+     ],
+     "verdict": null
+    },
+    {
+     "x": 695,
+     "y": 96,
+     "w": 51,
+     "h": 45,
+     "top": [
+      [
+       "dot",
+       0.696
+      ],
+      [
+       "wifi-zero",
+       0.651
+      ],
+      [
+       "signal-zero",
+       0.651
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.696
+     }
+    },
+    {
+     "x": 811,
+     "y": 338,
+     "w": 39,
+     "h": 33,
+     "top": [
+      [
+       "wifi-low",
+       0.689
+      ],
+      [
+       "vector-polygon",
+       0.612
+      ],
+      [
+       "grab",
+       0.605
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.689
+     }
+    }
+   ]
+  },
+  {
+   "run": "trial-link-login",
+   "boxes": [
+    {
+     "x": 98,
+     "y": 20,
+     "w": 57,
+     "h": 49,
+     "top": [
+      [
+       "ferris-wheel",
+       0.716
+      ],
+      [
+       "shield-half",
+       0.707
+      ],
+      [
+       "dessert",
+       0.683
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.716
+     }
+    },
+    {
+     "x": 215,
+     "y": 220,
+     "w": 45,
+     "h": 30,
+     "top": [
+      [
+       "grip-horizontal",
+       0.683
+      ],
+      [
+       "heading-3",
+       0.672
+      ],
+      [
+       "heading-1",
+       0.651
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.683
+     }
+    },
+    {
+     "x": 267,
+     "y": 213,
+     "w": 54,
+     "h": 38,
+     "top": [
+      [
+       "grip-horizontal",
+       0.575
+      ],
+      [
+       "tractor",
+       0.563
+      ],
+      [
+       "box",
+       0.561
+      ]
+     ],
+     "verdict": {
+      "absent": true,
+      "score": 0.575
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -906,7 +906,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
             "type": _type_findings(matched, css, size),
             "alignment": _alignment(matched, css),
             "emphasis": _emphasis_findings(matched, css, size),
-            "hollow": _hollow(matched, css, size, limit=8),
+            "hollow": _hollow(matched, css, size, limit=8, g_ref=g_ref),
             "fill": _fill_findings(matched, css, size)}
 
 
@@ -1038,7 +1038,7 @@ def _fill_sentence(found):
                 "light" if tail["lighter"] else "dark"))
 
 
-def _hollow(matched, css, size, limit=2):
+def _hollow(matched, css, size, limit=2, g_ref=None):
     """Elements drawn as an empty container where the design has something inside.
 
     A button, a nav chip or an icon well matches on geometry because the container is
@@ -1069,6 +1069,7 @@ def _hollow(matched, css, size, limit=2):
             out.append({"x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
                         "h": css(d["h"]), "where": _where(d, size), "kind": d["kind"],
                         "cx": d["x"] + d["w"] // 2, "cy": d["y"] + d["h"] // 2,
+                        "glyph": None if g_ref is None else glyph_identity(g_ref, d),
                         "score": di * d["w"] * d["h"]})
 
     groups = []
@@ -1093,6 +1094,22 @@ def _hollow(matched, css, size, limit=2):
 
 
 HOLLOW_NAMED = 10
+
+
+def _glyph_note(f):
+    """What to say about the glyph in one well, in the fewest words that are true."""
+    g = f.get("glyph") or {}
+    if g.get("absent"):
+        return "nothing in the set is this shape, draw it inline"
+    if g.get("name"):
+        return "the set has this: {}".format(g["name"])
+    return None
+
+
+def _glyph_counts(found):
+    absent = sum(1 for f in found if (f.get("glyph") or {}).get("absent"))
+    named = sum(1 for f in found if (f.get("glyph") or {}).get("name"))
+    return absent, named
 
 
 def _hollow_summary(found):
@@ -1120,22 +1137,53 @@ def _hollow_summary(found):
         return None
     boxes = sum(f.get("n", 1) for f in found)
     named = sorted(found, key=lambda f: -(f["w"] * f["h"]))[:HOLLOW_NAMED]
-    where = ["x {} y {} ({}x{}px{})".format(
+    where = ["x {} y {} ({}x{}px{}{})".format(
         f["x"], f["y"], f["w"], f["h"],
-        "" if f.get("n", 1) == 1 else ", {} side by side".format(f["n"])) for f in named]
+        "" if f.get("n", 1) == 1 else ", {} side by side".format(f["n"]),
+        "" if not _glyph_note(f) else ", " + _glyph_note(f)) for f in named]
     rest = len(found) - len(named)
     if rest:
         where.append("and {} more".format(rest))
     return ("{} places on the page draw a container the right size in the right place and "
             "leave it empty, {} boxes in all. The design puts an icon or a glyph in each: "
             "{}. Look at the design at each of those positions and name what is drawn "
-            "there before choosing anything, then search the set for that name: measured "
-            "on one page, filling these with the design's own pixels is worth 2.4 points "
-            "of the per-element score, and filling them with plausible icons that were not "
-            "the design's was worth nothing at all. This is one job, not {} separate ones: "
-            "take them from the bundled set ({}) so they match each other. Filling all of "
-            "them counts as one change, not {}.".format(
-                len(found), boxes, "; ".join(where), boxes, ICON_CMD, boxes))
+            "there before choosing anything: measured on one page, filling these with the "
+            "design's own pixels is worth 2.4 points of the per-element score, and filling "
+            "them with plausible icons that were not the design's was worth nothing at all. "
+            "{}This is one job, not {} separate ones, and filling all of them counts as one "
+            "change, not {}.".format(
+                len(found), boxes, "; ".join(where), _glyph_advice(found), boxes, boxes))
+
+
+def _glyph_advice(found):
+    """Where to get each glyph, which is not the same answer for every well.
+
+    The report used to end this line by telling the round to search the bundled set
+    for whatever it saw, every time. Measured over every icon-sized box in the seven
+    distinct designs on this machine, that instruction was wrong for most of them: the
+    designs are generated images and their glyphs are brand marks and one-off drawings
+    that no icon set contains. A low match score is good evidence of that, because a
+    drawing that IS in the set scores at least 0.80 against itself 99 to 100 percent of
+    the time at 32px, so below it the set does not have the thing.
+
+    The reverse does not hold, which is why nothing is named on a high score alone:
+    around half of the glyphs that are not in the set also reach 0.80 against their
+    nearest neighbour. A name is printed only above 0.92, where that drops to a few
+    percent. The rest get no opinion and the round looks for itself, as before.
+    """
+    absent, named = _glyph_counts(found)
+    bits = []
+    if named:
+        bits.append("Take the ones named above from the bundled set ({}) so they match "
+                    "each other.".format(ICON_CMD))
+    if absent:
+        bits.append("The ones marked not in the set are brand marks or one-off drawings: "
+                    "draw those inline from what the design shows rather than substituting "
+                    "the nearest icon, which measured as worth nothing.")
+    if not named and not absent:
+        bits.append("Search the bundled set ({}) for what you see, and draw inline what it "
+                    "does not have.".format(ICON_CMD))
+    return " ".join(bits) + " "
 
 
 def _hollow_sentence(f):
@@ -1144,12 +1192,13 @@ def _hollow_sentence(f):
                 "the right place but empty: the design draws an icon or a glyph inside each one "
                 "and the attempt has the containers only. They are one set, so draw them "
                 "together.".format(f["n"], f["w"], f["h"], f["y"], f["where"]))
+    note = _glyph_note(f)
     return ("The {} at x {}, y {} ({}x{}px, the {} of the page) is the right size in the right "
             "place but empty: the design has something drawn inside it, an icon, a glyph or a "
             "small chart, and the attempt has the container only. Draw the contents; the box "
-            "itself already matches.".format(
+            "itself already matches.{}".format(
                 "box" if f["kind"] != "text" else "element", f["x"], f["y"], f["w"], f["h"],
-                f["where"]))
+                f["where"], "" if not note else " Matched against the bundled set, {}.".format(note)))
 
 
 def _emphasis_metrics(g, el):
@@ -4084,7 +4133,17 @@ runpy.run_path(TOOL, run_name="__main__")
 '''
 
 
+ICON_NORM = 32           # side of the ink map two glyphs are compared on
+ICON_PRESENT = 0.80      # below this, the set has nothing like the glyph
+ICON_NAME = 0.92         # at or above this, and the name is worth printing
+ICON_MARGIN = 0.03       # and this far clear of the nearest different drawing
+ICON_READABLE = 24       # px: below this a glyph cannot be told from its neighbours
+ICON_PLAIN = frozenset(
+    "circle circle-small dot square squircle rectangle-horizontal rectangle-vertical "
+    "hexagon pentagon octagon badge minus slash equal".split())
+
 _ICON_INDEX = None
+_ICON_TEMPLATES = None
 
 
 def _icon_index():
@@ -4094,6 +4153,99 @@ def _icon_index():
         _ICON_INDEX = json.loads(ICON_TOOL.parent.parent.joinpath(
             "assets", "icons", "lucide.json").read_text(encoding="utf-8"))
     return _ICON_INDEX
+
+
+def _ink_map(cell):
+    """Where the ink is in one box, independent of colour, polarity, size and position.
+
+    Two drawings of the same icon share almost nothing at the pixel level: one is dark
+    on light and the other light on dark, one is 20px and one is 44px, one sits a few
+    pixels off centre, one has a thicker stroke. What they do share is the shape the
+    ink makes. The ground is taken from the border of the box, the ink is distance
+    from it, the ink is cropped to its own bounding square and resampled to a fixed
+    grid, and the result is blurred so a stroke one pixel wide still overlaps a stroke
+    three pixels wide. Mean-removed and unit length, so a dot product is a correlation.
+    """
+    cell = np.asarray(cell, dtype=np.float32)
+    border = np.concatenate([cell[0], cell[-1], cell[:, 0], cell[:, -1]])
+    ink = np.abs(cell - float(np.median(border)))
+    top = float(ink.max())
+    if top < 20:
+        return None
+    ys, xs = np.nonzero(ink > 0.25 * top)
+    cy, cx = (ys.min() + ys.max()) / 2.0, (xs.min() + xs.max()) / 2.0
+    half = max(ys.max() - ys.min(), xs.max() - xs.min()) / 2.0 * 1.1 + 1
+    im = Image.fromarray((ink / top * 255).astype(np.uint8))
+    m = np.asarray(im.transform((ICON_NORM, ICON_NORM), Image.EXTENT,
+                                (cx - half, cy - half, cx + half, cy + half),
+                                Image.BILINEAR)
+                   .filter(ImageFilter.GaussianBlur(1.0)), dtype=np.float32).ravel()
+    m -= m.mean()
+    n = float(np.linalg.norm(m))
+    return m / n if n else None
+
+
+def _icon_templates():
+    """The bundled set as ink maps, built once by scripts/build_icon_templates.py.
+
+    Built ahead of time rather than here: it takes a browser and half a minute, which
+    is not something a round should pay for.
+    """
+    global _ICON_TEMPLATES
+    if _ICON_TEMPLATES is None:
+        path = ICON_TOOL.parent.parent.joinpath("assets", "icons", "templates.npz")
+        if not path.exists():
+            return None
+        with np.load(path, allow_pickle=False) as z:
+            _ICON_TEMPLATES = (list(z["names"]), z["maps"].astype(np.float32))
+    return _ICON_TEMPLATES
+
+
+def glyph_identity(gray, box):
+    """What the set says about the glyph drawn in one box of the design.
+
+    Two different answers, and only one of them is worth printing.
+
+    A low score is evidence of absence and a high score is not evidence of presence.
+    Measured over the 1856 distinct drawings in the set, each rendered again at icon
+    sizes with a different stroke, light on dark, nudged, scaled, blurred and JPEG
+    compressed: at 32px a drawing that IS in the set scores at least 0.80 against
+    itself 99 to 100 percent of the time, so below that the set does not have it. But
+    around half of the glyphs that are NOT in the set also reach 0.80 against their
+    nearest neighbour, because at this size a lot of marks look like a lot of other
+    marks. Naming on a high score alone would be wrong about half the time on a real
+    design, where almost nothing is in the set.
+
+    So a name is only printed at 0.92, where the share of out-of-set glyphs reaching
+    it drops to between 2 and 7 percent, and only for boxes at least 24px, and never
+    for a plain shape: "the glyph here is circle" is true and useless, and it crowds
+    out the line that matters.
+
+    Returns one of {"absent": True}, {"name": n, "score": s}, or None for no opinion.
+    """
+    t = _icon_templates()
+    if t is None or min(box["w"], box["h"]) < ICON_READABLE:
+        return None
+    names, maps = t
+    cell = gray[max(0, box["y"]):box["y"] + box["h"], max(0, box["x"]):box["x"] + box["w"]]
+    if cell.shape[0] < 8 or cell.shape[1] < 8:
+        return None
+    v = _ink_map(cell)
+    if v is None:
+        return None
+    sims = maps @ v
+    order = np.argsort(-sims)
+    i = int(order[0])
+    best, rival = float(sims[i]), float(sims[order[1]])
+    if best < ICON_PRESENT:
+        return {"absent": True, "score": round(best, 3)}
+    # Clear of the runner-up as well as high. A pin with a dot in it scored 0.94 as
+    # map-pin-plus-inside with map-pin-x-inside at 0.93 and map-pin-check-inside at
+    # 0.89: the family is right and the variant is a coin toss, and a confident wrong
+    # name is worse than none, because the round takes it rather than looking.
+    if best >= ICON_NAME and best - rival >= ICON_MARGIN and names[i] not in ICON_PLAIN:
+        return {"name": str(names[i]), "score": round(best, 3)}
+    return None
 
 
 _ICON_SHAPES = ("path", "circle", "line", "rect", "polyline", "polygon", "ellipse")

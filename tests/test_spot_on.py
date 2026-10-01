@@ -2696,13 +2696,86 @@ class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
         # worth nothing at all. The gap is which glyph, not whether there is one.
         line = so._hollow_summary(self.found())
         self.assertIn("name what is drawn there before choosing", line)
-        self.assertIn("search the set for that name", line)
+
+    def test_it_no_longer_sends_every_well_to_the_set(self):
+        # It used to end "search the set for that name" for every well. Measured over
+        # the 92 icon-sized boxes in the seven distinct designs here, 42 of them score
+        # below the present gate, meaning the set has nothing of that shape: the
+        # instruction was wrong for most of the page it was printed on. It now says
+        # that only where the set has not been asked or had no opinion.
+        line = so._hollow_summary(self.found())
+        self.assertNotIn("search the set for that name", line)
+        told = so._hollow_summary([dict(f, glyph={"absent": True, "score": 0.5})
+                                   for f in self.found()])
+        self.assertNotIn("Search the bundled set", told)
+        self.assertIn("draw it inline", told)
 
     def test_it_still_says_where_they_are_and_that_it_is_one_change(self):
         line = so._hollow_summary(self.found())
         self.assertIn("x 100 y 200", line)
         self.assertIn("counts as one change", line)
         self.assertIn(so.ICON_CMD, line)
+
+
+class WhatTheSetKnowsAboutOneWell(unittest.TestCase):
+    """A low score says the set does not have it; a high score does not say it does.
+
+    Measured over the 1856 distinct drawings in the bundled set, each rendered again
+    at icon sizes with a different stroke, light on dark, nudged, scaled, blurred and
+    JPEG compressed (scripts/icon_trial.py, scripts/icon-trial.json). The asymmetry is
+    the whole design of this: at 32px a drawing that IS in the set scores at least
+    0.80 against itself 98.7 to 100 percent of the time, while around a quarter to a
+    half of the glyphs that are NOT in the set also reach 0.80 against their nearest
+    neighbour, because at this size many marks resemble many other marks.
+    """
+
+    def trial(self):
+        return json.loads((HERE.parent / "scripts" / "icon-trial.json")
+                          .read_text(encoding="utf-8"))
+
+    def test_an_icon_in_the_set_is_not_called_absent(self):
+        arms = [a for a in self.trial()["arms"] if a["size"] >= 32]
+        worst = min(a["by_score"]["0.80/0.00"]["named_pct"] for a in arms)
+        self.assertGreaterEqual(worst, 98.0,
+                                "at 32px the present gate now calls real set icons absent")
+
+    def test_a_high_score_alone_would_name_glyphs_that_are_not_in_the_set(self):
+        # The reason naming needs 0.92 and a margin rather than the present gate.
+        arms = [a for a in self.trial()["arms"] if a["size"] >= 24]
+        loose = max(a["by_score"]["0.80/0.00"]["absent_named_pct"] for a in arms)
+        self.assertGreater(loose, 20.0)
+
+    def test_the_name_gate_is_right_when_it_speaks(self):
+        arms = [a for a in self.trial()["arms"] if a["size"] >= 24]
+        key = "{:.2f}/{:.2f}".format(so.ICON_NAME, so.ICON_MARGIN)
+        self.assertTrue(all(a["by_score"][key]["right_pct"] >= 96.0 for a in arms),
+                        "the chosen name gate is no longer right 96% of the time")
+
+    def test_a_glyph_too_small_to_read_gets_no_verdict(self):
+        g = np.zeros((40, 40), dtype=np.float32)
+        g[10:30, 10:30] = 255.0
+        small = {"x": 2, "y": 2, "w": so.ICON_READABLE - 1, "h": so.ICON_READABLE - 1}
+        self.assertIsNone(so.glyph_identity(g, small))
+
+    def test_an_empty_box_gets_no_verdict(self):
+        self.assertIsNone(so.glyph_identity(np.zeros((80, 80), dtype=np.float32),
+                                            {"x": 10, "y": 10, "w": 40, "h": 40}))
+
+    def test_a_shape_the_set_does_not_have_is_called_absent(self):
+        # Three bars of different lengths at an angle: no lucide icon is this.
+        g = np.full((80, 80), 255.0, dtype=np.float32)
+        for k, (r, c) in enumerate(((20, 18), (34, 26), (48, 14))):
+            g[r:r + 5, c:c + 20 + 8 * k] = 0.0
+        said = so.glyph_identity(g, {"x": 8, "y": 8, "w": 64, "h": 64})
+        self.assertTrue(said and said.get("absent"), said)
+
+    def test_the_plain_shapes_are_never_named(self):
+        # "the glyph here is circle" is true and useless, and it crowds out the line
+        # that matters.
+        self.assertIn("circle", so.ICON_PLAIN)
+        self.assertIn("square", so.ICON_PLAIN)
+        for plain in so.ICON_PLAIN:
+            self.assertNotIn(" ", plain)
 
 
 class TheSameComparisonAggregatedSeveralWays(unittest.TestCase):

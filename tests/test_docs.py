@@ -26,6 +26,8 @@ _tool.loader.exec_module(TOOL)
 
 SWEEP = json.loads((ROOT / "scripts" / "match-sweep.json").read_text(encoding="utf-8"))
 TRIAL = json.loads((ROOT / "scripts" / "match-trial.json").read_text(encoding="utf-8"))
+ICONS = json.loads((ROOT / "scripts" / "icon-trial.json").read_text(encoding="utf-8"))
+ICONS_REAL = json.loads((ROOT / "scripts" / "icon-real.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -157,6 +159,60 @@ class EchoedNumbers(unittest.TestCase):
         self.assertIsNotNone(m, "the gradient example is worded differently now")
         row = re.search(r"^deeper\s+\S+\s+\S+\s+\S+\s+(\S+)", table, re.M)
         self.assertEqual(m.group(1), row.group(1))
+
+    def test_the_glyph_asymmetry_numbers_match_the_icon_trial(self):
+        m = re.search(r"Each of the (\d+) distinct drawings in the set was rendered again"
+                      r".*?`scripts/icon_trial\.py`, (\d+) arms", README, re.S)
+        self.assertIsNotNone(m, "the icon trial sentence is worded differently now")
+        self.assertEqual(int(m.group(1)), ICONS["icons"])
+        self.assertEqual(int(m.group(2)), len(ICONS["arms"]))
+        self.assertEqual(ICONS["sanity"]["top1_or_twin_pct"], 100.0)
+
+        m = re.search(r"at 32px a drawing that \*\*is\*\* in the set scores at least "
+                      r"(\d\.\d+) against itself (\d+\.\d+)% to (\d+\.\d+)% of the time",
+                      README)
+        self.assertIsNotNone(m, "the absence-evidence sentence changed")
+        self.assertEqual(float(m.group(1)), ICONS["present_gate"])
+        key = "{:.2f}/{:.2f}".format(ICONS["present_gate"], 0.0)
+        at32 = [a["by_score"][key]["named_pct"] for a in ICONS["arms"] if a["size"] >= 32]
+        self.assertEqual(float(m.group(2)), min(at32))
+        self.assertEqual(float(m.group(3)), max(at32))
+
+        m = re.search(r"(\d+\.\d+)% to (\d+\.\d+)% of glyphs that are \*\*not\*\* in the set "
+                      r"reach it", README)
+        self.assertIsNotNone(m, "the false-presence sentence changed")
+        at24 = [a["by_score"][key]["absent_named_pct"] for a in ICONS["arms"] if a["size"] >= 24]
+        self.assertEqual(float(m.group(1)), min(at24))
+        self.assertEqual(float(m.group(2)), max(at24))
+
+    def test_the_name_gate_numbers_match_the_icon_trial(self):
+        m = re.search(r"prints a name only at (\d\.\d+) with (\d\.\d+) clear of the nearest "
+                      r"different drawing, where the false-name rate falls to (\d+\.\d+)% to "
+                      r"(\d+\.\d+)% and the names it does print are right (\d+\.\d+)% to "
+                      r"(\d+\.\d+)% of the time", README)
+        self.assertIsNotNone(m, "the name-gate sentence changed")
+        self.assertEqual(float(m.group(1)), TOOL.ICON_NAME)
+        self.assertEqual(float(m.group(2)), TOOL.ICON_MARGIN)
+        self.assertEqual(float(m.group(1)), ICONS["name_gate"])
+        self.assertEqual(float(m.group(2)), ICONS["name_margin"])
+        key = "{:.2f}/{:.2f}".format(TOOL.ICON_NAME, TOOL.ICON_MARGIN)
+        arms = [a["by_score"][key] for a in ICONS["arms"] if a["size"] >= 24]
+        self.assertEqual(float(m.group(3)), min(a["absent_named_pct"] for a in arms))
+        self.assertEqual(float(m.group(4)), max(a["absent_named_pct"] for a in arms))
+        self.assertEqual(float(m.group(5)), min(a["right_pct"] for a in arms))
+        self.assertEqual(float(m.group(6)), max(a["right_pct"] for a in arms))
+
+    def test_the_real_design_survey_numbers_match_their_source(self):
+        m = re.search(r"Over every icon-sized box in the (\d+) distinct designs on this "
+                      r"machine \((\d+) boxes, `scripts/icon_real\.py`\), the set has nothing "
+                      r"of that shape for (\d+) of them and prints a name for (\d+)\.", README)
+        self.assertIsNotNone(m, "the real-design survey sentence changed")
+        self.assertEqual(int(m.group(1)), ICONS_REAL["designs"])
+        self.assertEqual(int(m.group(2)), ICONS_REAL["totals"]["boxes"])
+        self.assertEqual(int(m.group(3)), ICONS_REAL["totals"]["absent"])
+        self.assertEqual(int(m.group(4)), ICONS_REAL["totals"]["named"])
+        # The claim the sentence rests on: most of the page is not in the set.
+        self.assertGreater(ICONS_REAL["totals"]["absent"], ICONS_REAL["totals"]["named"] * 10)
 
     def test_coverage_cap_example(self):
         m = re.search(r"leaves out a fifth of the design can reach at most (\d+)%", README)
