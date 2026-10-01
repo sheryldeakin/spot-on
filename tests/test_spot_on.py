@@ -2012,6 +2012,70 @@ def _marked(small=True):
     return img
 
 
+class ARoundIsToldWhereTheDeadEndsAre(unittest.TestCase):
+    """Giving up on a fault used to free nobody's time but the tool's."""
+
+    def spent(self, n=2):
+        return [{"key": ["type", "family"], "rounds": 20},
+                {"key": ["element", "box", 10, ("height", "position")], "rounds": 18}][:n]
+
+    def test_the_round_is_told_what_not_to_spend_itself_on(self):
+        # Regression: a page whose first item was an uninstallable typeface spent the
+        # top of a three-change budget on it for twenty rounds. Giving up stopped the
+        # pressing and left the position, so the budget kept going to the one thing
+        # nobody would ever do.
+        text = "\n".join(so._spent_section(self.spent()))
+        self.assertIn("the typeface", text)
+        self.assertIn("20 rounds", text)
+        self.assertIn("Do not spend this round on these", text)
+
+    def test_they_are_not_removed_from_the_report(self):
+        # They are real faults and the measurement will go on reporting them.
+        text = "\n".join(so._spent_section(self.spent()))
+        self.assertIn("stay in the list above", text)
+
+    def test_a_later_round_with_a_better_idea_may_still_try(self):
+        text = "\n".join(so._spent_section(self.spent()))
+        self.assertIn("earlier rounds did not try", text)
+
+    def test_nothing_is_said_when_nothing_is_spent(self):
+        self.assertEqual(so._spent_section([]), [])
+        self.assertEqual(so._spent_section(None), [])
+
+    def test_the_prompt_carries_it(self):
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  2, "<div></div>", score("close"), "", None, (),
+                                  "read", (), self.spent())
+        self.assertIn("Do not spend this round on these", text)
+        self.assertIn("the typeface", text)
+
+    def test_a_run_with_no_dead_ends_says_nothing_about_them(self):
+        text = so._iterate_prompt({"name": "x", "kind": "html", "width": 10, "height": 10},
+                                  2, "<div></div>", score("close"), "", None, (), "read")
+        self.assertNotIn("Do not spend this round on these", text)
+
+
+class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
+    """An icon is not the icon, and pixel for pixel that is most of the difference."""
+
+    def found(self):
+        return [{"x": 100 + 40 * i, "y": 200, "w": 40, "h": 30, "n": 1} for i in range(3)]
+
+    def test_it_is_told_to_look_before_choosing(self):
+        # Measured: pasting the design's own pixels into seven wells is worth 2.4 on
+        # the per-element view, and the round's own plausible-but-wrong icons were
+        # worth nothing at all. The gap is which glyph, not whether there is one.
+        line = so._hollow_summary(self.found())
+        self.assertIn("name what is drawn there before choosing", line)
+        self.assertIn("search the set for that name", line)
+
+    def test_it_still_says_where_they_are_and_that_it_is_one_change(self):
+        line = so._hollow_summary(self.found())
+        self.assertIn("x 100 y 200", line)
+        self.assertIn("counts as one change", line)
+        self.assertIn(so.ICON_CMD, line)
+
+
 class TheSameComparisonAggregatedSeveralWays(unittest.TestCase):
     """One number over a whole page is an average, and an average hides small things."""
 

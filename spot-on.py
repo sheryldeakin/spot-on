@@ -1090,9 +1090,13 @@ def _hollow_summary(found):
         where.append("and {} more".format(rest))
     return ("{} places on the page draw a container the right size in the right place and "
             "leave it empty, {} boxes in all. The design puts an icon or a glyph in each: "
-            "{}. This is one job, not {} separate ones: take them from the bundled set "
-            "({}) and fill them all from it, so they match each other. Filling all of them "
-            "counts as one change, not {}.".format(
+            "{}. Look at the design at each of those positions and name what is drawn "
+            "there before choosing anything, then search the set for that name: measured "
+            "on one page, filling these with the design's own pixels is worth 2.4 points "
+            "of the per-element score, and filling them with plausible icons that were not "
+            "the design's was worth nothing at all. This is one job, not {} separate ones: "
+            "take them from the bundled set ({}) so they match each other. Filling all of "
+            "them counts as one change, not {}.".format(
                 len(found), boxes, "; ".join(where), boxes, ICON_CMD, boxes))
 
 
@@ -1641,7 +1645,9 @@ def _cell_name(cell):
 # would have gone on being read out for the rest of every run already on disk.
 # Bumped to 4 when the views were added, so that a report fetched from an older attempt
 # carries them too and the comparison can be made over runs already finished.
-SCORER_VERSION = 4
+# Bumped to 5 when the empty-container sentence started asking the round to name the
+# glyph it can see before choosing one.
+SCORER_VERSION = 5
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
@@ -2780,6 +2786,38 @@ def iteration_base(history, slug=None):
     return best, (latest if latest["n"] != best["n"] else None)
 
 
+def _spent_section(spent):
+    """Tell the round what not to spend its three changes on.
+
+    Giving up on a fault used to stop it being pressed and nothing else. It kept its
+    place in the ordered list, so on a page whose first item was a typeface that is not
+    installed, the top of a three-change budget was occupied every round by work nobody
+    was ever going to do. Eight faults on one run had survived between fifteen and
+    twenty rounds in exactly that state, and with every one of them given up the "you
+    were asked already" section was empty every round: the mechanism had quietly become
+    inert rather than selective.
+
+    They stay in the list above, because they are real and the measurement will go on
+    reporting them, and because "cannot be done" is a judgement a later round with a
+    better idea is allowed to overturn. What changes is that the round is told where
+    the dead ends are before it chooses.
+    """
+    if not spent:
+        return []
+    lines = ["Asked for repeatedly and never moved. Do not spend this round on these:"]
+    for item in spent[:PRESS_LIMIT * 2]:
+        lines.append("  {} ({} rounds)".format(
+            stuck_phrase(tuple(item["key"])), item["rounds"]))
+    lines += [
+        "They stay in the list above because they are real faults, and some cannot be fixed",
+        "in code at all: a typeface that is not installed, a photograph you do not have.",
+        "Spend this round's changes on something not named here. If you can see a way to",
+        "close one of them that earlier rounds did not try, take it and say so.",
+        "",
+    ]
+    return lines
+
+
 def _stuck_section(stuck):
     """Tell the round which faults it has already been asked to fix and has not.
 
@@ -2806,7 +2844,7 @@ def _stuck_section(stuck):
 
 
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    images="read", stuck=()):
+                    images="read", stuck=(), spent=()):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
@@ -2847,6 +2885,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         "",
     ]
     parts += _stuck_section(stuck)
+    parts += _spent_section(spent)
     if discarded:
         parts += [
             "Your most recent attempt ({}) scored {:.1f}, below this one at {:.1f}, so it was "
@@ -2989,9 +3028,11 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
     count = max(1, min(5, int(count)))
     image_access = image_mode(chosen)
-    stuck = [s for s in stuck_problems(history, base) if s["rounds"] < GIVE_UP_AFTER]
+    carried = stuck_problems(history, base)
+    stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
+    spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
-                             rejected_changes(history, base), image_access, stuck)
+                             rejected_changes(history, base), image_access, stuck, spent)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -4099,6 +4140,7 @@ PAGE_HTML = r"""<!doctype html>
               <div class="mono" style="font-size: 10px; color: var(--muted); letter-spacing: 0.16em; text-transform: uppercase; margin-top: 6px;">match / 100</div>
               <div id="score-delta" class="mono" style="font-size: 12px; margin-top: 6px; font-variant-numeric: tabular-nums;"></div>
               <div id="score-best" class="mono" style="font-size: 11px; margin-top: 3px;"></div>
+              <div id="score-views" style="margin-top: 11px;"></div>
             </div>
             <div class="vrule" style="height: 108px;"></div>
             <div id="components" style="min-width: 0;"></div>
@@ -4749,6 +4791,71 @@ $("onion").addEventListener("input", function () {
 });
 
 // ---- score panel ----
+var VIEW_HELP = {
+  sections: "The same score computed on each ninth of the canvas, averaged. Close to the main number, because averaging equal tiles is close to averaging pixels.",
+  elements: "Every detected element counts once, however big it is. The most sensitive to a small thing and the easiest to game: a page can do well here by drawing many small things right while one large element stays wrong.",
+  elements_sqrt: "Every element weighted by the square root of its area. A large panel still outweighs an icon, but by 25 to 1 rather than 667 to 1.",
+  elements_tail: "The worst tenth of elements, averaged, never fewer than eight. What a few badly wrong elements cannot be averaged away from."
+};
+
+var VIEW_NAME = {
+  sections: "by ninth",
+  elements: "by element",
+  elements_sqrt: "by element, weighted",
+  elements_tail: "worst tenth"
+};
+
+function renderViews(rep) {
+  var host = $("score-views");
+  host.innerHTML = "";
+  var v = rep.views;
+  if (!v) return;
+  ["sections", "elements", "elements_sqrt", "elements_tail"].forEach(function (k) {
+    if (v[k] === undefined || v[k] === null) return;
+    var row = document.createElement("div");
+    row.className = "mono";
+    row.title = VIEW_HELP[k];
+    row.style.cssText = "display:flex; justify-content:space-between; gap:10px; font-size:11px; color:var(--muted); cursor:help; font-variant-numeric:tabular-nums; line-height:1.7;";
+    row.innerHTML = '<span>' + VIEW_NAME[k] + '</span><span>' + v[k].toFixed(1) + '</span>';
+    host.appendChild(row);
+  });
+  if (v.element_count) {
+    var note = document.createElement("div");
+    note.style.cssText = "font-size:10px; color:var(--faint); margin-top:5px; line-height:1.4;";
+    note.textContent = v.element_count + " elements. Nothing is chosen on these yet.";
+    host.appendChild(note);
+  }
+}
+
+function componentParts(rep) {
+  var r = rep.raw || {}, v = rep.views || {};
+  function pct(x) { return x === undefined || x === null ? null : x.toFixed(2) + "% of the page"; }
+  function gap(x) { return x === undefined || x === null ? null : x.toFixed(1) + " (2.3 is the smallest a person sees)"; }
+  function num(x, d) { return x === undefined || x === null ? null : x.toFixed(d); }
+  return {
+    structure: [
+      ["averaged by ninth instead", num(v.sections, 1)],
+      ["the worst single element", num(v.worst_element, 1)]
+    ],
+    shape: [
+      ["ink in the design", pct(r.ink_coverage_reference)],
+      ["ink in the attempt", pct(r.ink_coverage_attempt)]
+    ],
+    colour: [
+      ["where both drew something", gap(r.colour_distance_where_both_drew)],
+      ["the palette alone", gap(r.palette_only_distance)],
+      ["the page behind the content", gap(r.background_distance)]
+    ],
+    detail: [
+      ["edge density correlation", num(r.edge_correlation, 3)]
+    ],
+    coverage: [
+      ["ink in the design", pct(r.ink_coverage_reference)],
+      ["ink in the attempt", pct(r.ink_coverage_attempt)]
+    ]
+  };
+}
+
 var COMPONENT_HELP = {
   structure: "SSIM over 7px windows. Whether edges and gradients sit in the same places.",
   shape: "Overlap of the drawn area with the design's drawn area, as intersection over union.",
@@ -4789,6 +4896,8 @@ function renderScore() {
     bestEl.textContent = "";
   }
 
+  renderViews(rep);
+  var parts = componentParts(rep);
   var comp = $("components");
   comp.innerHTML = "";
   ["structure", "shape", "colour", "detail", "coverage"].forEach(function (k) {
@@ -4803,6 +4912,23 @@ function renderScore() {
       '<span class="bar-track"><span class="bar-fill" style="width:' + Math.max(0, Math.min(100, v)) + '%"></span></span>' +
       '<span class="comp-val">' + v.toFixed(1) + '</span>';
     comp.appendChild(row);
+    var under = (parts[k] || []).filter(function (pair) { return pair[1] !== null; });
+    if (!under.length) return;
+    var sub = document.createElement("div");
+    sub.style.cssText = "margin: 1px 0 6px 2px; display:none;";
+    under.forEach(function (pair) {
+      var line = document.createElement("div");
+      line.className = "mono";
+      line.style.cssText = "display:flex; justify-content:space-between; gap:12px; font-size:10px; color:var(--faint); line-height:1.65; font-variant-numeric:tabular-nums;";
+      line.innerHTML = '<span>' + pair[0] + '</span><span>' + pair[1] + '</span>';
+      sub.appendChild(line);
+    });
+    comp.appendChild(sub);
+    row.style.cursor = "pointer";
+    row.title = COMPONENT_HELP[k] + " Click for what is under it.";
+    row.addEventListener("click", function () {
+      sub.style.display = sub.style.display === "none" ? "block" : "none";
+    });
   });
 
   var grid = $("region-grid");
