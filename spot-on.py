@@ -88,6 +88,8 @@ ELEMENT_SCORES = 8       # elements kept in the report, worst first
 ELEMENT_MIN = 16         # px; below this a box is a glyph, not something to be told about
 ELEMENT_BEHIND = 10      # points below the page score at which an element is worth naming
 FILL_DELTA = 3.0         # levels of surface brightness before a panel's fill is wrong
+INK_ABOVE = 18           # levels from the local median before a pixel counts as marked
+HOLLOW_INK_GAP = 20.0    # points more of the interior marked in the design than the attempt
 ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
 ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
@@ -886,6 +888,8 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
             a["emphasis"] = _emphasis_metrics(g_att, a)
         d["inside"] = _interior_detail(g_ref, d)
         a["inside"] = _interior_detail(g_att, a)
+        d["ink_inside"] = _interior_ink(g_ref, d)
+        a["ink_inside"] = _interior_ink(g_att, a)
         d["fill"], a["fill"] = _fill_level(g_ref, d), _fill_level(g_att, a)
 
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
@@ -945,6 +949,22 @@ def _interior_detail(g, el, inset=0.22):
     if crop.size < 40 or crop.shape[0] < 3 or crop.shape[1] < 3:
         return None
     return float(np.abs(np.diff(crop, axis=1)).mean() + np.abs(np.diff(crop, axis=0)).mean())
+
+
+def _interior_ink(g, el, inset=0.22):
+    """How much of an element's inside is marked at all, ignoring its own edge.
+
+    The companion to _interior_detail, and the one that says whether anything is
+    actually there. Texture alone cannot tell a missing glyph from a thinner stroke:
+    on a dark HUD the design's rings carry a soft glow that bleeds inward, which reads
+    as interior detail, so five circles that were empty in the design and empty in the
+    attempt were reported as containers drawn empty for twenty rounds.
+    """
+    iy, ix = int(el["h"] * inset), int(el["w"] * inset)
+    crop = g[el["y"] + iy:el["y"] + el["h"] - iy, el["x"] + ix:el["x"] + el["w"] - ix]
+    if crop.size < 40 or crop.shape[0] < 3 or crop.shape[1] < 3:
+        return None
+    return float((np.abs(crop - np.median(crop)) > INK_ABOVE).mean() * 100)
 
 
 def _fill_level(g, el, inset=0.18):
@@ -1027,6 +1047,17 @@ def _hollow(matched, css, size, limit=2):
         if di is None or ai is None:
             continue
         # Something clearly drawn in the design, and clearly less in the attempt.
+        # Both tests have to pass. Texture says the inside looks different; coverage
+        # says there is something there to be missing. Texture alone called five
+        # circles empty that were empty in the design too, differing only by the glow
+        # bleeding in from the ring, and the loop was told to fill them for twenty
+        # rounds. Measured over 123 flagged boxes across every run on this machine:
+        # the verified-wrong ones reach +14.9 points at most and the lowest verified
+        # real one is +23.2, so the gate sits in the gap rather than on a cliff, and
+        # drops 19% of what used to fire.
+        dk, ak = d.get("ink_inside"), a.get("ink_inside")
+        if dk is None or ak is None or dk - ak < HOLLOW_INK_GAP:
+            continue
         if di >= 8.0 and ai < 0.45 * di:
             out.append({"x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
                         "h": css(d["h"]), "where": _where(d, size), "kind": d["kind"],
@@ -1647,7 +1678,9 @@ def _cell_name(cell):
 # carries them too and the comparison can be made over runs already finished.
 # Bumped to 5 when the empty-container sentence started asking the round to name the
 # glyph it can see before choosing one.
-SCORER_VERSION = 5
+# Bumped to 6 when the empty-container finding was gated on interior coverage, which
+# changes which boxes it names on every run already on disk.
+SCORER_VERSION = 6
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,

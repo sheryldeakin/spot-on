@@ -2012,6 +2012,64 @@ def _marked(small=True):
     return img
 
 
+class AnEmptyContainerHasToBeEmpty(unittest.TestCase):
+    """Texture cannot tell a missing glyph from a thinner stroke. Coverage can."""
+
+    def pair(self, di, ai, dk, ak, w=30, h=24):
+        d = {"x": 100, "y": 200, "w": w, "h": h, "kind": "box",
+             "inside": di, "ink_inside": dk}
+        a = {"x": 100, "y": 200, "w": w, "h": h, "kind": "box",
+             "inside": ai, "ink_inside": ak}
+        return [(d, a)]
+
+    def hollow(self, matched):
+        return so._hollow(matched, lambda v: int(v), (1536, 1024), limit=8)
+
+    def test_a_ring_with_a_glow_is_not_an_empty_container(self):
+        # Regression, and the numbers are measured off the page it came from: five
+        # circles on a dark HUD were empty in the design and empty in the attempt,
+        # differing only by the glow bleeding inward from the ring. Texture said the
+        # inside was three times busier in the design, so they were reported as
+        # containers drawn empty, and sat at problem #2 for twenty rounds while the
+        # loop looked at them, saw nothing missing, and declined.
+        self.assertEqual(self.hollow(self.pair(33.4, 11.0, 16.3, 7.5)), [])
+
+    def test_a_glyph_that_is_really_missing_still_fires(self):
+        # Also measured, from an early attempt of the same page where the icons
+        # genuinely had not been drawn.
+        self.assertEqual(len(self.hollow(self.pair(46.9, 0.4, 89.1, 0.7))), 1)
+
+    def test_both_tests_have_to_pass(self):
+        # Coverage without texture is a block of solid colour, not a missing glyph.
+        self.assertEqual(self.hollow(self.pair(40.0, 39.0, 90.0, 1.0)), [])
+        # Texture without coverage is the glow case above.
+        self.assertEqual(self.hollow(self.pair(40.0, 1.0, 20.0, 5.0)), [])
+
+    def test_the_gate_sits_in_the_gap_between_the_two(self):
+        # Chosen from 123 flagged boxes across every run: the verified-wrong ones
+        # reach +14.9 at most, the lowest verified real one is +23.2.
+        self.assertGreater(so.HOLLOW_INK_GAP, 14.9)
+        self.assertLess(so.HOLLOW_INK_GAP, 23.2)
+
+    def test_an_element_with_no_reading_is_not_guessed_at(self):
+        self.assertEqual(self.hollow(self.pair(40.0, 1.0, None, 1.0)), [])
+        self.assertEqual(self.hollow(self.pair(40.0, 1.0, 90.0, None)), [])
+
+    def test_a_solid_fill_reads_as_no_ink_inside(self):
+        flat = np.full((40, 40), 120.0)
+        self.assertAlmostEqual(
+            so._interior_ink(flat, {"x": 0, "y": 0, "w": 40, "h": 40}), 0.0, places=5)
+
+    def test_a_mark_inside_reads_as_ink(self):
+        g = np.full((40, 40), 20.0)
+        g[16:24, 16:24] = 220.0
+        got = so._interior_ink(g, {"x": 0, "y": 0, "w": 40, "h": 40})
+        self.assertGreater(got, 5.0)
+
+    def test_a_box_too_small_to_read_says_so(self):
+        self.assertIsNone(so._interior_ink(np.zeros((4, 4)), {"x": 0, "y": 0, "w": 4, "h": 4}))
+
+
 class ARoundIsToldWhereTheDeadEndsAre(unittest.TestCase):
     """Giving up on a fault used to free nobody's time but the tool's."""
 
