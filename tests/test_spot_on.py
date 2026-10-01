@@ -2058,6 +2058,72 @@ class TheDesignIsAskedAgainWhenTheQuestionChanges(unittest.TestCase):
         self.assertEqual(len(self.asked), 1)
 
 
+class WhatTheReportAskedForAndDidNotGet(unittest.TestCase):
+    """A second number for the loop, converging on the one a person reads."""
+
+    def test_nothing_outstanding_means_the_two_numbers_are_one(self):
+        self.assertEqual(so.repair_objective(73.9, []), (73.9, 0.0))
+
+    def test_the_penalty_is_bounded(self):
+        _, penalty = so.repair_objective(50.0, [1.0] * 500)
+        self.assertLessEqual(penalty, so.FINDING_PENALTY)
+
+    def test_it_is_small_against_what_a_round_gains(self):
+        # Rounds here have been seen to gain 0.2 to 2.1 points. The penalty may break
+        # a tie between close candidates; it may not buy a real regression.
+        self.assertLessEqual(so.FINDING_PENALTY, 1.0)
+
+    def test_a_partial_fix_moves_it(self):
+        # No cliff: a residual that halves has to show up, or there is no gradient to
+        # follow and the loop learns nothing from getting part of the way.
+        _, before = so.repair_objective(70.0, [0.8, 0.8])
+        _, after = so.repair_objective(70.0, [0.4, 0.4])
+        self.assertLess(after, before)
+
+    def test_it_falls_to_nothing_as_the_work_lands(self):
+        _, penalty = so.repair_objective(70.0, [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(penalty, 0.0, places=6)
+
+    def test_the_residual_is_read_off_the_pixels_not_off_the_detector(self):
+        # The transparent-div case: a box that stops being flagged without anything
+        # being drawn must not clear the penalty. The residual is how far the named
+        # rectangle still is from the design, so only drawing lowers it.
+        design, blank = CASES["exact"], CASES["blank"]
+        report = {"elements": {"hollow": [{"x": 120, "y": 70, "w": 160, "h": 160, "n": 1}]}}
+        missing = so._finding_residuals(design, blank, report, 1.0)
+        matching = so._finding_residuals(design, design, report, 1.0)
+        self.assertGreater(missing[0], matching[0])
+        self.assertAlmostEqual(matching[0], 0.0, places=1)
+
+    def test_a_finding_with_no_box_is_skipped(self):
+        # The fill list ends with a summary row carrying a count and no coordinates.
+        report = {"elements": {"fill": [{"n": 6, "summary": True, "mean": 7.8}]}}
+        self.assertEqual(so._finding_residuals(CASES["exact"], CASES["close"], report, 1.0), [])
+
+    def test_the_loop_chooses_on_fidelity_unless_it_is_switched_on(self):
+        a = {"match": 70.0, "report": {"repair": 69.0}}
+        b = {"match": 69.8, "report": {"repair": 69.6}}
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = False
+            self.assertEqual(so.rank_of(a), 70.0)
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.rank_of(a), 69.0)
+            self.assertGreater(so.rank_of(b), so.rank_of(a))
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_switching_it_on_cannot_rewrite_what_a_run_was_scored_at(self):
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            r = score("close")
+            self.assertEqual(r["views"]["page"], r["match"])
+            self.assertLessEqual(r["repair"], r["match"])
+        finally:
+            so.REPAIR_SELECTION = saved
+
+
 class AllTheContendersAreOnOneScorer(unittest.TestCase):
     """A run's whole history hangs off which attempt it thinks is best."""
 

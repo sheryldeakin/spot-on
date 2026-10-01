@@ -91,6 +91,11 @@ FILL_DELTA = 3.0         # levels of surface brightness before a panel's fill is
 INK_ABOVE = 18           # levels from the local median before a pixel counts as marked
 HOLLOW_INK_GAP = 20.0    # points more of the interior marked in the design than the attempt
 RESCORE_WITHIN = 20.0    # points below the best an attempt must be within to be re-scored
+FINDING_PENALTY = 1.0    # most the outstanding findings may bend the loop's choice
+# Off by default and on with SPOT_ON_REPAIR=1. The score a person reads never changes
+# either way; this only decides which of two close pages the loop keeps and builds on.
+REPAIR_SELECTION = os.environ.get("SPOT_ON_REPAIR", "").strip().lower() not in ("", "0", "false", "no")
+RESIDUAL_SCALE = 3.0     # residual at which the penalty is about 63% of its cap
 ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
 ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
@@ -1884,6 +1889,9 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     report["region_scores"] = _region_scores(ref_img, att_img) if regions else []
     report["views"] = _views(match, report["region_scores"], every_element)
     report["problems"] = _problems(report)
+    residuals = _finding_residuals(ref_img, att_img, report, px_per_css)
+    report["repair"], report["penalty"] = repair_objective(match, residuals)
+    report["views"]["repair"] = report["repair"]
     return report, per_px, ground
 
 
@@ -2045,6 +2053,91 @@ def _element_scores(ref_img, att_img, g_ref, g_att, px_per_css=1.0, how=None,
 
 ELEMENT_TAIL = 0.10      # share of elements the worst-tail view averages
 ELEMENT_TAIL_MIN = 8     # never fewer than this many, so the tail is not one element
+
+
+def rank_of(att):
+    """What the loop compares two attempts by.
+
+    Fidelity, unless the repair objective is switched on, and then fidelity less the
+    penalty for what the report has already asked for and not got. `match` is untouched
+    either way: it is what the run is scored and displayed by, and what best_match
+    records, so turning this on cannot rewrite a run's history.
+    """
+    if REPAIR_SELECTION:
+        rep = att.get("report") or {}
+        if rep.get("repair") is not None:
+            return rep["repair"]
+    return att["match"]
+
+
+def _finding_residuals(ref_img, att_img, report, px_per_css):
+    """How far each named fault's own rectangle still is from the design, 0 to 1.
+
+    Measured on the pixels, never on whether the detector still fires. A penalty that
+    clears when a detector goes quiet is a penalty a page can satisfy by dropping a
+    transparent div into the box: the container stops being empty and nothing has been
+    drawn. This cannot be satisfied that way, because the only thing that lowers it is
+    the named rectangle coming to look like the design's.
+
+    It is the same pixels the score already trusts. What the findings add is not new
+    evidence about how the page looks, it is a statement about where to spend the next
+    round, so this weights ground the report has already named rather than measuring
+    anything new.
+    """
+    els = report.get("elements") or {}
+    out = []
+    for kind in ("hollow", "fill"):
+        for f in els.get(kind) or []:
+            # The fill list ends with a summary row that carries a count and no box.
+            if f.get("summary") or "x" not in f:
+                continue
+            x, y = int(f["x"] * px_per_css), int(f["y"] * px_per_css)
+            w, h = int(f["w"] * px_per_css), int(f["h"] * px_per_css)
+            if w < 2 or h < 2:
+                continue
+            box = (x, y, x + w, y + h)
+            try:
+                here = score_images(ref_img.crop(box), att_img.crop(box),
+                                    regions=False, deep=False)[0]["match"]
+            except Exception:
+                continue
+            out.append(max(0.0, min(1.0, 1.0 - here / 100.0)) * max(1, f.get("n", 1)))
+    return out
+
+
+def repair_objective(match, residuals):
+    """What the loop climbs: the score, less what it has been asked for and not done.
+
+    Two numbers, because one cannot do both jobs. A person asking how close the page
+    looks wants something stable and calibrated, that does not lurch because a detector
+    started firing. A round asking what to do next wants the opposite. This is the
+    second one, and it converges on the first: every residual falls to zero as its
+    rectangle comes to match, so a page with nothing outstanding has no penalty and the
+    two numbers are the same.
+
+    Bounded at a single point, which is deliberately small against the 0.2 to 2.1 a
+    round has been seen to gain here. It is enough to break a tie between candidates
+    that are close on fidelity, and not enough to buy a real regression.
+
+    Measured, and it decides nothing. Two runs from one seed, three rounds each, only
+    the selecting number differing: in every wave of both arms the candidate with the
+    best score was also the candidate with the best repair objective. The penalty
+    spread across the candidates of a round is about 0.05 while their scores spread
+    0.2 to 28, because this penalises the state a page is in and every candidate of a
+    round shares that state. A constant offset cannot reorder anything, and the cap
+    that would outweigh a one point spread in fidelity is near twenty, which would let
+    the loop sell real fidelity to clear a finding.
+
+    So it is kept as measurement, which is useful on its own: how much named work a
+    page still carries, in one number, falling as it lands. The variant worth trying
+    credits what a candidate closed against the attempt it was built from rather than
+    what it still carries.
+    """
+    if not residuals:
+        return round(match, 2), 0.0
+    total = float(sum(residuals))
+    penalty = FINDING_PENALTY * (1.0 - math.exp(-total / RESIDUAL_SCALE))
+    return round(match - penalty, 2), round(penalty, 3)
 
 
 def _views(match, regions, elements):
@@ -2817,7 +2910,7 @@ def iteration_base(history, slug=None):
         # Before picking, make the numbers being compared comparable.
         if restate_run(slug):
             history = _attempts(slug)
-    best = max(history, key=lambda a: (a["match"], a["n"]))
+    best = max(history, key=lambda a: (rank_of(a), a["n"]))
     latest = history[-1]
     if slug is not None:
         best = refresh_report(slug, best)
@@ -3089,7 +3182,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     records = [record_attempt(slug, c, source=who, changes=ch,
                               meta={"candidate_of": n, "candidates": len(drafts)})
                for c, ch, who in drafts]
-    best = max(records, key=lambda r: r["match"])
+    best = max(records, key=rank_of)
     best["candidate_scores"] = [r["match"] for r in records]
     # What the round was pressed on, and whether it moved. This is the part the page
     # and the command line show: a fault that survives a round it was named in is the
