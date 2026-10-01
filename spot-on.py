@@ -96,6 +96,7 @@ FINDING_PENALTY = 1.0    # most the outstanding findings may bend the loop's cho
 # either way; this only decides which of two close pages the loop keeps and builds on.
 REPAIR_SELECTION = os.environ.get("SPOT_ON_REPAIR", "").strip().lower() not in ("", "0", "false", "no")
 RESIDUAL_SCALE = 3.0     # residual at which the penalty is about 63% of its cap
+REPAIR_TOLERANCE = 0.5   # fidelity a candidate may give up to have closed more
 ELEMENT_MOVED = 6        # css px of displacement before "move it" is the instruction
 ELEMENT_BUILT = 70       # like-for-like score at which an element counts as built right
 
@@ -2056,18 +2057,47 @@ ELEMENT_TAIL_MIN = 8     # never fewer than this many, so the tail is not one el
 
 
 def rank_of(att):
-    """What the loop compares two attempts by.
-
-    Fidelity, unless the repair objective is switched on, and then fidelity less the
-    penalty for what the report has already asked for and not got. `match` is untouched
-    either way: it is what the run is scored and displayed by, and what best_match
-    records, so turning this on cannot rewrite a run's history.
-    """
-    if REPAIR_SELECTION:
-        rep = att.get("report") or {}
-        if rep.get("repair") is not None:
-            return rep["repair"]
+    """Fidelity, which is what a run is scored, displayed and ranked by."""
     return att["match"]
+
+
+def _penalty_of(att):
+    return ((att.get("report") or {}).get("penalty")) or 0.0
+
+
+def choose_attempt(records, floor=None):
+    """Pick one of several attempts: fidelity, unless fidelity cannot tell them apart.
+
+    Subtracting the penalty from every candidate and taking the best was the first
+    attempt at this and it decided nothing, because it prices the state a page is in
+    and the candidates of a round share that state: measured across 82 waves on disk,
+    the penalty spread within a round has a median of 0.005 against a fidelity spread
+    of 0.85. A near-constant offset cannot reorder anything.
+
+    The same measurement says where it can matter. In 8 of those 82 waves the
+    candidates differed more in what they had closed than in how close they looked,
+    and in those the fidelity gap is below the noise: one wave separated by 0.20 of
+    fidelity and 0.37 of penalty. Choosing by fidelity there is a coin toss that
+    happens to ignore the work that was asked for.
+
+    So fidelity decides, and only when two candidates are within REPAIR_TOLERANCE of
+    each other, which is well under the median spread, does the one that closed more
+    named work win. The most this can ever give up is that tolerance, and it gives it
+    up only where fidelity was not distinguishing anything.
+    """
+    best = max(records, key=rank_of)
+    if not REPAIR_SELECTION or len(records) < 2:
+        return best
+    # Measured against the best fidelity anywhere in reach, not against the best of
+    # this handful. Codex's warning about this, which the first version ignored: a
+    # band checked against the immediate parent lets each round spend the whole
+    # tolerance again, so ten rounds can walk a page down five points while every
+    # single step looks like it gave up almost nothing.
+    ceiling = max(rank_of(best), float(floor or rank_of(best)))
+    band = [r for r in records if rank_of(r) >= ceiling - REPAIR_TOLERANCE]
+    if not band:
+        return best
+    return min(band, key=lambda r: (_penalty_of(r), -rank_of(r)))
 
 
 def _finding_residuals(ref_img, att_img, report, px_per_css):
@@ -2910,7 +2940,15 @@ def iteration_base(history, slug=None):
         # Before picking, make the numbers being compared comparable.
         if restate_run(slug):
             history = _attempts(slug)
+    # The same rule as the round used to keep its winner. Choosing the winner one way
+    # and the base another throws the choice away: measured, a round gave up 0.4 of
+    # fidelity to keep a page with no findings left, and the next round built on the
+    # page it had just rejected, so the findings came straight back.
     best = max(history, key=lambda a: (rank_of(a), a["n"]))
+    if REPAIR_SELECTION:
+        ceiling = rank_of(best)
+        band = [a for a in history if rank_of(a) >= ceiling - REPAIR_TOLERANCE]
+        best = min(band, key=lambda a: (_penalty_of(a), -rank_of(a), -a["n"]))
     latest = history[-1]
     if slug is not None:
         best = refresh_report(slug, best)
@@ -3182,7 +3220,7 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     records = [record_attempt(slug, c, source=who, changes=ch,
                               meta={"candidate_of": n, "candidates": len(drafts)})
                for c, ch, who in drafts]
-    best = max(records, key=rank_of)
+    best = choose_attempt(records, floor=_load_run(slug).get("best_match"))
     best["candidate_scores"] = [r["match"] for r in records]
     # What the round was pressed on, and whether it moved. This is the part the page
     # and the command line show: a fault that survives a round it was named in is the

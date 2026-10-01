@@ -2100,16 +2100,96 @@ class WhatTheReportAskedForAndDidNotGet(unittest.TestCase):
         report = {"elements": {"fill": [{"n": 6, "summary": True, "mean": 7.8}]}}
         self.assertEqual(so._finding_residuals(CASES["exact"], CASES["close"], report, 1.0), [])
 
-    def test_the_loop_chooses_on_fidelity_unless_it_is_switched_on(self):
-        a = {"match": 70.0, "report": {"repair": 69.0}}
-        b = {"match": 69.8, "report": {"repair": 69.6}}
+    def test_a_run_is_always_ranked_by_fidelity(self):
+        # The first version subtracted the penalty from every candidate and took the
+        # best. That decided nothing: it prices the state a page is in, and the
+        # candidates of a round share that state, so every one of them had the same
+        # number taken off. Measured over 82 waves on disk, the penalty spread within
+        # a round has a median of 0.005 against a fidelity spread of 0.85.
+        a = {"match": 70.0, "report": {"repair": 69.0, "penalty": 1.0}}
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.rank_of(a), 70.0)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_findings_decide_only_when_fidelity_cannot(self):
+        # The same measurement says where it can matter: in 8 of those 82 waves the
+        # candidates differed more in what they had closed than in how close they
+        # looked, one of them separated by 0.20 of fidelity and 0.37 of penalty.
+        near = [{"n": 1, "match": 80.2, "report": {"penalty": 0.40}},
+                {"n": 2, "match": 80.0, "report": {"penalty": 0.03}}]
         saved = so.REPAIR_SELECTION
         try:
             so.REPAIR_SELECTION = False
-            self.assertEqual(so.rank_of(a), 70.0)
+            self.assertEqual(so.choose_attempt(near)["n"], 1)
             so.REPAIR_SELECTION = True
-            self.assertEqual(so.rank_of(a), 69.0)
-            self.assertGreater(so.rank_of(b), so.rank_of(a))
+            self.assertEqual(so.choose_attempt(near)["n"], 2)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_it_never_gives_up_fidelity_that_was_telling_them_apart(self):
+        clear = [{"n": 1, "match": 82.2, "report": {"penalty": 0.40}},
+                 {"n": 2, "match": 80.0, "report": {"penalty": 0.03}}]
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.choose_attempt(clear)["n"], 1)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_the_base_is_chosen_the_same_way_the_winner_was(self):
+        # Regression: the winner was chosen by the constrained rule and the base by
+        # fidelity alone, so every round's choice was thrown away. Measured, a round
+        # gave up 0.4 of fidelity to keep a page with no findings left and the next
+        # round built on the page it had just rejected, so the findings came back.
+        history = [{"n": 1, "match": 96.0, "report": {"penalty": 0.37}},
+                   {"n": 2, "match": 95.7, "report": {"penalty": 0.00}}]
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = False
+            self.assertEqual(so.iteration_base(history)[0]["n"], 1)
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.iteration_base(history)[0]["n"], 2)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_what_it_gives_up_is_bounded_for_the_life_of_the_run(self):
+        # Codex's transitive-drift warning, which the first version ignored: a band
+        # measured against the immediate parent lets every round spend the tolerance
+        # again, so ten rounds walk a page down five points while each step looks
+        # almost free. The floor is the best fidelity in reach, not the best to hand.
+        recs = [{"n": 1, "match": 95.6, "report": {"penalty": 0.0}},
+                {"n": 2, "match": 96.0, "report": {"penalty": 0.37}}]
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.choose_attempt(recs, floor=96.0)["n"], 1)
+            self.assertEqual(so.choose_attempt(recs, floor=96.4)["n"], 2)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_the_tolerance_is_under_what_a_round_usually_separates_by(self):
+        # Median fidelity spread within a wave is 0.85, so this only fires on ties.
+        self.assertLess(so.REPAIR_TOLERANCE, 0.85)
+
+    def test_candidates_level_on_both_fall_back_to_fidelity(self):
+        same = [{"n": 1, "match": 80.1, "report": {"penalty": 0.2}},
+                {"n": 2, "match": 80.0, "report": {"penalty": 0.2}}]
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.choose_attempt(same)["n"], 1)
+        finally:
+            so.REPAIR_SELECTION = saved
+
+    def test_one_candidate_is_simply_kept(self):
+        only = [{"n": 1, "match": 50.0, "report": {"penalty": 0.9}}]
+        saved = so.REPAIR_SELECTION
+        try:
+            so.REPAIR_SELECTION = True
+            self.assertEqual(so.choose_attempt(only)["n"], 1)
         finally:
             so.REPAIR_SELECTION = saved
 
