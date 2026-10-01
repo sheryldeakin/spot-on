@@ -3115,8 +3115,6 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
             "" if images == "none" else " and anything the difference map shows"),
         "things you change: a page that scores worse than this one is discarded, so the cost of",
         "trying something is the round, not the page.",
-        "Never apply one rule to every element (for",
-        "example a line height on all text): at this distance that breaks what already matches.",
     ]
     if cap is not None:
         parts += ["Change at most {} things this round.".format(cap)]
