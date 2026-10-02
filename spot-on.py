@@ -282,7 +282,7 @@ def _wrap(code, kind, width, height, ground="#FFFFFF"):
 
 
 def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale=1.0,
-                ground="#FFFFFF", settle_ms=None):
+                ground="#FFFFFF", settle_ms=None, assets=None):
     """Screenshot an attempt with headless Chrome.
 
     The browser window is css_width x css_height CSS pixels at the given device
@@ -303,6 +303,13 @@ def render_code(code, kind, css_width, css_height, out_png, out_size=None, scale
         else:
             page = tmp / "attempt.html"
             page.write_text(_wrap(code, kind, css_width, css_height, ground), encoding="utf-8")
+            # Files the person handed over, copied in beside the page so a relative
+            # path in the markup resolves. The page is written to a temporary folder
+            # and opened over file://, so materials/x.png means nothing unless the
+            # folder travels with it, and a round that referenced one would render a
+            # broken image and score worse for having done as it was told.
+            if assets and Path(assets).is_dir():
+                shutil.copytree(assets, tmp / Path(assets).name, dirs_exist_ok=True)
             target = page.as_uri()
             settle_ms = settle_ms or 1200
         shot = tmp / "shot.png"
@@ -3309,6 +3316,96 @@ def font_rounds_survived(carried):
     return 0
 
 
+def _supply_name(filename):
+    """A filename that cannot escape the run, keeping only the stem and the suffix."""
+    suffix = Path(str(filename or "")).suffix.lower()
+    if suffix not in SUPPLY_TYPES:
+        raise ValueError("that file type cannot be used on a page here. Images ({}), "
+                         "icons (.svg) or fonts ({}).".format(
+                             ", ".join(k for k, v in sorted(SUPPLY_TYPES.items()) if v == "image"),
+                             ", ".join(k for k, v in sorted(SUPPLY_TYPES.items()) if v == "font")))
+    stem = _slugify(Path(str(filename)).stem)[:40] or "file"
+    return stem + suffix
+
+
+def supply_dir(slug, create=False):
+    d = _run_dir(slug) / SUPPLY_DIR
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def add_supply(slug, filename, blob, note=""):
+    """Store a file the person handed over, and record what it is for.
+
+    Kept in the run rather than referenced where it sits, so a run stays one folder
+    that can be moved or deleted whole, and so the renderer can put it beside the page.
+    """
+    if len(blob) > SUPPLY_MAX:
+        raise ValueError("that file is {:.1f}MB and the limit is {}MB".format(
+            len(blob) / 1048576.0, SUPPLY_MAX // 1048576))
+    name = _supply_name(filename)
+    supply_dir(slug, create=True).joinpath(name).write_bytes(blob)
+    run = _load_run(slug)
+    items = [i for i in (run.get("supplied") or []) if i.get("file") != name]
+    items.append({"file": name, "kind": SUPPLY_TYPES[Path(name).suffix],
+                  "note": str(note or "").strip()[:200], "added": time.time(),
+                  "bytes": len(blob)})
+    run["supplied"] = items
+    _save_run(slug, run)
+    return run
+
+
+def drop_supply(slug, name):
+    run = _load_run(slug)
+    keep = [i for i in (run.get("supplied") or []) if i.get("file") != name]
+    path = supply_dir(slug) / _supply_name(name)
+    if path.exists():
+        path.unlink()
+    run["supplied"] = keep
+    _save_run(slug, run)
+    return run
+
+
+def _supply_section(run):
+    """Tell the round the files exist, where they are, and what they are for.
+
+    Named by the path the page should use, which is the path the renderer puts them
+    at. A round told "the background image is available" and not told its filename
+    writes a guess, and a guess renders as nothing.
+    """
+    items = run.get("supplied") or []
+    if not items:
+        return []
+    out = ["Files handed over for this page, already beside it. Reference them by these",
+           "exact paths, which resolve when the page is rendered:"]
+    for i in items:
+        out.append("  {}/{}{}".format(SUPPLY_DIR, i["file"],
+                                      ": " + i["note"] if i.get("note") else ""))
+    out += ["Use them rather than approximating what they show. A font file is loaded with",
+            "@font-face; an image with an img or a CSS background; an svg can be pasted",
+            "inline or used as an img. If one of them is wrong for the job, say so in",
+            "`blocked` rather than leaving it out silently.",
+            ""]
+    return out
+
+
+def mark_supplied(needs, supplied):
+    """Flag the needs a handed-over file answers, by kind.
+
+    By kind rather than by a per-need identity, because the person decides what a file
+    is for and one background image answers the artwork need whatever it is called.
+    The need is not removed: the round still has to place the thing, and until the
+    score moves nobody knows it was placed well.
+    """
+    have = set(i.get("kind") for i in (supplied or []))
+    for n in needs:
+        files = [i["file"] for i in (supplied or []) if i.get("kind") == n["kind"]]
+        n["supplied"] = files
+        n["answered"] = bool(files)
+    return needs
+
+
 def needs_from_you(report, font_rounds=0):
     """Things no amount of code will finish, because the material is not here.
 
@@ -3397,8 +3494,9 @@ def run_needs(slug):
     base, _ = iteration_base(history)
     if not base or not base.get("report"):
         return []
-    return needs_from_you(base["report"],
-                          font_rounds_survived(stuck_problems(history, base)))
+    return mark_supplied(
+        needs_from_you(base["report"], font_rounds_survived(stuck_problems(history, base))),
+        _load_run(slug).get("supplied"))
 
 
 def _needs_section(needs):
@@ -3414,7 +3512,11 @@ def _needs_section(needs):
     out = ["Known to need something that is not here. These are being asked for from the",
            "person whose design this is, so do not spend the round trying to fabricate them:"]
     for n in needs:
-        out.append("  {}{}".format(n["title"], ": " + n["where"] if n["where"] else ""))
+        out.append("  {}{}{}".format(
+            n["title"], ": " + n["where"] if n["where"] else "",
+            "" if not n.get("supplied") else
+            "  [handed over: {}]".format(", ".join(SUPPLY_DIR + "/" + f
+                                                   for f in n["supplied"]))))
     out += ["Get closer where you can, because closer still scores better, and say in `blocked`",
             "if one of them stopped you. Do not substitute something that merely resembles",
             "the real thing: measured, a plausible wrong icon scored the same as an empty box.",
@@ -3520,6 +3622,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         feedback_text(run, n, report),
         "",
     ]
+    parts += _supply_section(run)
     parts += _needs_section(needs)
     parts += _stuck_section(stuck)
     parts += _spent_section(spent)
@@ -3626,6 +3729,12 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
 
 
 GIVE_UP_AFTER = 3
+SUPPLY_DIR = "materials"     # where a handed-over file lives inside the run
+SUPPLY_MAX = 12 * 1024 * 1024
+SUPPLY_TYPES = {
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
+    ".svg": "icons", ".woff2": "font", ".woff": "font", ".ttf": "font", ".otf": "font",
+}
 NEEDS_ARTWORK_SHARE = 15.0   # % of the design that is artwork before the image is worth asking for
 NEEDS_FONT_WEAK = 0.25       # share of text lines whose letters differ before the file is worth asking for
 NEEDS_FONT_ROUNDS = 3        # rounds a font fault survives first: a round may yet pick the right stack
@@ -3671,7 +3780,8 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     carried = stuck_problems(history, base)
     stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
     spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
-    needs = needs_from_you(report, font_rounds_survived(carried))
+    needs = mark_supplied(needs_from_you(report, font_rounds_survived(carried)),
+                          run.get("supplied"))
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
                              rejected_changes(history, base), image_access, stuck, spent,
                              worklist(history, run.get("asks")), needs)
@@ -3808,7 +3918,7 @@ def _parse_iteration(stdout):
 
 # ----------------------------------------------------------------- the attempt
 
-def measure_stability(run, code, tmp_dir):
+def measure_stability(run, code, tmp_dir, assets=None):
     """Screenshot the same target twice and score one against the other.
 
     A running page with an animation, a carousel or a live clock never matches
@@ -3818,18 +3928,14 @@ def measure_stability(run, code, tmp_dir):
     """
     # Throw the first one away: a cold page is still fetching fonts, images and
     # lazy chunks, and measuring that would mask out real content for the whole run.
-    render_code(code, run["kind"], run.get("css_width", run["width"]),
-                run.get("css_height", run["height"]), tmp_dir / "stability-warmup.png",
-                out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
-                ground=run.get("ground", "#FFFFFF"))
-    a = render_code(code, run["kind"], run.get("css_width", run["width"]),
-                    run.get("css_height", run["height"]), tmp_dir / "stability-a.png",
-                    out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
-                    ground=run.get("ground", "#FFFFFF"))
-    b = render_code(code, run["kind"], run.get("css_width", run["width"]),
-                    run.get("css_height", run["height"]), tmp_dir / "stability-b.png",
-                    out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
-                    ground=run.get("ground", "#FFFFFF"))
+    shots = {}
+    for label in ("stability-warmup", "stability-a", "stability-b"):
+        shots[label] = render_code(
+            code, run["kind"], run.get("css_width", run["width"]),
+            run.get("css_height", run["height"]), tmp_dir / (label + ".png"),
+            out_size=(run["width"], run["height"]), scale=run.get("scale", 1.0),
+            ground=run.get("ground", "#FFFFFF"), assets=assets)
+    a, b = shots["stability-a"], shots["stability-b"]
     raw, per_px, _ = score_images(a, b)
     moving = per_px > 64
     if moving.any():
@@ -3868,7 +3974,8 @@ def _unstable_mask(slug, run, code):
         try:
             tmp = Path(tempfile.mkdtemp(prefix="spot-on-stability-"))
             try:
-                stats, moving = measure_stability(run, code, tmp)
+                stats, moving = measure_stability(run, code, tmp,
+                                                  assets=supply_dir(slug))
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
             # Excluding most of the page would leave nothing to score, and every
@@ -4035,7 +4142,8 @@ def record_attempt(slug, code, source="manual", changes="", meta=None):
     att_img = render_code(code, run["kind"],
                           run.get("css_width", run["width"]), run.get("css_height", run["height"]),
                           png, out_size=(run["width"], run["height"]),
-                          scale=run.get("scale", 1.0), ground=run.get("ground", "#FFFFFF"))
+                          scale=run.get("scale", 1.0), ground=run.get("ground", "#FFFFFF"),
+                          assets=supply_dir(slug))
     px_per_css = run["width"] / float(run.get("css_width", run["width"]))
     ignore = _unstable_mask(slug, run, code)
     report, per_px, _ = score_images(ref_img, att_img, px_per_css=px_per_css, ignore=ignore,
@@ -5781,7 +5889,7 @@ function renderNeeds() {
   host.appendChild(h);
   needs.forEach(function (n) {
     var row = document.createElement("div");
-    row.style.cssText = "font-size:12px; line-height:1.6; margin-bottom:9px;";
+    row.style.cssText = "font-size:12px; line-height:1.6; margin-bottom:11px;";
     var t = document.createElement("div");
     t.style.cssText = "color:var(--ink);";
     t.textContent = n.title + (n.where ? " (" + n.where + ")" : "");
@@ -5791,6 +5899,57 @@ function renderNeeds() {
     a.textContent = n.ask;
     a.title = n.worth;
     row.appendChild(a);
+
+    // What has already been handed over for this need, with a way to take it back.
+    (n.supplied || []).forEach(function (f) {
+      var got = document.createElement("div");
+      got.style.cssText = "font-size:11px; color:var(--ink); margin-top:2px;";
+      got.textContent = "\u2713 " + f + " ";
+      var x = document.createElement("button");
+      x.className = "mono";
+      x.style.cssText = "background:none; border:0; color:var(--faint); cursor:pointer;"
+        + " font-size:10px; padding:0 2px;";
+      x.textContent = "remove";
+      x.onclick = function () {
+        api("/supply/delete", { run: state.run.slug, file: f }).then(function (run) {
+          state.run = run; renderNeeds(); renderWorklist();
+        });
+      };
+      got.appendChild(x);
+      row.appendChild(got);
+    });
+
+    var pick = document.createElement("input");
+    pick.type = "file";
+    pick.style.display = "none";
+    pick.accept = n.kind === "font" ? ".woff2,.woff,.ttf,.otf"
+      : n.kind === "icons" ? ".svg" : ".png,.jpg,.jpeg,.webp,.gif,.svg";
+    pick.onchange = function () {
+      var file = pick.files && pick.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        // Only the base64 half of the data URL; the server knows the type from the name.
+        var data = String(reader.result).split(",")[1];
+        give.textContent = "sending " + file.name + "...";
+        api("/supply", { run: state.run.slug, filename: file.name, data: data,
+                         note: n.title })
+          .then(function (run) { state.run = run; renderNeeds(); renderWorklist(); })
+          .catch(function (err) {
+            give.textContent = "give it a file";
+            setStatus("Could not use that file: " + (err && err.message || err));
+          });
+      };
+      reader.readAsDataURL(file);
+    };
+    var give = document.createElement("button");
+    give.className = "mono";
+    give.style.cssText = "background:none; border:0; color:var(--muted); cursor:pointer;"
+      + " font-size:11px; padding:0; text-decoration:underline; margin-top:2px;";
+    give.textContent = (n.supplied || []).length ? "give another file" : "give it a file";
+    give.onclick = function () { pick.click(); };
+    row.appendChild(give);
+    row.appendChild(pick);
     host.appendChild(row);
   });
 }
@@ -6459,6 +6618,20 @@ class Handler(BaseHTTPRequestHandler):
                 # Until then the run follows whatever the default says today.
                 run["materials_custom"] = True
                 _save_run(payload["run"], run)
+                run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
+                self._send_json(200, run)
+            elif path == "/supply":
+                # The file arrives base64 in JSON rather than as a multipart upload,
+                # because the page is one file with no build step and this keeps the
+                # client side to a FileReader and a fetch.
+                run = add_supply(payload["run"], payload["filename"],
+                                 base64.b64decode(payload["data"]), payload.get("note", ""))
+                run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
+                self._send_json(200, run)
+            elif path == "/supply/delete":
+                run = drop_supply(payload["run"], payload["file"])
                 run["materials"] = materials_for(run)
                 run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)

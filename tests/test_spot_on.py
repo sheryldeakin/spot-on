@@ -2717,6 +2717,98 @@ class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
         self.assertIn(so.ICON_CMD, line)
 
 
+class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
+    """A file the person supplies, which the page has to be able to load.
+
+    The load is the whole point and the easy thing to get wrong: an attempt is written
+    to a temporary folder and opened over file://, so a relative path means nothing
+    unless the folder travels with it. A round that referenced a supplied image and
+    got a broken box would score worse for doing as it was told.
+    """
+
+    def setUp(self):
+        self.slug = "supply-test"
+        self.dir = so.RUNS_DIR / self.slug
+        shutil.rmtree(self.dir, ignore_errors=True)
+        (self.dir / "attempts").mkdir(parents=True)
+        Image.new("RGB", (200, 150), "#102030").save(self.dir / "reference.png")
+        so._save_run(self.slug, {"slug": self.slug, "name": "supply test", "kind": "html",
+                                 "width": 200, "height": 150, "css_width": 200,
+                                 "css_height": 150, "scale": 1.0, "ground": "#FFFFFF"})
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def png(self, colour="#cc3366"):
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 150), colour).save(buf, "PNG")
+        return buf.getvalue()
+
+    def test_the_page_can_load_what_was_handed_over(self):
+        so.add_supply(self.slug, "My Background Photo.PNG", self.png())
+        code = ('<div style="width:200px;height:150px;background:'
+                'url(materials/my-background-photo.png) center/cover"></div>')
+        out = Path(tempfile.mkdtemp()) / "shot.png"
+        img = so.render_code(code, "html", 200, 150, out, assets=so.supply_dir(self.slug))
+        px = np.asarray(img.convert("RGB"))[75, 100]
+        self.assertLess(abs(int(px[0]) - 204), 14, "the supplied image did not render")
+        self.assertLess(abs(int(px[1]) - 51), 14)
+
+    def test_a_filename_cannot_escape_the_run(self):
+        so.add_supply(self.slug, "../../../evil.png", self.png())
+        files = [p.name for p in so.supply_dir(self.slug).iterdir()]
+        self.assertEqual(files, ["evil.png"])
+        self.assertFalse((so.RUNS_DIR.parent / "evil.png").exists())
+
+    def test_only_types_a_page_can_use_are_taken(self):
+        for bad in ("notes.txt", "payload.exe", "sheet.csv", "noextension"):
+            with self.assertRaises(ValueError):
+                so.add_supply(self.slug, bad, b"x")
+
+    def test_a_file_too_large_is_refused_before_it_is_written(self):
+        with self.assertRaises(ValueError):
+            so.add_supply(self.slug, "huge.png", b"x" * (so.SUPPLY_MAX + 1))
+        self.assertFalse(so.supply_dir(self.slug).exists()
+                         and list(so.supply_dir(self.slug).iterdir()))
+
+    def test_the_same_name_replaces_rather_than_doubling_up(self):
+        so.add_supply(self.slug, "bg.png", self.png("#111111"))
+        run = so.add_supply(self.slug, "bg.png", self.png("#222222"))
+        self.assertEqual(len(run["supplied"]), 1)
+        self.assertEqual(len([p for p in so.supply_dir(self.slug).iterdir()]), 1)
+
+    def test_removing_one_takes_the_file_and_the_record(self):
+        so.add_supply(self.slug, "bg.png", self.png())
+        run = so.drop_supply(self.slug, "bg.png")
+        self.assertEqual(run["supplied"], [])
+        self.assertFalse((so.supply_dir(self.slug) / "bg.png").exists())
+
+    def test_the_round_is_given_the_exact_path(self):
+        run = so.add_supply(self.slug, "Hero Shot.jpg", self.png(), note="the background")
+        said = "\n".join(so._supply_section(run))
+        self.assertIn("materials/hero-shot.jpg", said)
+        self.assertIn("the background", said)
+        self.assertEqual(so._supply_section({"supplied": []}), [])
+
+    def test_a_kind_that_was_supplied_is_marked_on_the_need(self):
+        needs = [{"kind": "image", "title": "The artwork", "where": "", "worth": "", "ask": ""},
+                 {"kind": "font", "title": "The typeface", "where": "", "worth": "", "ask": ""}]
+        so.mark_supplied(needs, [{"file": "bg.png", "kind": "image"}])
+        self.assertEqual(needs[0]["supplied"], ["bg.png"])
+        self.assertTrue(needs[0]["answered"])
+        self.assertEqual(needs[1]["supplied"], [])
+        self.assertFalse(needs[1]["answered"])
+        # The need is not removed: the round still has to place it well.
+        said = "\n".join(so._needs_section(needs))
+        self.assertIn("The artwork", said)
+        self.assertIn("materials/bg.png", said)
+
+    def test_the_kind_is_read_from_the_suffix(self):
+        self.assertEqual(so.SUPPLY_TYPES[".svg"], "icons")
+        self.assertEqual(so.SUPPLY_TYPES[".woff2"], "font")
+        self.assertEqual(so.SUPPLY_TYPES[".png"], "image")
+
+
 class WhatThePageNeedsFromThePerson(unittest.TestCase):
     """Three faults no amount of code closes, because the material is not here.
 
