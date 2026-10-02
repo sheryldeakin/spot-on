@@ -1187,9 +1187,11 @@ def _glyph_advice(found):
                     "rest.".format("one" if named == 1 else "ones", ICON_CMD,
                                    "it matches" if named == 1 else "they match"))
     if absent:
-        bits.append("The {} marked not in the set {} a brand mark or a one-off drawing: "
-                    "draw {} inline from what the design shows rather than substituting the "
-                    "nearest icon, which measured as worth nothing.".format(
+        bits.append("The {} marked not in the set {} a brand mark or a one-off drawing. "
+                    "Draw {} inline from what the design actually shows. Do not reach for "
+                    "the nearest bundled icon instead: that is what earlier rounds did, and "
+                    "their nearest guesses measured no better than leaving the box "
+                    "empty.".format(
                         "one" if absent == 1 else "ones",
                         "is" if absent == 1 else "are each",
                         "it" if absent == 1 else "them"))
@@ -3323,14 +3325,26 @@ FIND_TIMEOUT = 20
 FIND_AGENT = "spot-on (local design tool)"
 ICONIFY = "https://api.iconify.design"
 OPENVERSE = "https://api.openverse.org/v1/images/"
+GFONTS_LIST = "https://fonts.google.com/metadata/fonts"
+GFONTS_CSS = "https://fonts.googleapis.com/css2"
+# A real browser UA, because the same endpoint serves woff2 to modern browsers and
+# falls back to ttf otherwise. Both are usable; woff2 is a third of the size.
+GFONTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+_GFONTS = None
 
 def _get(url, params=None, timeout=FIND_TIMEOUT):
-    """One GET against a search API. Nothing here runs during a round.
+    """One GET against a search API, on a press, never during a round.
 
-    Every run renders offline and that is deliberate: a page that fetches at render
-    time makes the score depend on the network. This is the one place the tool reaches
-    out, it happens because the person pressed something, and what comes back is
-    written into the run as a file rather than referenced from the page.
+    To be exact about what is and is not offline here, because it is easy to overstate:
+    the tool is not offline. It dispatches every round to a model over the network.
+    What is offline is the RENDER, deliberately, because a page that fetches while it
+    is being screenshotted makes the score depend on whether that request succeeded.
+
+    So the rule this keeps is narrower than "no network": whatever is found here is
+    downloaded once, written into the run as a file, and referenced from the page by a
+    local path. The page still fetches nothing when it is rendered.
     """
     if params:
         url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
@@ -3372,6 +3386,49 @@ def search_images(query, limit=FIND_LIMIT):
     return out
 
 
+def search_fonts(query, limit=FIND_LIMIT):
+    """Families on Google Fonts whose name contains the query.
+
+    Searching for a typeface was left out at first, on the reasoning that a lookalike
+    is the same bad substitution as a lookalike icon. The runs say otherwise. Across
+    134 attempts here whose change mentions the font, the share of text lines whose
+    letters differ fell by 0.3 or more on 17 of them, four went from every line wrong
+    to none, and the best single change was worth 26.0 points of match. Most do
+    nothing, which is what best-of-N is for. A lookalike font is a real repair.
+
+    By name only, which is honest about what it is: a list to choose from, not an
+    identification. Nothing here can look at the design and tell you it is Inter.
+    """
+    global _GFONTS
+    if _GFONTS is None:
+        meta = json.loads(_get(GFONTS_LIST).decode("utf-8", "replace").lstrip(")]}'\n"))
+        _GFONTS = meta.get("familyMetadataList") or []
+    want = str(query).strip().lower()
+    hits = [f for f in _GFONTS if want in str(f.get("family", "")).lower()]
+    if not hits:
+        # Nothing by name, so offer the category instead: a person who typed "grotesk"
+        # and got nothing is better served by a list than by an empty panel.
+        hits = [f for f in _GFONTS if want in str(f.get("category", "")).lower()]
+    out = []
+    for f in hits[:limit]:
+        family = f.get("family")
+        out.append({"id": family, "title": family, "set": f.get("category") or "",
+                    "preview": "", "font": family,
+                    "url": "{}?family={}".format(GFONTS_CSS, urllib.parse.quote(family)),
+                    "suffix": ".woff2", "licence": "Open Font License or Apache 2.0",
+                    "by": "Google Fonts"})
+    return out
+
+
+def _font_file_url(css_url):
+    """The first real font file inside a Google Fonts stylesheet."""
+    css = _get(css_url, timeout=FIND_TIMEOUT).decode("utf-8", "replace")
+    found = re.search(r"url\((https://fonts\.gstatic\.com/[^)]+)\)", css)
+    if not found:
+        raise ValueError("that family did not return a font file")
+    return found.group(1)
+
+
 def find_candidates(kind, query, limit=FIND_LIMIT):
     query = str(query or "").strip()
     if not query:
@@ -3380,10 +3437,15 @@ def find_candidates(kind, query, limit=FIND_LIMIT):
         return search_icons(query, limit)
     if kind == "image":
         return search_images(query, limit)
-    # Fonts are deliberately not searched. A typeface is a licensing decision and
-    # often a paid one, and picking a lookalike off a list is exactly the substitution
-    # the rounds were already making badly.
-    raise ValueError("searching only covers icons and images; a font has to be handed over")
+    if kind == "font":
+        return search_fonts(query, limit)
+    raise ValueError("there is nothing to search for a {}".format(kind))
+
+
+# What a font file starts with. Checked rather than trusted, the same as an image:
+# the search names a host and what it hands back is still bytes from the internet.
+FONT_MAGIC = {b"wOF2": ".woff2", b"wOFF": ".woff", b"OTTO": ".otf",
+              b"\x00\x01\x00\x00": ".ttf", b"true": ".ttf", b"ttcf": ".ttc"}
 
 
 _SVG_UNSAFE = re.compile(
@@ -3414,7 +3476,19 @@ def fetch_candidate(slug, kind, url, title="", licence="", by=""):
     """
     if not str(url or "").startswith(("http://", "https://")):
         raise ValueError("that is not a link this can fetch")
+    if url.startswith(GFONTS_CSS):
+        # The candidate names a family's stylesheet; the file is one hop inside it.
+        url = _font_file_url(url)
     blob = _get(url)
+    if kind == "font":
+        suffix = FONT_MAGIC.get(blob[:4])
+        if not suffix:
+            raise ValueError("that link did not return a font file")
+        if suffix not in SUPPLY_TYPES:
+            raise ValueError("that font is in a format a page cannot load ({})".format(suffix))
+        name = _slugify(title or "font")[:40] or "font"
+        note = " ".join(x for x in (title, ("by " + by) if by else "", licence) if x).strip()
+        return add_supply(slug, name + suffix, blob, note=note[:200], kind="font")
     if len(blob) > SUPPLY_MAX:
         raise ValueError("that file is {:.1f}MB and the limit is {}MB".format(
             len(blob) / 1048576.0, SUPPLY_MAX // 1048576))
@@ -3548,7 +3622,7 @@ def mark_supplied(needs, supplied):
         files = [i["file"] for i in (supplied or []) if i.get("kind") == n["kind"]]
         n["supplied"] = files
         n["answered"] = bool(files)
-        n["searchable"] = n["kind"] in ("icons", "image")
+        n["searchable"] = n["kind"] in ("icons", "image", "font")
     return needs
 
 
@@ -3598,9 +3672,10 @@ def needs_from_you(report, font_rounds=0):
                 len(missing), "" if len(missing) == 1 else "s"),
             "where": where,
             "worth": ("Measured on one page, filling these wells with the design's own glyphs "
-                      "was worth 2.4 points of the per-element score while plausible "
-                      "substitutes were worth nothing, so this is the difference between an "
-                      "icon and the icon."),
+                      "was worth 2.4 points of the per-element score, while the guesses the "
+                      "rounds made from the 2121 bundled icons were worth nothing. That "
+                      "measured the bundled set, not every set: searching a larger one may "
+                      "well turn up the actual glyph."),
             "ask": ("Hand over an SVG for each, or name an icon set that has them and it can "
                     "be bundled the way the current one is."),
         })
@@ -3615,8 +3690,10 @@ def needs_from_you(report, font_rounds=0):
             "worth": ("The report puts this first because it makes every box around it measure "
                       "wrong too, so closing it deletes complaints rather than adding one. It "
                       "has survived {} rounds of trying other stacks.".format(font_rounds)),
-            "ask": ("Install the font on this machine, hand over the file, or name a web font "
-                    "that is it. Naming a lookalike is what the rounds have already tried."),
+            "ask": ("Install the font on this machine, hand over the file, or search Google "
+                    "Fonts below for it or for the closest thing to it. A lookalike is worth "
+                    "having: measured over 134 font changes here, 17 cut the share of wrong "
+                    "letters by a third or more and the best was worth 26.0 points."),
         })
     return out
 
@@ -3667,8 +3744,9 @@ def _needs_section(needs):
             "  [handed over: {}]".format(", ".join(SUPPLY_DIR + "/" + f
                                                    for f in n["supplied"]))))
     out += ["Get closer where you can, because closer still scores better, and say in `blocked`",
-            "if one of them stopped you. Do not substitute something that merely resembles",
-            "the real thing: measured, a plausible wrong icon scored the same as an empty box.",
+            "if one of them stopped you. Draw what the design shows rather than reaching for",
+            "the nearest thing in the bundled set: measured, the guesses earlier rounds made",
+            "that way scored no better than leaving the box empty.",
             ""]
     return out
 

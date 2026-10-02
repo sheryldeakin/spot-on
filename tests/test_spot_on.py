@@ -2780,13 +2780,51 @@ class LookingForTheMaterialInsteadOfMakingIt(unittest.TestCase):
             so.find_candidates("icons", "   ")
         self.assertEqual(self.asked, [])
 
-    def test_a_font_is_never_searched_for(self):
-        # A typeface is a licensing decision, and picking a lookalike off a list is
-        # the substitution the rounds were already making badly.
-        self.serve({})
+    def test_a_font_can_be_searched_for_because_a_lookalike_is_a_real_repair(self):
+        """This was left out at first on the reasoning that a lookalike font is the
+        same bad substitution as a lookalike icon. The runs say otherwise: across 134
+        attempts whose change mentions the font, 17 cut the share of wrong letters by
+        0.3 or more, four went from every line wrong to none, and the best single
+        change was worth 26.0 of match. Most do nothing, which is what best-of-N is
+        for.
+        """
+        so._GFONTS = None
+        self.serve({"metadata/fonts": json.dumps({"familyMetadataList": [
+            {"family": "Inter", "category": "Sans Serif"},
+            {"family": "Inter Tight", "category": "Sans Serif"},
+            {"family": "Lora", "category": "Serif"}]}).encode()})
+        got = so.find_candidates("font", "inter", 10)
+        self.assertEqual([c["title"] for c in got], ["Inter", "Inter Tight"])
+        self.assertTrue(got[0]["url"].startswith(so.GFONTS_CSS))
+        self.assertIn("Font License", got[0]["licence"])
+
+    def test_a_font_search_with_no_name_match_offers_the_category(self):
+        so._GFONTS = None
+        self.serve({"metadata/fonts": json.dumps({"familyMetadataList": [
+            {"family": "Lora", "category": "Serif"},
+            {"family": "Inter", "category": "Sans Serif"}]}).encode()})
+        got = so.find_candidates("font", "serif", 10)
+        self.assertEqual([c["title"] for c in got], ["Lora", "Inter"])
+
+    def test_a_fetched_font_is_checked_against_what_it_claims_to_be(self):
+        self.serve({"css2": b"@font-face{src:url(https://fonts.gstatic.com/s/i/a.ttf);}",
+                    "a.ttf": b"\x00\x01\x00\x00rest of a real ttf"})
+        run = so.fetch_candidate(self.slug, "font", so.GFONTS_CSS + "?family=Inter",
+                                 "Inter", "OFL", "Google Fonts")
+        self.assertEqual(run["supplied"][0]["file"], "inter.ttf")
+        self.assertEqual(run["supplied"][0]["kind"], "font")
+        self.assertIn("OFL", run["supplied"][0]["note"])
+
+    def test_something_that_is_not_a_font_is_refused(self):
+        self.serve({"css2": b"@font-face{src:url(https://fonts.gstatic.com/s/i/a.ttf);}",
+                    "a.ttf": b"<html>nope</html>"})
         with self.assertRaises(ValueError):
-            so.find_candidates("font", "inter")
-        self.assertEqual(self.asked, [])
+            so.fetch_candidate(self.slug, "font", so.GFONTS_CSS + "?family=X", "X")
+
+    def test_a_family_with_no_file_in_its_stylesheet_is_refused(self):
+        self.serve({"css2": b"/* nothing here */"})
+        with self.assertRaises(ValueError):
+            so.fetch_candidate(self.slug, "font", so.GFONTS_CSS + "?family=X", "X")
 
     def test_a_fetched_svg_is_stripped_of_anything_that_runs(self):
         nasty = (b'<svg xmlns="http://www.w3.org/2000/svg" onload="steal()">'
@@ -3000,6 +3038,31 @@ class WhatThePageNeedsFromThePerson(unittest.TestCase):
         rep = self.report(elements={"glyph": {"lines": 143,
                                               "weak_share": so.NEEDS_FONT_WEAK - 0.01}})
         self.assertEqual(so.needs_from_you(rep, font_rounds=99), [])
+
+    def test_the_icon_claim_is_scoped_to_the_bundled_set(self):
+        """What was measured was the loop's nearest guesses out of 2121 bundled icons.
+
+        Stated as a flat "any substitute is worthless" it would argue against the
+        search that exists to fix the problem, so the wording has to keep the scope.
+        """
+        rep = self.report(elements={"hollow": [
+            {"x": 1, "y": 2, "w": 30, "h": 30, "glyph": {"absent": True, "score": 0.5}}]})
+        worth = so.needs_from_you(rep)[0]["worth"]
+        self.assertIn("2121 bundled icons", worth)
+        self.assertIn("not every set", worth)
+        said = so._glyph_advice([{"x": 1, "y": 2, "w": 3, "h": 4,
+                                  "glyph": {"absent": True, "score": 0.5}}])
+        # Scoped to the bundled set, and attributed to what earlier rounds did.
+        self.assertIn("nearest bundled icon", said)
+        self.assertIn("earlier rounds", said)
+        self.assertNotIn("which measured as worth nothing", said)
+
+    def test_the_tool_does_not_claim_to_be_offline(self):
+        """It dispatches every round to a model. The RENDER is what is offline."""
+        import inspect
+        doc = inspect.getdoc(so._get) or ""
+        self.assertIn("the tool is not offline", doc)
+        self.assertIn("RENDER", doc)
 
     def test_the_round_is_told_to_keep_going_and_not_to_fake_them(self):
         rep = self.report(artwork={"share": 50.0, "where": "lower middle"})
