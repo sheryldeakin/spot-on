@@ -271,17 +271,22 @@ class HouseRules(unittest.TestCase):
     def test_no_stray_control_characters_in_any_tracked_file(self):
         r"""A backslash escape that got eaten on the way into a file.
 
-        Writing a patch through a shell heredoc collapses a doubled backslash, so the
-        Python that gets written has `\b` where the source said `\\b`, and `\b` inside
-        a string is a backspace. It parses, it runs, and the regex it belongs to
-        quietly stops matching what it was written to match. That happened three times
-        in one session to a file whose own CLAUDE.md warns about exactly it, so the
+        Content written into a file through another script's string literals gets
+        decoded on the way: source meant as backslash-b arrives as a single 0x08
+        byte. It parses, it runs, and the regex it belongs to quietly stops matching.
+        Six times in one session, twice while writing the warning about it, so the
         warning is not the control.
 
-        The silent cases are precisely the escapes that map to a control character:
-        \a \b \f \v \0. The rest either survive (\s, \.) or break the literal and
-        fail loudly (\n, \r). This catches the whole silent class in one assertion,
-        within one test run rather than hours later.
+        Not the shell, which was the first diagnosis and was wrong: a quoted heredoc
+        passes content through untouched, and the decoding happens in the literal
+        the content was sitting in. Writing the patch script with an editor tool
+        does not help, because the content is still inside python literals.
+
+        What this sees: the escapes that land as a control character, `\a \b \f \v
+        \0`. What it does NOT see: a corrupted `\t`, `\n` or `\r`, because those
+        bytes are legitimate in a text file. One real damaged path had a newline AND
+        a BEL in it, and only the BEL was visible here. A net under part of a class,
+        not coverage of it.
         """
         allowed = {9, 10, 13}        # tab, newline, carriage return
         binary = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".npz", ".woff",
