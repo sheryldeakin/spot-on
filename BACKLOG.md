@@ -26,12 +26,15 @@ schedule. Finishing an item deletes its line in the commit that does the work.
 - **Instrument both selection paths** before trialling that again. Size: small.
   Trigger: doing the above. The flips counter watches `choose_attempt` only, and the
   mechanism acts through `iteration_base`.
-- **Turn "declined N times" into "verify this instruction".** Size: medium. Trigger:
-  any report item surviving many rounds again. A finding was false for twenty rounds
-  while three features were built to make the loop obey it; the loop was right from
-  the first refusal. The count exists and nothing reads it as evidence.
 
 ## Deliberate limits
+
+- **A dispute needs two rounds to agree before it is repeated to anyone.** One round
+  saying a fault is not there is an opinion, and models are agreeable enough that
+  asking the question invites a yes. Two independent rounds is the gate; it has not
+  been tuned against real disputes because there are none yet.
+- **A disputed fault is still measured and still reported.** Only the pressing stops.
+  The rounds can be wrong together, and the person has the last word.
 
 - **An in-set icon at 24px with a thick stroke can be called absent.** Measured: at
   32px a set drawing scores at least 0.80 against itself 98.7% to 100% of the time,

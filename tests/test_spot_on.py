@@ -2270,10 +2270,12 @@ class TheRoundsKeepAListBetweenThem(unittest.TestCase):
         self.assertEqual(got["next"], ["fill the wells"])
 
     def test_an_answer_with_no_lists_reports_none(self):
+        # Four fields since `disputed` was added: a round may also say the report is
+        # wrong about something, and silence there means the report is right.
+        empty = {"blocked": [], "next": [], "done": [], "disputed": []}
         out = json.dumps({"structured_output": {"code": "<div/>", "changes": "x"}})
-        self.assertEqual(so.round_lists(out), {"blocked": [], "next": [], "done": []})
-        self.assertEqual(so.round_lists("not json at all"),
-                         {"blocked": [], "next": [], "done": []})
+        self.assertEqual(so.round_lists(out), empty)
+        self.assertEqual(so.round_lists("not json at all"), empty)
 
     def test_the_next_round_is_handed_the_open_list(self):
         text = "\n".join(so._worklist_section(so.worklist(
@@ -2984,6 +2986,77 @@ class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
         self.assertEqual(so.SUPPLY_TYPES[".svg"], "icons")
         self.assertEqual(so.SUPPLY_TYPES[".woff2"], "font")
         self.assertEqual(so.SUPPLY_TYPES[".png"], "image")
+
+
+class WhenTheRoundsSayTheReportIsWrong(unittest.TestCase):
+    """The case this exists for, replayed.
+
+    The report's second item for twenty rounds was "seven containers drawn empty".
+    Five of the seven were empty in the design too; the detector was reading a glow as
+    content. Every round that looked declined, correctly, and three features were
+    built to force compliance because nothing in the tool could hear a refusal as
+    evidence about the instruction.
+    """
+
+    def spent(self):
+        return [{"key": ["hollow"], "rounds": 9}, {"key": ["type", "family"], "rounds": 7}]
+
+    def test_two_rounds_agreeing_is_heard(self):
+        hist = [{"n": 1, "disputed": ["the containers drawn empty: those circles are "
+                                      "empty in the design too, the ring has a glow"]},
+                {"n": 3, "disputed": ["The containers drawn empty: nothing is missing"]}]
+        got = so.disputes(hist, self.spent())
+        self.assertEqual([d["phrase"] for d in got], ["the containers drawn empty"])
+        self.assertEqual(len(got[0]["rounds"]), 2)
+        self.assertIn("glow", got[0]["rounds"][0]["saw"])
+
+    def test_one_round_alone_is_not_enough(self):
+        # Models are agreeable, and asking the question at all invites a yes.
+        hist = [{"n": 1, "disputed": ["the typeface: it looks right to me"]}]
+        self.assertEqual(so.disputes(hist, self.spent()), [])
+
+    def test_a_line_that_names_nothing_known_is_ignored(self):
+        hist = [{"n": 1, "disputed": ["something else entirely: ignored"]},
+                {"n": 2, "disputed": ["something else entirely: still ignored"]}]
+        self.assertEqual(so.disputes(hist, self.spent()), [])
+
+    def test_only_faults_that_have_resisted_can_be_disputed(self):
+        # A fault nobody has been asked about twice is not evidence of anything.
+        hist = [{"n": 1, "disputed": ["the containers drawn empty: no"]},
+                {"n": 2, "disputed": ["the containers drawn empty: no"]}]
+        self.assertEqual(so.disputes(hist, []), [])
+
+    def test_a_disputed_fault_is_no_longer_pressed(self):
+        doubted = [{"key": ["hollow"], "phrase": "the containers drawn empty",
+                    "rounds": [{"n": 1, "saw": "they are empty in the design"},
+                               {"n": 2, "saw": ""}]}]
+        said = "\n".join(so._dispute_section(doubted))
+        self.assertIn("not being asked for again", said)
+        self.assertIn("they are empty in the design", said)
+        # And a round that disagrees is still allowed to fix it.
+        self.assertIn("If you can see that the report is right after all", said)
+
+    def test_nothing_is_said_when_nothing_is_disputed(self):
+        self.assertEqual(so._dispute_section([]), [])
+
+    def test_the_round_is_asked_the_question_on_the_spent_ones(self):
+        said = "\n".join(so._spent_section(self.spent()))
+        self.assertIn("disputed", said)
+        self.assertIn("what you actually see", said)
+        self.assertIn("Saying nothing is the right answer if the report is right", said)
+
+    def test_the_field_is_collected_from_a_round(self):
+        payload = json.dumps({"code": "<i/>", "changes": "x",
+                              "disputed": ["the typeface: looks right", "  ", 7]})
+        got = so.round_lists(payload)
+        self.assertEqual(got["disputed"], ["the typeface: looks right"])
+
+    def test_the_schema_asks_for_what_was_seen_not_just_that_it_is_wrong(self):
+        # Asking a model to state what it observes, and reading that, is the cheap
+        # thing that caught the false finding.
+        said = so.ITERATE_SCHEMA["properties"]["disputed"]["description"]
+        self.assertIn("what you actually see", said)
+        self.assertIn("looked at", said)
 
 
 class WhatThePageNeedsFromThePerson(unittest.TestCase):

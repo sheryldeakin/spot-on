@@ -3084,6 +3084,14 @@ ITERATE_SCHEMA = {
             "description": "lines copied exactly from the open list you were given, for items "
                            "this round's code actually finished. Name none if you finished none.",
         },
+        "disputed": {
+            "type": "array", "items": {"type": "string"},
+            "description": "report items you looked at and believe are wrong about the design, "
+                           "one line each, starting with the item's own words copied exactly, "
+                           "then a colon and what you actually see at that place. Only for "
+                           "items you checked against the design image. Empty if the report "
+                           "matches what you can see.",
+        },
     },
     "required": ["code", "changes"],
 }
@@ -3698,6 +3706,18 @@ def needs_from_you(report, font_rounds=0):
     return out
 
 
+def run_disputes(slug):
+    """What the rounds say the report is wrong about, for the page. Read only."""
+    history = _attempts(slug)
+    if not history:
+        return []
+    base, _ = iteration_base(history)
+    if not base or not base.get("report"):
+        return []
+    carried = stuck_problems(history, base)
+    return disputes(history, [x for x in carried if x["rounds"] >= GIVE_UP_AFTER])
+
+
 def run_needs(slug):
     """The needs list for a run as it stands, from its best attempt.
 
@@ -3751,6 +3771,56 @@ def _needs_section(needs):
     return out
 
 
+def disputes(history, spent=()):
+    """Which long-running faults the rounds say are not there, and what they see.
+
+    The case this exists for: a report item was false for twenty rounds while three
+    features were built to make the loop comply with it. The loop had been right from
+    the first refusal, and nothing in the tool could hear that, because declining was
+    only ever read as the model failing.
+
+    A line counts for a fault when it begins with that fault's own phrase, the way
+    `done` copies a worklist line. Agreement from {} separate rounds is what it takes
+    before the tool repeats it to the person: one round saying so is an opinion, and
+    models are agreeable enough that asking the question at all invites a yes.
+    """.format(DISPUTE_AFTER)
+    phrases = {stuck_phrase(tuple(item["key"])): tuple(item["key"]) for item in (spent or [])}
+    found = {}
+    for a in history:
+        for line in (a.get("disputed") or []):
+            text = str(line).strip()
+            low = text.lower()
+            for phrase, key in phrases.items():
+                if low.startswith(phrase.lower()):
+                    saw = text[len(phrase):].lstrip(" :.-").strip()
+                    found.setdefault(phrase, {"key": list(key), "phrase": phrase, "rounds": []})
+                    found[phrase]["rounds"].append({"n": a["n"], "saw": saw})
+                    break
+    out = [v for v in found.values() if len(v["rounds"]) >= DISPUTE_AFTER]
+    out.sort(key=lambda v: -len(v["rounds"]))
+    return out
+
+
+def _dispute_section(disputed):
+    """Stop pressing what several rounds have examined and called wrong.
+
+    Not deleted from the report: the measurement still says what it says, and the
+    rounds may be wrong together. What changes is that nobody is asked to fix it
+    again while it is in doubt, which is the round that was being burned.
+    """
+    if not disputed:
+        return []
+    out = ["Earlier rounds looked at these and said the report is wrong about them. They are",
+           "not being asked for again until a person has looked:"]
+    for d in disputed:
+        saw = next((r["saw"] for r in d["rounds"] if r["saw"]), "")
+        out.append("  {} ({} rounds){}".format(
+            d["phrase"], len(d["rounds"]), ": " + saw if saw else ""))
+    out += ["If you can see that the report is right after all, say so in `changes` and fix it.",
+            ""]
+    return out
+
+
 def _spent_section(spent):
     """Tell the round what not to spend its three changes on.
 
@@ -3774,10 +3844,16 @@ def _spent_section(spent):
         lines.append("  {} ({} rounds)".format(
             stuck_phrase(tuple(item["key"])), item["rounds"]))
     lines += [
-        "They stay in the list above because they are real faults, and some cannot be fixed",
-        "in code at all: a typeface that is not installed, a photograph you do not have.",
-        "Spend this round's changes on something not named here. If you can see a way to",
-        "close one of them that earlier rounds did not try, take it and say so.",
+        "They stay in the list above because the measurement goes on reporting them, and some",
+        "cannot be fixed in code at all: a typeface that is not installed, a photograph you do",
+        "not have. Spend this round's changes on something not named here. If you can see a way",
+        "to close one that earlier rounds did not try, take it and say so.",
+        "",
+        "One of them may simply be wrong. A report item here was false for twenty rounds while",
+        "every round that looked at it declined, correctly, and nothing could hear that. So:",
+        "look at each one in the design image, and if the report is wrong about it, put it in",
+        "`disputed`, starting with its words above, then what you actually see there. Only for",
+        "ones you have looked at. Saying nothing is the right answer if the report is right.",
         "",
     ]
     return lines
@@ -3809,7 +3885,7 @@ def _stuck_section(stuck):
 
 
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    images="read", stuck=(), spent=(), lists=None, needs=()):
+                    images="read", stuck=(), spent=(), lists=None, needs=(), disputed=()):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
@@ -3851,6 +3927,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
     ]
     parts += _supply_section(run)
     parts += _needs_section(needs)
+    parts += _dispute_section(disputed)
     parts += _stuck_section(stuck)
     parts += _spent_section(spent)
     parts += _worklist_section(lists)
@@ -3956,6 +4033,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
 
 
 GIVE_UP_AFTER = 3
+DISPUTE_AFTER = 2        # rounds that must independently say a fault is not there
 SUPPLY_DIR = "materials"     # where a handed-over file lives inside the run
 SUPPLY_MAX = 12 * 1024 * 1024
 SUPPLY_TYPES = {
@@ -4007,11 +4085,18 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     carried = stuck_problems(history, base)
     stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
     spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
+    # A fault several rounds have examined and called wrong stops being pressed. It
+    # stays in the report, because the rounds may be wrong together and the person
+    # has the last word, but no round is asked to spend itself on it meanwhile.
+    doubted = disputes(history, spent)
+    in_doubt = set(tuple(d["key"]) for d in doubted)
+    stuck = [x for x in stuck if tuple(x["key"]) not in in_doubt]
+    spent = [x for x in spent if tuple(x["key"]) not in in_doubt]
     needs = mark_supplied(needs_from_you(report, font_rounds_survived(carried)),
                           run.get("supplied"))
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
                              rejected_changes(history, base), image_access, stuck, spent,
-                             worklist(history, run.get("asks")), needs)
+                             worklist(history, run.get("asks")), needs, doubted)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -4116,7 +4201,7 @@ def round_lists(stdout):
     if not isinstance(said, dict):
         said = payload if "code" in payload else {}
     return {k: [_trim_item(x) for x in (said.get(k) or []) if isinstance(x, str) and x.strip()]
-            for k in ("blocked", "next", "done")}
+            for k in ("blocked", "next", "done", "disputed")}
 
 
 def _parse_iteration(stdout):
@@ -6101,9 +6186,43 @@ var COMPONENT_HELP = {
 // page; this is the loop's own account of what it could not do and what it left. The
 // two are kept apart on purpose: a round has claimed work it had not done, and has
 // called a script blocked in the same round another ran it.
+function renderDisputes(host) {
+  // The loop's own answer back. It is kept apart from the report because it is not a
+  // measurement: it is several rounds saying the measurement is wrong about one thing,
+  // which is worth a person's eye and nothing else can settle.
+  var rows = (state.run && state.run.disputed) || [];
+  if (!rows.length) return;
+  var h = document.createElement("div");
+  h.className = "mono";
+  h.style.cssText = "font-size:10px; letter-spacing:0.14em; text-transform:uppercase;"
+    + " color:var(--muted); margin: 14px 0 7px;";
+  h.textContent = "the rounds say these are wrong";
+  h.title = "Several rounds looked at the design and said the report is mistaken about "
+    + "these. They are no longer being asked for. Worth checking yourself.";
+  host.appendChild(h);
+  rows.forEach(function (d) {
+    var row = document.createElement("div");
+    row.style.cssText = "font-size:12px; line-height:1.6; margin-bottom:7px;";
+    var t = document.createElement("div");
+    t.style.cssText = "color:var(--ink);";
+    t.textContent = d.phrase + " (" + d.rounds.length + " rounds)";
+    row.appendChild(t);
+    var saw = (d.rounds.filter(function (r) { return r.saw; })[0] || {}).saw;
+    if (saw) {
+      var w = document.createElement("div");
+      w.style.cssText = "color:var(--muted); font-size:11px;";
+      w.textContent = saw;
+      row.appendChild(w);
+    }
+    host.appendChild(row);
+  });
+}
+
+
 function renderNeeds() {
   var host = $("needs");
   host.innerHTML = "";
+  renderDisputes(host);
   var needs = (state.run && state.run.needs) || [];
   if (!needs.length) return;
   var h = document.createElement("div");
@@ -6861,6 +6980,7 @@ class Handler(BaseHTTPRequestHandler):
                 run["starter"] = starter_code(run)
                 run["materials"] = materials_for(run)
                 run["needs"] = run_needs(run["slug"])
+                run["disputed"] = run_disputes(run["slug"])
                 self._send_json(200, run)
             elif path == "/code":
                 q = self._query()
