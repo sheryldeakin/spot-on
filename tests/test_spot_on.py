@@ -3039,6 +3039,26 @@ class WhenTheRoundsSayTheReportIsWrong(unittest.TestCase):
     def test_nothing_is_said_when_nothing_is_disputed(self):
         self.assertEqual(so._dispute_section([]), [])
 
+    def test_both_prompt_builders_use_the_same_context(self):
+        """The endpoint's comment claimed it already did. It passed five fewer
+        sections, so a page iterated from the browser got a weaker prompt and
+        nothing said so."""
+        import inspect
+        src = inspect.getsource(so)
+        # One assembler, two call sites, no second list of arguments anywhere.
+        self.assertEqual(src.count("def carried_context("), 1)
+        self.assertGreaterEqual(src.count("carried_context(run, history, base)"), 2)
+        for field in ("stuck", "spent", "lists", "needs", "doubted", "rejected"):
+            self.assertIn('ctx["{}"]'.format(field), src)
+
+    def test_the_context_carries_every_section_a_round_is_given(self):
+        run = {"asks": [], "supplied": []}
+        base = {"n": 2, "match": 70.0, "report": {"elements": {}, "artwork": {}}}
+        history = [{"n": 1, "match": 60.0, "report": {"elements": {}}}, base]
+        ctx = so.carried_context(run, history, base)
+        self.assertEqual(sorted(ctx),
+                         ["doubted", "lists", "needs", "rejected", "spent", "stuck"])
+
     def test_the_round_is_asked_the_question_on_the_spent_ones(self):
         said = "\n".join(so._spent_section(self.spent()))
         self.assertIn("disputed", said)

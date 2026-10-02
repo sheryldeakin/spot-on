@@ -3706,6 +3706,37 @@ def needs_from_you(report, font_rounds=0):
     return out
 
 
+def carried_context(run, history, base):
+    """Everything a round is told besides the report: what is stuck, spent, disputed,
+    outstanding, and needed from the person.
+
+    One function because there are two places that build a round's prompt, the server
+    loop and the `/prompt` endpoint for a model running in the page, and they had
+    drifted. The endpoint's own comment said it produced "the same round prompt the
+    server loop uses" while passing neither the worklist, the stuck list, the spent
+    list, the needs nor the disputes, so the same page iterated from the browser got a
+    materially weaker prompt and nothing said so. Anything written twice drifts.
+    """
+    report = base["report"]
+    carried = stuck_problems(history, base)
+    stuck = [x for x in carried if x["rounds"] < GIVE_UP_AFTER]
+    spent = [x for x in carried if x["rounds"] >= GIVE_UP_AFTER]
+    # A fault several rounds have examined and called wrong stops being pressed. It
+    # stays in the report, because the rounds may be wrong together and the person
+    # has the last word, but no round is asked to spend itself on it meanwhile.
+    doubted = disputes(history, spent)
+    in_doubt = set(tuple(d["key"]) for d in doubted)
+    return {
+        "stuck": [x for x in stuck if tuple(x["key"]) not in in_doubt],
+        "spent": [x for x in spent if tuple(x["key"]) not in in_doubt],
+        "doubted": doubted,
+        "lists": worklist(history, run.get("asks")),
+        "needs": mark_supplied(
+            needs_from_you(report, font_rounds_survived(carried)), run.get("supplied")),
+        "rejected": rejected_changes(history, base),
+    }
+
+
 def run_disputes(slug):
     """What the rounds say the report is wrong about, for the page. Read only."""
     history = _attempts(slug)
@@ -4082,21 +4113,10 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     count = candidates if candidates is not None else os.environ.get("SPOT_ON_CANDIDATES", 3)
     count = max(1, min(5, int(count)))
     image_access = image_mode(chosen)
-    carried = stuck_problems(history, base)
-    stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
-    spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
-    # A fault several rounds have examined and called wrong stops being pressed. It
-    # stays in the report, because the rounds may be wrong together and the person
-    # has the last word, but no round is asked to spend itself on it meanwhile.
-    doubted = disputes(history, spent)
-    in_doubt = set(tuple(d["key"]) for d in doubted)
-    stuck = [x for x in stuck if tuple(x["key"]) not in in_doubt]
-    spent = [x for x in spent if tuple(x["key"]) not in in_doubt]
-    needs = mark_supplied(needs_from_you(report, font_rounds_survived(carried)),
-                          run.get("supplied"))
+    ctx = carried_context(run, history, base)
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
-                             rejected_changes(history, base), image_access, stuck, spent,
-                             worklist(history, run.get("asks")), needs, doubted)
+                             ctx["rejected"], image_access, ctx["stuck"], ctx["spent"],
+                             ctx["lists"], ctx["needs"], ctx["doubted"])
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -4122,12 +4142,12 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     # Only what the prompt actually named, not everything that carried over: the
     # prompt asks for PRESS_LIMIT of them, so reporting all ten as "pressed" would
     # claim the round ignored things it was never asked about.
-    before = {tuple(s["key"]) for s in stuck[:PRESS_LIMIT]}
+    before = {tuple(x["key"]) for x in ctx["stuck"][:PRESS_LIMIT]}
     best["was_pressed"] = [stuck_phrase(k) for k in sorted(before, key=str)]
     best["still_stuck"] = [stuck_phrase(k) for k in sorted(before & problem_keys(best["report"]),
                                                            key=str)]
-    best["given_up"] = [stuck_phrase(tuple(s["key"]))
-                        for s in stuck_problems(history, base) if s["rounds"] >= GIVE_UP_AFTER]
+    best["given_up"] = [stuck_phrase(tuple(x["key"])) for x in ctx["spent"]]
+    best["in_doubt"] = [d["phrase"] for d in ctx["doubted"]]
 
     # A round that was asked for something and did not do it has spent the person's
     # time and their usage for nothing, so take one more swing before handing back.
@@ -6954,7 +6974,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, available_agents())
             elif path == "/prompt":
                 # The same round prompt the server loop uses, for an AI that runs in
-                # the page (Chrome's built-in model) instead of on this machine.
+                # the page (Chrome's built-in model) instead of on this machine. Both
+                # assemble it from carried_context, which is the only way "the same"
+                # stays true: this comment said it while passing five fewer sections.
                 q = self._query()
                 run = _load_run(q["run"])
                 history = _attempts(q["run"])
@@ -6963,12 +6985,14 @@ class Handler(BaseHTTPRequestHandler):
                 base, discarded = iteration_base(history, q["run"])
                 d = _run_dir(q["run"])
                 code = (d / "attempts" / "{:03d}.code".format(base["n"])).read_text(encoding="utf-8")
+                ctx = carried_context(run, history, base)
                 self._send_json(200, {
                     "attempt": base["n"],
                     "match": base["match"],
-                    "prompt": _iterate_prompt(run, base["n"], code, base["report"],
-                                              q.get("instructions", ""), discarded,
-                                              rejected_changes(history, base), "attached"),
+                    "prompt": _iterate_prompt(
+                        run, base["n"], code, base["report"], q.get("instructions", ""),
+                        discarded, ctx["rejected"], "attached", ctx["stuck"], ctx["spent"],
+                        ctx["lists"], ctx["needs"], ctx["doubted"]),
                     "images": ["reference.png",
                                "attempts/{:03d}.png".format(base["n"]),
                                "attempts/{:03d}-diff.png".format(base["n"])],
