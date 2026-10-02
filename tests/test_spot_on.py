@@ -2717,6 +2717,52 @@ class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
         self.assertIn(so.ICON_CMD, line)
 
 
+class EveryWellIsToldWhereToGetItsGlyph(unittest.TestCase):
+    """Including the ones the set had no opinion about, which are most of them.
+
+    Found by printing the line from a real design rather than a fixture: of six wells
+    on one page, one was marked not in the set and five got no verdict, three of them
+    for being under the size the match can read. The advice named only the first, so
+    five sixths of the job came with no instruction at all.
+    """
+
+    def wells(self, verdicts):
+        return [{"x": 100 + 40 * i, "y": 200, "w": 40, "h": 30, "n": 1, "glyph": v}
+                for i, v in enumerate(verdicts)]
+
+    def test_silent_wells_are_still_sent_to_the_set(self):
+        said = so._glyph_advice(self.wells([{"absent": True, "score": 0.5}, None, None]))
+        self.assertIn("not in the set", said)
+        self.assertIn("For the rest", said)
+        self.assertIn(so.ICON_CMD, said)
+
+    def test_a_page_with_no_verdicts_reads_as_it_always_did(self):
+        said = so._glyph_advice(self.wells([None, None, None]))
+        self.assertTrue(said.strip().startswith("Search the bundled set"), said)
+        self.assertNotIn("For the rest", said)
+
+    def test_nothing_is_said_about_a_kind_of_well_that_is_not_there(self):
+        said = so._glyph_advice(self.wells([{"name": "wifi", "score": 0.95}] * 3))
+        self.assertNotIn("not in the set", said)
+        self.assertNotIn("For the rest", said)
+
+    def test_it_counts_in_the_singular_when_there_is_one(self):
+        one = so._glyph_advice(self.wells([{"name": "wifi", "score": 0.95}, None, None]))
+        self.assertIn("the one named above", one)
+        self.assertIn("so it matches", one)
+        many = so._glyph_advice(self.wells([{"name": "wifi", "score": 0.95}] * 2 + [None]))
+        self.assertIn("the ones named above", many)
+        self.assertIn("so they match", many)
+        self.assertIn("that position", many)
+
+    def test_the_command_is_named_once_a_line(self):
+        for verdicts in ([None] * 3,
+                         [{"absent": True, "score": 0.5}, None, None],
+                         [{"name": "wifi", "score": 0.95}, None, None]):
+            said = so._glyph_advice(self.wells(verdicts))
+            self.assertEqual(said.count(so.ICON_CMD), 1, said)
+
+
 class WhatTheSetKnowsAboutOneWell(unittest.TestCase):
     """A low score says the set does not have it; a high score does not say it does.
 

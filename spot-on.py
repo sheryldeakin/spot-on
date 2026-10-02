@@ -1109,7 +1109,7 @@ def _glyph_note(f):
 def _glyph_counts(found):
     absent = sum(1 for f in found if (f.get("glyph") or {}).get("absent"))
     named = sum(1 for f in found if (f.get("glyph") or {}).get("name"))
-    return absent, named
+    return absent, named, len(found) - absent - named
 
 
 def _hollow_summary(found):
@@ -1171,18 +1171,30 @@ def _glyph_advice(found):
     nearest neighbour. A name is printed only above 0.92, where that drops to a few
     percent. The rest get no opinion and the round looks for itself, as before.
     """
-    absent, named = _glyph_counts(found)
+    absent, named, unsure = _glyph_counts(found)
     bits = []
     if named:
-        bits.append("Take the ones named above from the bundled set ({}) so they match "
-                    "each other.".format(ICON_CMD))
+        bits.append("Take the {} named above from the bundled set ({}) so {} the "
+                    "rest.".format("one" if named == 1 else "ones", ICON_CMD,
+                                   "it matches" if named == 1 else "they match"))
     if absent:
-        bits.append("The ones marked not in the set are brand marks or one-off drawings: "
-                    "draw those inline from what the design shows rather than substituting "
-                    "the nearest icon, which measured as worth nothing.")
-    if not named and not absent:
-        bits.append("Search the bundled set ({}) for what you see, and draw inline what it "
-                    "does not have.".format(ICON_CMD))
+        bits.append("The {} marked not in the set {} a brand mark or a one-off drawing: "
+                    "draw {} inline from what the design shows rather than substituting the "
+                    "nearest icon, which measured as worth nothing.".format(
+                        "one" if absent == 1 else "ones",
+                        "is" if absent == 1 else "are each",
+                        "it" if absent == 1 else "them"))
+    if unsure:
+        # The silent ones are the majority and used to be told nothing at all, because
+        # the advice only spoke about wells the set had an opinion on. On a real page
+        # of six wells, one was marked absent and five got no verdict, three of them
+        # for being under the size the match can read.
+        # The command is named once per line, not once per clause.
+        bits.append("{}earch the bundled set{} for what the design draws at {}, and "
+                    "draw inline what it does not have.".format(
+                        "S" if not (named or absent) else "For the rest, s",
+                        "" if named else " ({})".format(ICON_CMD),
+                        "that position" if unsure == 1 else "those positions"))
     return " ".join(bits) + " "
 
 
