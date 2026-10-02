@@ -2717,6 +2717,145 @@ class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
         self.assertIn(so.ICON_CMD, line)
 
 
+class LookingForTheMaterialInsteadOfMakingIt(unittest.TestCase):
+    """Name a search, show what came back, fetch only what was picked.
+
+    The network is replaced throughout. A test that really called Iconify would fail
+    on a train and would be measuring their uptime rather than this code. One live
+    check was done by hand when it was written; the shapes below are what came back.
+    """
+
+    def setUp(self):
+        self.slug = "find-test"
+        self.dir = so.RUNS_DIR / self.slug
+        shutil.rmtree(self.dir, ignore_errors=True)
+        (self.dir / "attempts").mkdir(parents=True)
+        Image.new("RGB", (100, 80), "#222222").save(self.dir / "reference.png")
+        so._save_run(self.slug, {"slug": self.slug, "name": "find test", "kind": "html",
+                                 "width": 100, "height": 80, "css_width": 100,
+                                 "css_height": 80, "scale": 1.0, "ground": "#FFFFFF"})
+        self.real_get = so._get
+        self.asked = []
+
+    def tearDown(self):
+        so._get = self.real_get
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def serve(self, table):
+        def fake(url, params=None, timeout=None):
+            self.asked.append((url, params))
+            for key, value in table.items():
+                if key in url:
+                    return value
+            raise AssertionError("nothing stubbed for " + url)
+        so._get = fake
+
+    def png_bytes(self, colour="#336699"):
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 30), colour).save(buf, "PNG")
+        return buf.getvalue()
+
+    def test_an_icon_search_names_the_set_and_the_file(self):
+        self.serve({"iconify": json.dumps(
+            {"icons": ["tabler:droplet", "lucide:droplet", "bad-entry"]}).encode()})
+        got = so.find_candidates("icons", "droplet", 10)
+        self.assertEqual([c["id"] for c in got], ["tabler:droplet", "lucide:droplet"])
+        self.assertEqual(got[0]["set"], "tabler")
+        self.assertTrue(got[0]["url"].endswith(".svg?height=64"))
+        self.assertEqual(got[0]["suffix"], ".svg")
+
+    def test_an_image_search_keeps_the_licence(self):
+        self.serve({"openverse": json.dumps({"results": [
+            {"id": "a1", "title": "Night skyline", "url": "https://x.test/p.jpg",
+             "thumbnail": "https://x.test/t.jpg", "license": "by", "license_version": "2.0",
+             "creator": "Someone", "source": "flickr"}]}).encode()})
+        got = so.find_candidates("image", "night skyline", 5)
+        self.assertEqual(got[0]["licence"], "BY 2.0")
+        self.assertEqual(got[0]["by"], "Someone")
+        self.assertEqual(got[0]["suffix"], ".jpg")
+
+    def test_an_empty_query_is_refused_before_the_network(self):
+        self.serve({})
+        with self.assertRaises(ValueError):
+            so.find_candidates("icons", "   ")
+        self.assertEqual(self.asked, [])
+
+    def test_a_font_is_never_searched_for(self):
+        # A typeface is a licensing decision, and picking a lookalike off a list is
+        # the substitution the rounds were already making badly.
+        self.serve({})
+        with self.assertRaises(ValueError):
+            so.find_candidates("font", "inter")
+        self.assertEqual(self.asked, [])
+
+    def test_a_fetched_svg_is_stripped_of_anything_that_runs(self):
+        nasty = (b'<svg xmlns="http://www.w3.org/2000/svg" onload="steal()">'
+                 b'<script>steal()</script><foreignObject><b>x</b></foreignObject>'
+                 b'<path d="M0 0"/></svg>')
+        self.serve({"droplet.svg": nasty})
+        so.fetch_candidate(self.slug, "icons", "https://api.iconify.design/t/droplet.svg",
+                           "droplet", "MIT", "tabler")
+        text = (so.supply_dir(self.slug) / "droplet.svg").read_text(encoding="utf-8")
+        self.assertNotIn("script", text.lower())
+        self.assertNotIn("onload", text.lower())
+        self.assertNotIn("foreignObject", text)
+        self.assertIn('<path d="M0 0"/>', text)
+
+    def test_the_licence_is_kept_with_the_file(self):
+        self.serve({"p.jpg": self.png_bytes()})
+        run = so.fetch_candidate(self.slug, "image", "https://x.test/p.jpg",
+                                 "Night skyline", "BY 2.0", "Someone")
+        note = run["supplied"][0]["note"]
+        self.assertIn("Night skyline", note)
+        self.assertIn("Someone", note)
+        self.assertIn("BY 2.0", note)
+
+    def test_something_that_is_not_an_image_is_refused(self):
+        self.serve({"p.jpg": b"this is not a picture"})
+        with self.assertRaises(ValueError):
+            so.fetch_candidate(self.slug, "image", "https://x.test/p.jpg", "x")
+        self.assertFalse(list(so.supply_dir(self.slug).iterdir())
+                         if so.supply_dir(self.slug).exists() else [])
+
+    def test_something_that_is_not_an_svg_is_refused(self):
+        self.serve({"i.svg": b"<html>nope</html>"})
+        with self.assertRaises(ValueError):
+            so.fetch_candidate(self.slug, "icons", "https://x.test/i.svg", "x")
+
+    def test_only_a_web_link_is_fetched(self):
+        self.serve({})
+        for bad in ("file:///etc/passwd", "ftp://x.test/a.png", "/local/a.png", ""):
+            with self.assertRaises(ValueError):
+                so.fetch_candidate(self.slug, "image", bad, "x")
+        self.assertEqual(self.asked, [])
+
+    def test_an_svg_picked_for_the_background_answers_the_background(self):
+        # The suffix says what a file is; the need says what it is for, and for an
+        # svg those come apart.
+        self.serve({"bg.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'})
+        run = so.fetch_candidate(self.slug, "image", "https://x.test/bg.svg", "bg")
+        self.assertEqual(run["supplied"][0]["kind"], "image")
+
+    def test_the_starting_query_is_only_a_starting_point(self):
+        report = {"elements": {"hollow": [
+            {"x": 1, "y": 2, "w": 30, "h": 30,
+             "glyph": {"absent": True, "score": 0.5, "near": "locate"}}]},
+            "artwork": {"share": 50.0, "where": "lower middle"}}
+        self.assertEqual(so._search_hint({"kind": "icons"}, report), "locate")
+        self.assertEqual(so._search_hint({"kind": "image"}, report),
+                         "lower middle background")
+        self.assertEqual(so._search_hint({"kind": "font"}, report), "")
+
+    def test_the_nearest_name_is_recorded_without_becoming_a_name(self):
+        g = np.full((80, 80), 255.0, dtype=np.float32)
+        for k, (r, c) in enumerate(((20, 18), (34, 26), (48, 14))):
+            g[r:r + 5, c:c + 20 + 8 * k] = 0.0
+        said = so.glyph_identity(g, {"x": 8, "y": 8, "w": 64, "h": 64})
+        self.assertTrue(said.get("absent"))
+        self.assertTrue(said.get("near"))
+        self.assertNotIn("name", said)
+
+
 class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
     """A file the person supplies, which the page has to be able to load.
 

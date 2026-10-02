@@ -15,6 +15,7 @@ The tool itself serves on loopback only. Nothing is uploaded anywhere.
 """
 
 import base64
+import io
 import json
 import math
 import os
@@ -27,6 +28,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -3316,6 +3318,127 @@ def font_rounds_survived(carried):
     return 0
 
 
+FIND_LIMIT = 24              # candidates shown for one search
+FIND_TIMEOUT = 20
+FIND_AGENT = "spot-on (local design tool)"
+ICONIFY = "https://api.iconify.design"
+OPENVERSE = "https://api.openverse.org/v1/images/"
+
+def _get(url, params=None, timeout=FIND_TIMEOUT):
+    """One GET against a search API. Nothing here runs during a round.
+
+    Every run renders offline and that is deliberate: a page that fetches at render
+    time makes the score depend on the network. This is the one place the tool reaches
+    out, it happens because the person pressed something, and what comes back is
+    written into the run as a file rather than referenced from the page.
+    """
+    if params:
+        url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": FIND_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def search_icons(query, limit=FIND_LIMIT):
+    """Icons by name across the sets Iconify indexes, which is most of the free ones."""
+    found = json.loads(_get(ICONIFY + "/search", {"query": query, "limit": limit}))
+    out = []
+    for name in (found.get("icons") or [])[:limit]:
+        prefix, _, short = str(name).partition(":")
+        if not short:
+            continue
+        out.append({"id": name, "title": short.replace("-", " "), "set": prefix,
+                    "preview": "{}/{}/{}.svg?height=40".format(ICONIFY, prefix, short),
+                    "url": "{}/{}/{}.svg?height=64".format(ICONIFY, prefix, short),
+                    "suffix": ".svg", "licence": "", "by": prefix})
+    return out
+
+
+def search_images(query, limit=FIND_LIMIT):
+    """Openly licensed photographs. The licence travels with the result and is kept."""
+    found = json.loads(_get(OPENVERSE, {"q": query, "page_size": min(limit, 20)}))
+    out = []
+    for r in (found.get("results") or [])[:limit]:
+        url = r.get("url") or ""
+        suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+        if suffix not in SUPPLY_TYPES:
+            suffix = ".jpg"
+        out.append({"id": r.get("id"), "title": r.get("title") or "untitled",
+                    "set": r.get("source") or "", "preview": r.get("thumbnail") or url,
+                    "url": url, "suffix": suffix,
+                    "licence": " ".join(x for x in (r.get("license"),
+                                                    r.get("license_version")) if x).upper(),
+                    "by": r.get("creator") or ""})
+    return out
+
+
+def find_candidates(kind, query, limit=FIND_LIMIT):
+    query = str(query or "").strip()
+    if not query:
+        raise ValueError("say what to look for first")
+    if kind == "icons":
+        return search_icons(query, limit)
+    if kind == "image":
+        return search_images(query, limit)
+    # Fonts are deliberately not searched. A typeface is a licensing decision and
+    # often a paid one, and picking a lookalike off a list is exactly the substitution
+    # the rounds were already making badly.
+    raise ValueError("searching only covers icons and images; a font has to be handed over")
+
+
+_SVG_UNSAFE = re.compile(
+    r"<\s*script\b.*?<\s*/\s*script\s*>"          # a script element
+    r"|<\s*script\b[^>]*/\s*>"                      # or an empty one
+    r'|\son\w+\s*=\s*"[^"]*"'                     # onload="..."
+    r"|\son\w+\s*=\s*'[^']*'"                     # onload='...'
+    r"|<\s*foreignObject\b.*?<\s*/\s*foreignObject\s*>",  # arbitrary html
+    re.I | re.S)
+
+
+def _clean_svg(text):
+    """Strip the parts of an SVG that can act, before it goes near a renderer.
+
+    An SVG is a document, not a picture: it can carry script and event handlers, and
+    the page it lands in is rendered by a real browser. Nothing downloaded needs any
+    of that, so it goes.
+    """
+    return _SVG_UNSAFE.sub("", text)
+
+
+def fetch_candidate(slug, kind, url, title="", licence="", by=""):
+    """Download the one candidate the person picked, and store it like any other file.
+
+    Only reached by a click on a result. The bytes are checked against the type they
+    claim to be rather than trusted: the search names the host, and what it hands back
+    is still data from the internet.
+    """
+    if not str(url or "").startswith(("http://", "https://")):
+        raise ValueError("that is not a link this can fetch")
+    blob = _get(url)
+    if len(blob) > SUPPLY_MAX:
+        raise ValueError("that file is {:.1f}MB and the limit is {}MB".format(
+            len(blob) / 1048576.0, SUPPLY_MAX // 1048576))
+    suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    if suffix not in SUPPLY_TYPES:
+        suffix = ".svg" if kind == "icons" else ".jpg"
+    if suffix == ".svg":
+        text = _clean_svg(blob.decode("utf-8", "replace"))
+        if "<svg" not in text.lower():
+            raise ValueError("that link did not return an svg")
+        blob = text.encode("utf-8")
+    else:
+        # Decoded rather than sniffed, so a file that is not the picture it claims to
+        # be fails here instead of rendering as a broken box three rounds later.
+        try:
+            with Image.open(io.BytesIO(blob)) as probe:
+                probe.verify()
+        except Exception:
+            raise ValueError("that link did not return an image this can read")
+    name = _slugify(title or Path(urllib.parse.urlparse(url).path).stem)[:40] or "found"
+    note = " ".join(x for x in (title, ("by " + by) if by else "", licence) if x).strip()
+    return add_supply(slug, name + suffix, blob, note=note[:200], kind=kind)
+
+
 def _supply_name(filename):
     """A filename that cannot escape the run, keeping only the stem and the suffix."""
     suffix = Path(str(filename or "")).suffix.lower()
@@ -3335,7 +3458,7 @@ def supply_dir(slug, create=False):
     return d
 
 
-def add_supply(slug, filename, blob, note=""):
+def add_supply(slug, filename, blob, note="", kind=None):
     """Store a file the person handed over, and record what it is for.
 
     Kept in the run rather than referenced where it sits, so a run stays one folder
@@ -3348,7 +3471,10 @@ def add_supply(slug, filename, blob, note=""):
     supply_dir(slug, create=True).joinpath(name).write_bytes(blob)
     run = _load_run(slug)
     items = [i for i in (run.get("supplied") or []) if i.get("file") != name]
-    items.append({"file": name, "kind": SUPPLY_TYPES[Path(name).suffix],
+    # The suffix says what the file IS and the need says what it is FOR, and for an
+    # svg those come apart: a background can be an svg, and filing it under icons
+    # would answer the wrong need and leave the artwork still asking.
+    items.append({"file": name, "kind": kind or SUPPLY_TYPES[Path(name).suffix],
                   "note": str(note or "").strip()[:200], "added": time.time(),
                   "bytes": len(blob)})
     run["supplied"] = items
@@ -3390,6 +3516,25 @@ def _supply_section(run):
     return out
 
 
+def _search_hint(need, report):
+    """A first guess at what to type, never an answer.
+
+    For a glyph the bundled set does not contain, the nearest name in the set is by
+    definition not what the thing is, so it is offered as a shape word to edit rather
+    than as a description. For artwork, the sentence a model wrote after looking at
+    the design is the best words available.
+    """
+    if need["kind"] == "icons":
+        hollow = ((report or {}).get("elements") or {}).get("hollow") or []
+        near = [(f.get("glyph") or {}).get("near") for f in hollow
+                if (f.get("glyph") or {}).get("absent")]
+        return next((n for n in near if n), "")
+    if need["kind"] == "image":
+        art = (report or {}).get("artwork") or {}
+        return "{} background".format(art.get("where") or "").strip()
+    return ""
+
+
 def mark_supplied(needs, supplied):
     """Flag the needs a handed-over file answers, by kind.
 
@@ -3403,6 +3548,7 @@ def mark_supplied(needs, supplied):
         files = [i["file"] for i in (supplied or []) if i.get("kind") == n["kind"]]
         n["supplied"] = files
         n["answered"] = bool(files)
+        n["searchable"] = n["kind"] in ("icons", "image")
     return needs
 
 
@@ -3494,9 +3640,12 @@ def run_needs(slug):
     base, _ = iteration_base(history)
     if not base or not base.get("report"):
         return []
-    return mark_supplied(
+    needs = mark_supplied(
         needs_from_you(base["report"], font_rounds_survived(stuck_problems(history, base))),
         _load_run(slug).get("supplied"))
+    for n in needs:
+        n["hint"] = _search_hint(n, base["report"])
+    return needs
 
 
 def _needs_section(needs):
@@ -4484,7 +4633,7 @@ def glyph_identity(gray, box):
     i = int(order[0])
     best, rival = float(sims[i]), float(sims[order[1]])
     if best < ICON_PRESENT:
-        return {"absent": True, "score": round(best, 3)}
+        return {"absent": True, "score": round(best, 3), "near": str(names[i])}
     # Clear of the runner-up as well as high. A pin with a dot in it scored 0.94 as
     # map-pin-plus-inside with map-pin-x-inside at 0.93 and map-pin-check-inside at
     # 0.89: the family is right and the variant is a coin toss, and a confident wrong
@@ -5933,7 +6082,7 @@ function renderNeeds() {
         var data = String(reader.result).split(",")[1];
         give.textContent = "sending " + file.name + "...";
         api("/supply", { run: state.run.slug, filename: file.name, data: data,
-                         note: n.title })
+                         note: n.title, kind: n.kind })
           .then(function (run) { state.run = run; renderNeeds(); renderWorklist(); })
           .catch(function (err) {
             give.textContent = "give it a file";
@@ -5950,6 +6099,91 @@ function renderNeeds() {
     give.onclick = function () { pick.click(); };
     row.appendChild(give);
     row.appendChild(pick);
+
+    // Or look for one. The search reaches the internet, which nothing else here does,
+    // so it happens on a press and the download happens on a second one.
+    if (n.searchable) {
+      var sep = document.createElement("span");
+      sep.style.cssText = "color:var(--faint); font-size:11px; padding:0 6px;";
+      sep.textContent = "or";
+      row.appendChild(sep);
+
+      var findBtn = document.createElement("button");
+      findBtn.className = "mono";
+      findBtn.style.cssText = "background:none; border:0; color:var(--muted); cursor:pointer;"
+        + " font-size:11px; padding:0; text-decoration:underline;";
+      findBtn.textContent = "find one";
+      row.appendChild(findBtn);
+
+      var panel = document.createElement("div");
+      panel.style.cssText = "display:none; margin-top:7px;";
+      var box = document.createElement("input");
+      box.className = "text-input mono";
+      box.style.cssText = "font-size:11px; padding:4px 6px; width:62%;";
+      box.placeholder = n.kind === "icons"
+        ? "what the glyph shows, in a word" : "what the picture shows";
+      box.value = n.hint || "";
+      var go = document.createElement("button");
+      go.className = "mono";
+      go.style.cssText = "background:none; border:0; color:var(--muted); cursor:pointer;"
+        + " font-size:11px; padding:0 8px; text-decoration:underline;";
+      go.textContent = "search";
+      var results = document.createElement("div");
+      results.style.cssText = "display:flex; flex-wrap:wrap; gap:7px; margin-top:7px;"
+        + " max-height:210px; overflow-y:auto; overscroll-behavior:contain;";
+      panel.appendChild(box);
+      panel.appendChild(go);
+      panel.appendChild(results);
+      row.appendChild(panel);
+
+      findBtn.onclick = function () {
+        var shown = panel.style.display !== "none";
+        panel.style.display = shown ? "none" : "block";
+        findBtn.textContent = shown ? "find one" : "hide";
+        if (!shown) box.focus();
+      };
+
+      function search() {
+        results.textContent = "looking...";
+        api("/find", { kind: n.kind, query: box.value }).then(function (r) {
+          results.textContent = "";
+          if (!(r.candidates || []).length) { results.textContent = "nothing found"; return; }
+          r.candidates.forEach(function (c) {
+            var cell = document.createElement("button");
+            cell.title = c.title + (c.by ? "  by " + c.by : "")
+              + (c.licence ? "  " + c.licence : "") + "  (" + c.set + ")";
+            cell.style.cssText = "width:54px; height:54px; padding:3px; cursor:pointer;"
+              + " background:var(--fill); border:1px solid var(--border); border-radius:5px;"
+              + " display:flex; align-items:center; justify-content:center; overflow:hidden;";
+            var img = document.createElement("img");
+            img.src = c.preview;
+            img.loading = "lazy";
+            img.style.cssText = "max-width:100%; max-height:100%; object-fit:contain;";
+            cell.appendChild(img);
+            cell.onclick = function () {
+              // The one press that downloads anything.
+              cell.style.opacity = "0.4";
+              api("/fetch", { run: state.run.slug, kind: n.kind, url: c.url,
+                              title: c.title, licence: c.licence, by: c.by })
+                .then(function (run) {
+                  state.run = run; renderNeeds(); renderWorklist();
+                  setStatus("Added " + c.title + (c.licence ? " (" + c.licence + ")" : ""));
+                })
+                .catch(function (err) {
+                  cell.style.opacity = "1";
+                  setStatus("Could not fetch that: " + (err && err.message || err));
+                });
+            };
+            results.appendChild(cell);
+          });
+        }).catch(function (err) {
+          results.textContent = String(err && err.message || err);
+        });
+      }
+      go.onclick = search;
+      box.addEventListener("keydown", function (e) { if (e.key === "Enter") search(); });
+    }
+
     host.appendChild(row);
   });
 }
@@ -6621,12 +6855,27 @@ class Handler(BaseHTTPRequestHandler):
                 run["materials"] = materials_for(run)
                 run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)
+            elif path == "/find":
+                # Reaches the internet, and only because the person pressed something.
+                # Nothing here happens during a round: a run still renders offline.
+                self._send_json(200, {"candidates": find_candidates(
+                    payload["kind"], payload.get("query", ""),
+                    int(payload.get("limit", FIND_LIMIT)))})
+            elif path == "/fetch":
+                # One candidate, the one that was picked.
+                run = fetch_candidate(payload["run"], payload["kind"], payload["url"],
+                                      payload.get("title", ""), payload.get("licence", ""),
+                                      payload.get("by", ""))
+                run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
+                self._send_json(200, run)
             elif path == "/supply":
                 # The file arrives base64 in JSON rather than as a multipart upload,
                 # because the page is one file with no build step and this keeps the
                 # client side to a FileReader and a fetch.
                 run = add_supply(payload["run"], payload["filename"],
-                                 base64.b64decode(payload["data"]), payload.get("note", ""))
+                                 base64.b64decode(payload["data"]), payload.get("note", ""),
+                                 kind=payload.get("kind"))
                 run["materials"] = materials_for(run)
                 run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)
