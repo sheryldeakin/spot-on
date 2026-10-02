@@ -2717,6 +2717,105 @@ class TheRoundIsAskedWhichGlyphNotJustThatThereIsOne(unittest.TestCase):
         self.assertIn(so.ICON_CMD, line)
 
 
+class WhatThePageNeedsFromThePerson(unittest.TestCase):
+    """Three faults no amount of code closes, because the material is not here.
+
+    They stay in the report and rounds keep improving around them. What this adds is
+    the standing note that something could be handed over, and what it would buy.
+    """
+
+    def report(self, **kw):
+        rep = {"elements": {}, "artwork": {}}
+        rep.update(kw)
+        return rep
+
+    def test_a_photographic_design_asks_for_the_image(self):
+        rep = self.report(artwork={"share": 50.0, "where": "lower middle"})
+        got = so.needs_from_you(rep)
+        self.assertEqual([n["kind"] for n in got], ["image"])
+        self.assertIn("50%", got[0]["title"])
+        self.assertIn("lower middle", got[0]["where"])
+
+    def test_a_little_artwork_is_not_worth_asking_about(self):
+        rep = self.report(artwork={"share": so.NEEDS_ARTWORK_SHARE - 1, "where": "top"})
+        self.assertEqual(so.needs_from_you(rep), [])
+
+    def test_glyphs_the_set_does_not_have_are_asked_for_by_position(self):
+        rep = self.report(elements={"hollow": [
+            {"x": 272, "y": 694, "w": 42, "h": 37, "glyph": {"absent": True, "score": 0.5}},
+            {"x": 400, "y": 100, "w": 30, "h": 30, "glyph": None},
+            {"x": 500, "y": 100, "w": 30, "h": 30, "glyph": {"name": "wifi", "score": 0.95}},
+        ]})
+        got = so.needs_from_you(rep)
+        self.assertEqual([n["kind"] for n in got], ["icons"])
+        self.assertIn("1 glyph the bundled set does not have", got[0]["title"])
+        self.assertIn("x 272 y 694", got[0]["where"])
+        # The one it can name and the one it has no opinion on are not asked for.
+        self.assertNotIn("x 400", got[0]["where"])
+        self.assertNotIn("x 500", got[0]["where"])
+
+    def test_the_font_waits_for_the_rounds_to_fail_at_it_first(self):
+        # A round can fix a font by choosing a better stack, and often does, so asking
+        # for the file on round one would be premature. Resistance is what makes it a
+        # need rather than a fault.
+        rep = self.report(elements={"glyph": {"lines": 143, "weak_share": 0.62}})
+        self.assertEqual(so.needs_from_you(rep, font_rounds=0), [])
+        self.assertEqual(so.needs_from_you(rep, font_rounds=so.NEEDS_FONT_ROUNDS - 1), [])
+        got = so.needs_from_you(rep, font_rounds=so.NEEDS_FONT_ROUNDS)
+        self.assertEqual([n["kind"] for n in got], ["font"])
+        self.assertIn("62%", got[0]["where"])
+
+    def test_text_that_mostly_matches_never_asks_for_a_font(self):
+        rep = self.report(elements={"glyph": {"lines": 143,
+                                              "weak_share": so.NEEDS_FONT_WEAK - 0.01}})
+        self.assertEqual(so.needs_from_you(rep, font_rounds=99), [])
+
+    def test_the_round_is_told_to_keep_going_and_not_to_fake_them(self):
+        rep = self.report(artwork={"share": 50.0, "where": "lower middle"})
+        said = "\n".join(so._needs_section(so.needs_from_you(rep)))
+        self.assertIn("Get closer where you can", said)
+        self.assertIn("do not spend the round trying to fabricate them", said)
+        self.assertIn("blocked", said)
+
+    def test_nothing_is_said_when_nothing_is_needed(self):
+        self.assertEqual(so._needs_section([]), [])
+        self.assertEqual(so.needs_from_you(self.report()), [])
+
+    def test_the_page_list_never_rescores_the_run(self):
+        """Measured: passing the slug to iteration_base cost 762 seconds on first call.
+
+        That restate is right before a round reads the report out to a model, and
+        wrong on an endpoint the page hits on every interaction. This pins the cheap
+        path so the cost cannot come back by someone adding the slug for tidiness.
+        """
+        import inspect
+        src = inspect.getsource(so.run_needs)
+        self.assertIn("iteration_base(history)", src)
+        self.assertNotIn("iteration_base(history, slug)", src)
+        self.assertNotIn("refresh_report", src)
+        self.assertNotIn("restate_run", src)
+
+    def test_the_font_round_count_comes_from_the_stuck_list(self):
+        carried = [{"key": ["element", "box", 4, []], "rounds": 9},
+                   {"key": ["type", "family"], "rounds": 6}]
+        self.assertEqual(so.font_rounds_survived(carried), 6)
+        self.assertEqual(so.font_rounds_survived([]), 0)
+        self.assertEqual(so.font_rounds_survived([{"key": ["coverage"], "rounds": 4}]), 0)
+
+    def test_the_round_sees_the_needs_in_its_prompt(self):
+        run = {"name": "x", "kind": "html", "width": 10, "height": 10}
+        rep = score("close")
+        rep["artwork"] = {"share": 50.0, "where": "lower middle"}
+        needs = so.needs_from_you(rep)
+        self.assertTrue(needs)
+        text = so._iterate_prompt(run, 1, "<i/>", rep, "", None, (), "none", (), (), None, needs)
+        self.assertIn("Known to need something that is not here", text)
+        self.assertIn("The artwork", text)
+        # And absent when there is nothing to say, rather than an empty heading.
+        plain = so._iterate_prompt(run, 1, "<i/>", rep, "", None, (), "none", (), (), None, ())
+        self.assertNotIn("Known to need something", plain)
+
+
 class EveryWellIsToldWhereToGetItsGlyph(unittest.TestCase):
     """Including the ones the set had no opinion about, which are most of them.
 

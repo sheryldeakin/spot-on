@@ -3301,6 +3301,127 @@ def change_cap(match):
     return None
 
 
+def font_rounds_survived(carried):
+    """How many rounds the typeface fault has outlived, from the stuck-problem list."""
+    for item in carried or []:
+        if tuple(item.get("key") or ()) == ("type", "family"):
+            return item.get("rounds", 0)
+    return 0
+
+
+def needs_from_you(report, font_rounds=0):
+    """Things no amount of code will finish, because the material is not here.
+
+    Three of them are detectable, and all three were already being measured and then
+    reported as ordinary faults, which is the wrong frame: a round reads "the font
+    family is wrong" as work and spends itself on another font stack, and the honest
+    statement is that the typeface is not on this machine and no stack will be it.
+
+    This does not retire the fault. It stays in the report and rounds keep improving
+    around it, because an approximation that is closer is still closer, and because a
+    later round may know something earlier ones did not. What it adds is a standing
+    note that there is a thing the person could hand over that would move it further
+    than any round can, and what that would be worth.
+
+    The font waits {} rounds before it is asked for, because choosing a better stack is
+    a real repair a round can make and often does. Artwork and a glyph the icon set
+    does not contain are properties of the design, known from the first comparison, so
+    they are said at once.
+    """.format(NEEDS_FONT_ROUNDS)
+    out = []
+    els = report.get("elements") or {}
+
+    art = report.get("artwork") or {}
+    if art.get("share", 0) >= NEEDS_ARTWORK_SHARE:
+        out.append({
+            "kind": "image",
+            "title": "The artwork, about {:.0f}% of the design".format(art["share"]),
+            "where": art.get("where") or "",
+            "worth": ("It is the largest single thing between this page and the design, and "
+                      "it is the part the measurement sees least well."),
+            "ask": ("If it is a photograph, a render or an illustration, hand over the image "
+                    "file and it can be placed exactly. Code can approximate a gradient or a "
+                    "glow; it cannot reproduce a picture."),
+        })
+
+    hollow = els.get("hollow") or []
+    missing = [f for f in hollow if (f.get("glyph") or {}).get("absent")]
+    if missing:
+        where = "; ".join("x {} y {} ({}x{}px)".format(f["x"], f["y"], f["w"], f["h"])
+                          for f in missing[:HOLLOW_NAMED])
+        out.append({
+            "kind": "icons",
+            "title": "{} glyph{} the bundled set does not have".format(
+                len(missing), "" if len(missing) == 1 else "s"),
+            "where": where,
+            "worth": ("Measured on one page, filling these wells with the design's own glyphs "
+                      "was worth 2.4 points of the per-element score while plausible "
+                      "substitutes were worth nothing, so this is the difference between an "
+                      "icon and the icon."),
+            "ask": ("Hand over an SVG for each, or name an icon set that has them and it can "
+                    "be bundled the way the current one is."),
+        })
+
+    glyph = els.get("glyph") or {}
+    weak = glyph.get("weak_share", 0)
+    if weak >= NEEDS_FONT_WEAK and font_rounds >= NEEDS_FONT_ROUNDS:
+        out.append({
+            "kind": "font",
+            "title": "The design's typeface",
+            "where": "{:.0f}% of the text lines that are in the right place".format(weak * 100),
+            "worth": ("The report puts this first because it makes every box around it measure "
+                      "wrong too, so closing it deletes complaints rather than adding one. It "
+                      "has survived {} rounds of trying other stacks.".format(font_rounds)),
+            "ask": ("Install the font on this machine, hand over the file, or name a web font "
+                    "that is it. Naming a lookalike is what the rounds have already tried."),
+        })
+    return out
+
+
+def run_needs(slug):
+    """The needs list for a run as it stands, from its best attempt.
+
+    Computed rather than stored: it is derived from the report and from how long a
+    fault has survived, both of which move, and a stored copy would be one more thing
+    that rots when the tool changes.
+    """
+    history = _attempts(slug)
+    if not history:
+        return []
+    # Without the slug, so this neither re-scores the run nor refreshes a report.
+    # Passing it cost 762 seconds the first time this was called from the page: the
+    # run-wide restate onto the current scorer is right before a round reads the
+    # report out to a model, and wrong on an endpoint the page hits constantly. The
+    # needs list is advisory, so a base chosen from the stored numbers is good enough,
+    # and the round still gets the restated one.
+    base, _ = iteration_base(history)
+    if not base or not base.get("report"):
+        return []
+    return needs_from_you(base["report"],
+                          font_rounds_survived(stuck_problems(history, base)))
+
+
+def _needs_section(needs):
+    """Say it once, plainly, so a round stops spending itself on the impossible half.
+
+    Without this the round reads these as ordinary work and tries again, which is what
+    twenty rounds of a false finding cost before. With it the instruction is explicit:
+    keep making them closer if you can, do not fake them, and do not let them take the
+    round.
+    """
+    if not needs:
+        return []
+    out = ["Known to need something that is not here. These are being asked for from the",
+           "person whose design this is, so do not spend the round trying to fabricate them:"]
+    for n in needs:
+        out.append("  {}{}".format(n["title"], ": " + n["where"] if n["where"] else ""))
+    out += ["Get closer where you can, because closer still scores better, and say in `blocked`",
+            "if one of them stopped you. Do not substitute something that merely resembles",
+            "the real thing: measured, a plausible wrong icon scored the same as an empty box.",
+            ""]
+    return out
+
+
 def _spent_section(spent):
     """Tell the round what not to spend its three changes on.
 
@@ -3359,7 +3480,7 @@ def _stuck_section(stuck):
 
 
 def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
-                    images="read", stuck=(), spent=(), lists=None):
+                    images="read", stuck=(), spent=(), lists=None, needs=()):
     ref = "reference.png"
     att = "attempts/{:03d}.png".format(n)
     dif = "attempts/{:03d}-diff.png".format(n)
@@ -3399,6 +3520,7 @@ def _iterate_prompt(run, n, code, report, extra, discarded=None, rejected=(),
         feedback_text(run, n, report),
         "",
     ]
+    parts += _needs_section(needs)
     parts += _stuck_section(stuck)
     parts += _spent_section(spent)
     parts += _worklist_section(lists)
@@ -3504,6 +3626,9 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
 
 
 GIVE_UP_AFTER = 3
+NEEDS_ARTWORK_SHARE = 15.0   # % of the design that is artwork before the image is worth asking for
+NEEDS_FONT_WEAK = 0.25       # share of text lines whose letters differ before the file is worth asking for
+NEEDS_FONT_ROUNDS = 3        # rounds a font fault survives first: a round may yet pick the right stack
 INSIST_CANDIDATES = 1
 
 
@@ -3546,9 +3671,10 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     carried = stuck_problems(history, base)
     stuck = [s for s in carried if s["rounds"] < GIVE_UP_AFTER]
     spent = [s for s in carried if s["rounds"] >= GIVE_UP_AFTER]
+    needs = needs_from_you(report, font_rounds_survived(carried))
     prompt = _iterate_prompt(run, n, code, report, extra, discarded,
                              rejected_changes(history, base), image_access, stuck, spent,
-                             worklist(history, run.get("asks")))
+                             worklist(history, run.get("asks")), needs)
     images = [d / "reference.png",
               d / "attempts" / "{:03d}.png".format(n),
               d / "attempts" / "{:03d}-diff.png".format(n)]
@@ -4916,6 +5042,7 @@ PAGE_HTML = r"""<!doctype html>
           <div class="rule13" style="margin: 20px 0 8px;"></div>
           <div class="scroll-pane" id="problems" style="max-height: 300px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
           <div class="scroll-pane" id="element-scores" style="margin-top: 16px; max-height: 300px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
+          <div id="needs"></div>
           <div class="scroll-pane" id="worklist" style="margin-top: 18px; max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;"></div>
           <div id="ask-row" style="display: flex; gap: 8px; margin-top: 10px;">
             <input type="text" id="ask-text" class="text-input" maxlength="200"
@@ -5639,6 +5766,36 @@ var COMPONENT_HELP = {
 // page; this is the loop's own account of what it could not do and what it left. The
 // two are kept apart on purpose: a round has claimed work it had not done, and has
 // called a script blocked in the same round another ran it.
+function renderNeeds() {
+  var host = $("needs");
+  host.innerHTML = "";
+  var needs = (state.run && state.run.needs) || [];
+  if (!needs.length) return;
+  var h = document.createElement("div");
+  h.className = "mono";
+  h.style.cssText = "font-size:10px; letter-spacing:0.14em; text-transform:uppercase;"
+    + " color:var(--muted); margin: 14px 0 7px;";
+  h.textContent = "needs something from you";
+  h.title = "Rounds keep improving these. Supplying the material moves them further "
+    + "than any round can.";
+  host.appendChild(h);
+  needs.forEach(function (n) {
+    var row = document.createElement("div");
+    row.style.cssText = "font-size:12px; line-height:1.6; margin-bottom:9px;";
+    var t = document.createElement("div");
+    t.style.cssText = "color:var(--ink);";
+    t.textContent = n.title + (n.where ? " (" + n.where + ")" : "");
+    row.appendChild(t);
+    var a = document.createElement("div");
+    a.style.cssText = "color:var(--muted); font-size:11px;";
+    a.textContent = n.ask;
+    a.title = n.worth;
+    row.appendChild(a);
+    host.appendChild(row);
+  });
+}
+
+
 function renderWorklist() {
   var host = $("worklist");
   host.innerHTML = "";
@@ -5688,7 +5845,7 @@ function renderWorklist() {
         + " font-size:11px; padding:0 2px; flex:none;";
       drop.addEventListener("click", function () {
         api("/asks", { run: state.run.slug, remove: text }).then(function (run) {
-          state.run = run; renderWorklist();
+          state.run = run; renderWorklist(); renderNeeds();
         });
       });
       row.appendChild(drop);
@@ -5746,7 +5903,7 @@ function addAsk() {
   api("/asks", { run: state.run.slug, add: text }).then(function (run) {
     state.run = run;
     box.value = "";
-    renderWorklist();
+    renderWorklist(); renderNeeds();
   });
 }
 
@@ -5830,7 +5987,7 @@ function renderScore() {
     grid.appendChild(cell);
   });
 
-  renderWorklist();
+  renderWorklist(); renderNeeds();
   var pr = $("problems");
   pr.innerHTML = "";
   if (rep.problems.length) {
@@ -6232,6 +6389,7 @@ class Handler(BaseHTTPRequestHandler):
                 run["attempt_list"] = _attempts(q["run"])
                 run["starter"] = starter_code(run)
                 run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)
             elif path == "/code":
                 q = self._query()
@@ -6278,6 +6436,7 @@ class Handler(BaseHTTPRequestHandler):
                                  capture_height=payload.get("capture_height", 900))
                 run["starter"] = starter_code(run)
                 run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)
             elif path == "/runs/delete":
                 shutil.rmtree(_run_dir(payload["run"]), ignore_errors=True)
@@ -6301,6 +6460,7 @@ class Handler(BaseHTTPRequestHandler):
                 run["materials_custom"] = True
                 _save_run(payload["run"], run)
                 run["materials"] = materials_for(run)
+                run["needs"] = run_needs(run["slug"])
                 self._send_json(200, run)
             elif path == "/asks":
                 run = _load_run(payload["run"])
