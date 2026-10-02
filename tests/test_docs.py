@@ -268,6 +268,41 @@ class HouseRules(unittest.TestCase):
                 self.assertNotIn(b"c2pa", data, path.name)
                 self.assertNotIn(b"jumbf", data, path.name)
 
+    def test_no_stray_control_characters_in_any_tracked_file(self):
+        r"""A backslash escape that got eaten on the way into a file.
+
+        Writing a patch through a shell heredoc collapses a doubled backslash, so the
+        Python that gets written has `\b` where the source said `\\b`, and `\b` inside
+        a string is a backspace. It parses, it runs, and the regex it belongs to
+        quietly stops matching what it was written to match. That happened three times
+        in one session to a file whose own CLAUDE.md warns about exactly it, so the
+        warning is not the control.
+
+        The silent cases are precisely the escapes that map to a control character:
+        \a \b \f \v \0. The rest either survive (\s, \.) or break the literal and
+        fail loudly (\n, \r). This catches the whole silent class in one assertion,
+        within one test run rather than hours later.
+        """
+        allowed = {9, 10, 13}        # tab, newline, carriage return
+        binary = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".npz", ".woff",
+                  ".woff2", ".ttf", ".otf", ".pdf", ".zip"}
+        out = subprocess.run(["git", "ls-files"], cwd=str(ROOT),
+                             capture_output=True, text=True)
+        offenders = []
+        for name in out.stdout.split("\n"):
+            name = name.strip()
+            if not name:
+                continue
+            path = ROOT / name
+            if path.suffix.lower() in binary or not path.is_file():
+                continue
+            found = sorted(set(c for c in path.read_bytes() if c < 32 and c not in allowed))
+            if found:
+                offenders.append("{}: {}".format(name, [hex(c) for c in found]))
+        self.assertEqual(offenders, [],
+                         "control characters in tracked text, almost certainly a "
+                         "backslash escape eaten by a shell heredoc")
+
     def test_no_em_dashes(self):
         self.assertNotIn("\u2014", README)
 
