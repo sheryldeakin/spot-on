@@ -249,6 +249,14 @@ python -m unittest discover -s tests -v
 
 Scoring, guards and geometry run anywhere. The server and screenshot tests need Chrome or Edge and are skipped without one. `tests/test_docs.py` fails if the calibration or demo tables in this README drift from the files the scripts generate.
 
+### Checking a run that starts from nothing
+
+Most of what the report says was built against runs that already existed, which is the weaker test: a stored report, a folder with history, a design already captured. One finding had already failed the stronger one unnoticed. The text colour was computed correctly and reached no round at all, because a prompt reads the stored report rather than recomputing it, so every check that began from an existing run agreed it worked. It appeared only once the scorer version moved and the stored reports were rebuilt.
+
+So `scripts/from_scratch.py` starts from nothing: a page the tool has never seen, rendered on the spot, a new run, and a first attempt wrong in exactly the ways the findings exist to catch. It then reads the prompts `run_iteration` actually builds, over 9 rounds. The needs list, the glyph verdict and the colour line are all in round 1. The question that invites a round to dispute the report arrives in round 3, which is when the first fault has survived long enough to be worth questioning, and a dispute is heard in round 6, two rounds after a round first makes one. `ARunStartedFromNothing` in the test suite is the short version, covering round 1 without the climb.
+
+Running it found two faults in how a dispute is matched to the thing it disputes. A round writes its dispute by quoting the report's sentence, and that sentence was matched on the 50px band it shared with a fault and nothing else. A band holds whatever sits at that height: the heading's weight and the empty icon well beside it were both at y 39, so a round disputing the well was recorded against the weight, and the page then told the person the rounds had disputed something none of them had mentioned. Matching now reads what a sentence is about before where it is, using the headline the report already gives it, and a band holding two faults of one kind identifies neither. The second fault was that the text colour was never added to the position lookup, so the finding added the same day was the only one a round could not dispute by quoting it.
+
 ## Layout
 
 One file, `spot-on.py`: the scorer, the screenshot step, the HTTP server and the page. Runs are written to `runs/<name>/`: the design, a `run.json`, and one `.code`, `.png`, `-diff.png` and `.json` per attempt. Deleting a run folder deletes the run.

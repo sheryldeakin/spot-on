@@ -31,6 +31,7 @@ ICONS = json.loads((ROOT / "scripts" / "icon-trial.json").read_text(encoding="ut
 ICONS_REAL = json.loads((ROOT / "scripts" / "icon-real.json").read_text(encoding="utf-8"))
 FONTS = json.loads((ROOT / "scripts" / "font-changes.json").read_text(encoding="utf-8"))
 INK = json.loads((ROOT / "scripts" / "ink-colour-survey.json").read_text(encoding="utf-8"))
+SCRATCH = json.loads((ROOT / "scripts" / "from-scratch.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -219,6 +220,31 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(3)), INK["over_10_mixed"])
         # The split is the whole reason the finding is built on chroma.
         self.assertGreater(INK["over_10_mostly_colour"], INK["over_10_mostly_lightness"])
+
+    def test_the_from_scratch_rounds_match_their_source(self):
+        """Which round each thing first reaches a prompt in. A sentence saying the
+        colour line is there on round one is the claim the whole probe exists to
+        make, so it is checked against the run rather than remembered."""
+        m = re.search(r"builds, over (\d+) rounds", README)
+        self.assertIsNotNone(m, "the from-scratch sentence changed")
+        self.assertEqual(int(m.group(1)), len(SCRATCH["rounds"]))
+        m = re.search(r"colour line are all in round (\d+)", README)
+        self.assertIsNotNone(m, "the round-one sentence changed")
+        first = SCRATCH["first_seen"]
+        for name in ("needs section", "glyph verdict", "colour line"):
+            self.assertEqual(int(m.group(1)), first[name], name)
+        m = re.search(r"arrives in round (\d+), which is when", README)
+        self.assertIsNotNone(m, "the dispute-question sentence changed")
+        self.assertEqual(int(m.group(1)), first["dispute question"])
+        m = re.search(r"dispute is heard in round (\d+)", README)
+        self.assertIsNotNone(m, "the dispute-heard sentence changed")
+        self.assertEqual(int(m.group(1)), first["dispute heard"])
+        # The whole point is that nobody rescored anything, so the probe has to have
+        # run on the scorer the tool currently ships.
+        self.assertEqual(SCRATCH["scorer_version"], TOOL.SCORER_VERSION,
+                         "the scorer has moved since the from-scratch run: "
+                         "re-run scripts/from_scratch.py, because evidence "
+                         "about what reaches a round is about one scorer")
 
     def test_the_font_change_numbers_match_their_source(self):
         """These were read off a top-six list printed in a throwaway command and two

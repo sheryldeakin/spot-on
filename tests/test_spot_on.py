@@ -1854,6 +1854,18 @@ class TheDesignIsReadOnce(unittest.TestCase):
         self.assertEqual(so._parse_needs(json.dumps({"result": "Nine icons."})), "Nine icons.")
         self.assertEqual(so._parse_needs("Nine icons."), "Nine icons.")
 
+    def test_an_answer_that_is_not_prose_is_no_answer(self):
+        """This line is pasted into every later round. A wrapper shape the unwrapper
+        does not know used to reach the model as a JSON blob under "what this design
+        needs", which is noise in the one place a round is told what it is looking at.
+        The field is optional, so having none is the honest answer."""
+        self.seed()
+        self.answer(json.dumps({"structured_output": {"needs": []}}))
+        self.assertIsNone(so.describe_needs("needs"))
+        self.assertIsNone(so._load_run("needs").get("design_needs"))
+        self.assertEqual(so._needs_prose(json.dumps({"result": "Nine icons."})),
+                         "Nine icons.")
+
     def test_a_long_answer_is_cut_at_a_sentence(self):
         self.seed()
         self.answer("A sentence that ends here. " * 40)
@@ -3328,6 +3340,69 @@ class WhenTheRoundsSayTheReportIsWrong(unittest.TestCase):
         self.assertIn("what you actually see", said)
         self.assertIn("Saying nothing is the right answer if the report is right", said)
 
+    EMPTY_WELL = ("The element at x 36, y 39 is the right size in the right place but "
+                  "empty: there is no icon there, the box is all the design draws")
+
+    def twice(self, line):
+        return [{"n": 7, "disputed": [line]}, {"n": 8, "disputed": [line]}]
+
+    def test_a_dispute_does_not_land_on_a_fault_of_another_kind(self):
+        """Found by the from-scratch probe, invisible to every fixture above.
+
+        Matching was on the 50px band and nothing else, and a band holds whatever
+        sits at that height. On a page built from nothing the heading's weight and
+        the empty icon well beside it were both at y 39, so a round disputing the
+        well was recorded against the weight: the page then reported a dispute no
+        round had made, and stopped pressing a fault that was never questioned.
+        """
+        weight = [{"key": ["type", "weight", 0], "rounds": 6}]
+        self.assertEqual(so.disputes(self.twice(self.EMPTY_WELL), weight), [])
+
+    def test_a_set_fault_is_disputed_without_a_position(self):
+        """The originating case, written the way rounds actually write it. The
+        empty containers are one fault wherever they are, so the kind alone names
+        it and the coordinates in the sentence are not needed."""
+        spent = [{"key": ["hollow"], "rounds": 9},
+                 {"key": ["type", "weight", 0], "rounds": 6}]
+        got = so.disputes(self.twice(self.EMPTY_WELL), spent)
+        self.assertEqual([d["key"] for d in got], [["hollow"]])
+        self.assertIn("no icon there", got[0]["rounds"][0]["saw"])
+
+    def test_the_band_chooses_between_two_faults_of_one_kind(self):
+        spent = [{"key": ["type", "weight", 0], "rounds": 6},
+                 {"key": ["type", "weight", 4], "rounds": 6}]
+        line = ("The text at x 102, y 212 is lighter than the design: 10% of its box "
+                "is ink against 23%. That is font-weight: it is already bold here")
+        got = so.disputes(self.twice(line), spent)
+        self.assertEqual([d["key"] for d in got], [["type", "weight", 4]])
+
+    def test_a_band_two_faults_of_one_kind_share_identifies_neither(self):
+        # Hearing nothing costs the rounds spent on a fault; hearing the wrong thing
+        # retires a fault nobody disputed, which is worse, so ambiguity refuses.
+        spent = [{"key": ["type", "weight", 4], "rounds": 6},
+                 {"key": ["type", "size", 4], "rounds": 6}]
+        line = ("The text at x 102, y 212 is lighter than the design. That is "
+                "font-weight: it looks the same weight to me")
+        self.assertEqual(so.disputes(self.twice(line), spent), [])
+
+    def test_a_text_colour_fault_carries_its_band(self):
+        """`ink` was left out of _fault_row when the colour finding was added, though
+        its key is the same shape as spacing's and means the same thing. So the one
+        finding added that day was the one no round could dispute by quoting it."""
+        self.assertEqual(so._fault_row(("ink", 3)), 3)
+        spent = [{"key": ["ink", 3], "rounds": 4}]
+        line = ("The text at x 102, y 160 is the wrong colour: it is the same colour "
+                "as the design, the heading above it is what differs")
+        hist = [{"n": 5, "disputed": [line]}, {"n": 6, "disputed": [line]}]
+        got = so.disputes(hist, spent)
+        self.assertEqual([d["phrase"] for d in got], ["the text colour around y 150px"])
+
+    def test_a_set_fault_has_no_band_to_lend(self):
+        """One hollow key covers every empty container on the page, so a dispute
+        about the box at one position is not the set being wrong."""
+        self.assertIsNone(so._fault_row(("hollow",)))
+        self.assertIsNone(so._fault_row(("fill",)))
+
     def test_the_field_is_collected_from_a_round(self):
         payload = json.dumps({"code": "<i/>", "changes": "x",
                               "disputed": ["the typeface: looks right", "  ", 7]})
@@ -4463,6 +4538,118 @@ class ElementsAreScoredOnTheirOwn(unittest.TestCase):
                          {"structure", "shape", "colour", "detail", "coverage"})
         self.assertEqual(rep["problems"], [])
         self.assertNotIn("element_scores", rep)
+
+
+@unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+class ARunStartedFromNothing(unittest.TestCase):
+    """Everything a round is told, on a design the tool has never seen.
+
+    Every feature added on 2026-10-04 and 05 was checked against runs that already
+    existed: a stored report, a folder with history, a design already captured. That
+    is the weaker test, and one of those features had already failed the stronger one
+    unnoticed. The colour finding computed correctly and reached no round at all
+    until SCORER_VERSION moved, because a prompt reads the STORED report rather than
+    recomputing it, so every check that started from an existing run agreed it worked.
+
+    This starts from nothing and reads the prompt run_iteration actually builds.
+    `scripts/from_scratch.py` is the long version, which carries the same page on for
+    nine rounds to reach the parts that need history.
+    """
+
+    W, H = 560, 360
+    # A mark no icon set has, so the glyph verdict has something to be absent about.
+    MARK = ('<svg viewBox="0 0 48 48" width="40" height="40">'
+            '<path d="M8 34 Q24 6 40 34" fill="none" stroke="#0F766E" stroke-width="5"/>'
+            '<path d="M15 34 Q24 18 33 34" fill="none" stroke="#0F766E" stroke-width="5"/>'
+            '<rect x="6" y="36" width="36" height="5" fill="#0F766E"/></svg>')
+
+    def page(self, mark, ink):
+        return (
+            '<div style="width:{w}px;height:{h}px;background:#E2E8F0;font-family:Arial">'
+            '<div style="margin:22px;background:#FFFFFF;border-radius:12px;padding:18px">'
+            '<div style="display:flex;align-items:center;gap:14px">'
+            '<div style="width:48px;height:48px;border-radius:10px;'
+            'border:2px solid #CBD5E1;display:flex;align-items:center;'
+            'justify-content:center">{mark}</div>'
+            '<div style="color:{ink};font-size:23px;font-weight:700">Workspace billing'
+            '</div></div>'
+            '<div style="color:#475569;font-size:14px;margin-top:14px">Review the plan '
+            'and the seats your team is paying for this month.</div>'
+            '</div></div>').format(w=self.W, h=self.H, mark=mark, ink=ink)
+
+    def setUp(self):
+        self.saved_runs, self.saved_agent = so.RUNS_DIR, so.run_agent
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-scratch-"))
+        so.RUNS_DIR = self.tmp / "runs"
+        # Wrong in exactly the two ways under test and right everywhere else, so
+        # nothing but those can explain a finding that turns up.
+        self.attempt = self.page("", "#1D4ED8")
+        design = self.tmp / "design.png"
+        so.render_code(self.page(self.MARK, "#B45309"), "html",
+                       self.W, self.H, design).save(design)
+        so.create_run("scratch", "html", reference_path=design)
+        so.record_attempt("scratch", self.attempt)
+
+        self.prompts = []
+
+        def fake(agent, prompt, cwd, images, schema=True):
+            if prompt.startswith(so.NEEDS_PROMPT[:40]):
+                return json.dumps({"result": "A card with an icon well and a heading."})
+            self.prompts.append(prompt)
+            return json.dumps({"structured_output":
+                               {"code": self.attempt, "changes": "nothing"}})
+        so.run_agent = fake
+
+    def tearDown(self):
+        so.RUNS_DIR, so.run_agent = self.saved_runs, self.saved_agent
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def round_one(self):
+        so.run_iteration("scratch", candidates=1)
+        return self.prompts[0]
+
+    def test_the_first_round_is_told_what_the_person_has_to_hand_over(self):
+        self.assertIn("Known to need something that is not here", self.round_one())
+
+    def test_the_first_round_is_given_a_verdict_on_the_glyph(self):
+        # The useful half of icon matching is the half that says to stop looking.
+        self.assertIn("nothing in the set is this shape", self.round_one())
+
+    def test_the_first_round_is_told_the_text_is_the_wrong_colour(self):
+        """The one that had already failed this. It was correct in a fresh report and
+        absent from every round, because the prompt reads the stored one."""
+        said = self.round_one()
+        self.assertIn("is the wrong colour: the design draws it", said)
+        self.assertIn("#B45309", said)
+
+    def test_nothing_had_to_be_rescored_by_hand(self):
+        # The failure this guards is a finding that only appears once someone bumps
+        # the version, which is invisible to any check that starts from a run.
+        self.round_one()
+        stored = json.loads((self.tmp / "runs" / "scratch" / "attempts" /
+                             "001.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["report"]["scorer"], so.SCORER_VERSION)
+        self.assertTrue(stored["report"]["elements"]["colour"])
+
+    def test_the_dispute_question_waits_for_a_fault_to_have_resisted(self):
+        """It is not in round one, and that is the design rather than a gap: there is
+        nothing to dispute until a fault has been pressed and survived."""
+        self.assertNotIn("if the report is wrong about it, put it in", self.round_one())
+        run = so._load_run("scratch")
+        history = so._attempts("scratch")
+        base, _ = so.iteration_base(history)
+        spent = [{"key": ["hollow"], "rounds": so.GIVE_UP_AFTER}]
+        saved = so.stuck_problems
+        so.stuck_problems = lambda h, b: spent
+        try:
+            ctx = so.carried_context(run, history, base)
+            said = so._iterate_prompt(run, base["n"], self.attempt, base["report"], "",
+                                      None, ctx["rejected"], "none", ctx["stuck"],
+                                      ctx["spent"], ctx["lists"], ctx["needs"],
+                                      ctx["doubted"])
+        finally:
+            so.stuck_problems = saved
+        self.assertIn("if the report is wrong about it, put it in", said)
 
 
 if __name__ == "__main__":

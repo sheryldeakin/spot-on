@@ -3931,8 +3931,93 @@ def _fault_row(key):
     kind = key[0]
     if kind in ("type", "element") and len(key) > 2 and isinstance(key[2], int):
         return key[2]
-    if kind == "spacing" and len(key) > 1 and isinstance(key[1], int):
+    # `ink` was left out when the colour finding was added, though its key is the same
+    # shape as spacing's and means the same thing, so a round disputing a text colour
+    # by quoting the sentence could never be matched at all.
+    if kind in ("spacing", "ink") and len(key) > 1 and isinstance(key[1], int):
         return key[1]
+    # `hollow` and `fill` deliberately have none. Both are set faults: one key covers
+    # every empty container on the page, so a round disputing the box at y 39 is not
+    # saying the whole set is wrong, and lending the set one box's band would retire
+    # all of them on a single observation.
+    return None
+
+
+# Which fault a quoted report sentence is about, by the headline the report already
+# gives that sentence. A dispute used to be matched to a fault on the 50px band they
+# shared and nothing else, and a band holds whatever happens to sit at that height: on
+# a page built from nothing, a heading's weight and the empty icon well beside it were
+# both at y 39, so a round disputing the well was recorded against the weight. The
+# page then told the person the rounds had disputed a fault none of them mentioned,
+# and the weight stopped being pressed while the well went on being pressed.
+DISPUTE_KINDS = {
+    "Wrong typeface": ("type",),
+    "Typeface named in the source": ("type",),
+    "Text the wrong size": ("type",),
+    "Text the wrong weight": ("type",),
+    "Text slanted wrongly": ("type",),
+    "A phrase should be bold": ("type",),
+    "Underline missing": ("type",),
+    "Text the wrong colour": ("ink",),
+    "Icon wells left empty": ("hollow",),
+    "Container left empty": ("hollow",),
+    "Panels the wrong alpha": ("fill",),
+    "Gap the wrong size": ("spacing",),
+    "Row spacing wrong": ("spacing",),
+    "Lines too far apart or too close": ("spacing",),
+    "Edges not lined up": ("align",),
+    "Element missing": ("element",),
+    "Element badly wrong": ("element",),
+    "Box the wrong height": ("element",),
+    "Element the wrong width": ("element",),
+    "Box wrong size or place": ("element",),
+    "Elements shifted up or down": ("element", "shift"),
+    "Elements shifted sideways": ("element", "shift"),
+    "Lower part of the page shifted": ("shift",),
+    "Everything shifted": ("shift",),
+    "Colours slightly off": ("colour",),
+    "Colours missing": ("colour",),
+    "Page colour wrong": ("colour",),
+    "Part of the design not drawn": ("coverage",),
+}
+
+
+def _dispute_kinds(text):
+    """The kinds of fault a dispute line could be about, or None if it cannot say."""
+    label = problem_headline(text)
+    if not label:
+        return None
+    return DISPUTE_KINDS.get(label.split(" (")[0])
+
+
+def _dispute_match(text, phrases):
+    """Which spent fault a dispute line that quotes the report is about.
+
+    Two things narrow it, and the order matters. The kind comes first, read off the
+    headline the sentence already carries, because that is the only part of a line
+    that says what it is ABOUT rather than where it is. Where the kind leaves one
+    candidate, no position is needed at all, which is what lets a set fault like the
+    empty containers be disputed even though it has no position of its own. Only when
+    a kind has several spent faults does the 50px band choose between them, and a band
+    holding more than one of them chooses neither: hearing nothing costs the rounds
+    that go on being spent on a fault, while hearing the wrong thing retires a fault
+    nobody disputed and says so to the person, which is worse.
+    """
+    want = _dispute_kinds(text)
+    pool = [(p, k) for p, k in phrases.items() if want is None or k[0] in want]
+    if not pool:
+        return None
+    if want is not None and len(pool) == 1:
+        return pool[0]
+    bands = {}
+    for p, k in pool:
+        row = _fault_row(k)
+        if row is not None:
+            bands.setdefault(row, []).append((p, k))
+    for found_y in re.findall(r"\by\s+(\d+)", text.lower()):
+        got = bands.get(int(found_y) // 50)
+        if got and len(got) == 1:
+            return got[0]
     return None
 
 
@@ -3950,11 +4035,6 @@ def disputes(history, spent=()):
     models are agreeable enough that asking the question at all invites a yes.
     """.format(DISPUTE_AFTER)
     phrases = {stuck_phrase(tuple(item["key"])): tuple(item["key"]) for item in (spent or [])}
-    rows = {}
-    for phrase, key in phrases.items():
-        row = _fault_row(key)
-        if row is not None:
-            rows.setdefault(row, (phrase, key))
     found = {}
     for a in history:
         for line in (a.get("disputed") or []):
@@ -3966,15 +4046,12 @@ def disputes(history, spent=()):
                     hit = (phrase, key, text[len(phrase):].lstrip(" :.-").strip())
                     break
             if hit is None:
-                # Every round quoted the report's sentence instead, which carries the
-                # real coordinates. Match on the band they share.
-                for found_y in re.findall(r"\by\s+(\d+)", low):
-                    got = rows.get(int(found_y) // 50)
-                    if got:
-                        phrase, key = got
-                        saw = text.split(":", 1)[1].strip() if ":" in text else ""
-                        hit = (phrase, key, saw)
-                        break
+                # Every round quoted the report's sentence instead.
+                got = _dispute_match(text, phrases)
+                if got:
+                    phrase, key = got
+                    saw = text.split(":", 1)[1].strip() if ":" in text else ""
+                    hit = (phrase, key, saw)
             if hit is None:
                 continue
             phrase, key, saw = hit
@@ -5142,7 +5219,7 @@ def describe_needs(slug, agent=None, run=None):
         out = run_agent(chosen, NEEDS_PROMPT, d, [d / "reference.png"], schema=False)
     except Exception:
         return None
-    text = " ".join((_parse_needs(out) or "").split())
+    text = " ".join(_needs_prose(out).split())
     if len(text) > 500:
         cut = text.rfind(". ", 0, 500)
         text = text[:cut + 1] if cut > 200 else text[:500].rsplit(" ", 1)[0]
@@ -5184,6 +5261,18 @@ def _parse_needs(out):
         else:
             return out
     return out
+
+
+def _needs_prose(out):
+    """The answer, or nothing when what came back is not prose.
+
+    This line is pasted into every later round under "what this design needs", so an
+    answer in a wrapper shape the unwrapper does not know would be handed to the model
+    as a JSON blob. The field is optional and the round goes ahead without it, so the
+    honest response to an answer that is not prose is to have none.
+    """
+    text = (_parse_needs(out) or "").strip()
+    return "" if text[:1] in ("{", "[") else text
 
 
 def materials_for(run):

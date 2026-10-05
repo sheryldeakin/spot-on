@@ -1,0 +1,487 @@
+{
+ "scorer_version": 8,
+ "first_match": 54.4,
+ "first_problems": [
+  "From about 108px down (the upper middle of the page), content sits about 36px lower than in the design. Something above that point is missing, extra or the wrong height. Fix that first: most of the error below it follows from this one shift.",
+  "The palette is off by 7.7, on a scale where 2.3 is the smallest difference a person can see: a design colour has no close match in the attempt, or the attempt invented one.",
+  "The element at x 36, y 39 (61x55px, the top, left of the page) is the right size in the right place but empty: the design has something drawn inside it, an icon, a glyph or a small chart, and the attempt has the container only. Draw the contents; the box itself already matches. Matched against the bundled set, nothing in the set is this shape, draw it inline.",
+  "The text at x 36, y 39 (the top, left of the page) is lighter than the design: 10% of its box is ink against 23%. That is font-weight.",
+  "The text at x 102, y 56 (the top, centre left of the page) is the wrong colour: the design draws it #B45309 and the attempt draws it #1D4ED8. Judged on hue rather than on how dark it looks, so this is not the font weight.",
+  "The box at x 36, y 135 (489x153px, the lower middle, centre right of the page) is about 6% narrower (457px against 489px), sits 16px to the right and 36px lower, compared with the design. Check font size, weight and letter spacing there.",
+  "The text at x 102, y 56 (204x25px, the top, centre left of the page) sits 16px to the right and 16px lower, compared with the design.",
+  "Nothing in the attempt matches the text at x 37, y 108 (412x16px, the upper middle, centre left of the page).",
+  "The text at x 36, y 39 (61x55px, the top, left of the page) sits 16px to the right and 16px lower, compared with the design.",
+  "The gap above the box at y 94px (the top, left of the page) is 61px; the design has 41px, so it is 20px too big. Change the margin or padding there, not the element itself.",
+  "The gap above the box at y 81px (the top, centre left of the page) is 74px; the design has 54px, so it is 20px too big. Change the margin or padding there, not the element itself.",
+  "Colours in the design with no close match in the attempt: #8830E0 (3% of the design), #8030D8 (3% of the design), #7830D0 (3% of the design).",
+  "The page is uneven. Scored ninth by ninth, the middle centre is the weakest part you can act on at 12.0, against 31.8 for the top right. Work there first. These are comparable with each other and not with the page total, which is measured over the whole page at once. Expect the total to crawl even when a region improves a lot, because a region is only a fraction of the page."
+ ],
+ "hollow": 1,
+ "colour_findings": 1,
+ "needs": [
+  "1 glyph the bundled set does not have"
+ ],
+ "rounds": [
+  {
+   "round": 1,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": false,
+    "dispute heard": false
+   },
+   "match": 57.7,
+   "base": 2,
+   "attempts": 2,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     1
+    ],
+    [
+     [
+      "spacing",
+      1
+     ],
+     1
+    ],
+    [
+     [
+      "colour",
+      "palette"
+     ],
+     1
+    ],
+    [
+     [
+      "element",
+      "text",
+      0,
+      [
+       "position"
+      ]
+     ],
+     1
+    ],
+    [
+     [
+      "element",
+      "text",
+      1,
+      [
+       "position"
+      ]
+     ],
+     1
+    ],
+    [
+     [
+      "hollow"
+     ],
+     1
+    ],
+    [
+     [
+      "element",
+      "text",
+      2,
+      [
+       "missing"
+      ]
+     ],
+     1
+    ],
+    [
+     [
+      "shift",
+      "vertical"
+     ],
+     1
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     1
+    ]
+   ]
+  },
+  {
+   "round": 2,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": false,
+    "dispute heard": false
+   },
+   "match": 62.9,
+   "base": 4,
+   "attempts": 4,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     2
+    ],
+    [
+     [
+      "spacing",
+      1
+     ],
+     2
+    ],
+    [
+     [
+      "colour",
+      "palette"
+     ],
+     2
+    ],
+    [
+     [
+      "hollow"
+     ],
+     2
+    ],
+    [
+     [
+      "shift",
+      "vertical"
+     ],
+     2
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     2
+    ]
+   ]
+  },
+  {
+   "round": 3,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": false
+   },
+   "match": 69.9,
+   "base": 6,
+   "attempts": 6,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     4
+    ],
+    [
+     [
+      "spacing",
+      1
+     ],
+     4
+    ],
+    [
+     [
+      "hollow"
+     ],
+     4
+    ],
+    [
+     [
+      "shift",
+      "vertical"
+     ],
+     4
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     4
+    ]
+   ]
+  },
+  {
+   "round": 4,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": false
+   },
+   "match": 78.9,
+   "base": 7,
+   "attempts": 7,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     5
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     5
+    ],
+    [
+     [
+      "hollow"
+     ],
+     5
+    ],
+    [
+     [
+      "shift",
+      "vertical"
+     ],
+     5
+    ]
+   ]
+  },
+  {
+   "round": 5,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": false
+   },
+   "match": 87.0,
+   "base": 8,
+   "attempts": 8,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     6
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     6
+    ],
+    [
+     [
+      "hollow"
+     ],
+     6
+    ]
+   ]
+  },
+  {
+   "round": 6,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": true
+   },
+   "match": 87.0,
+   "base": 9,
+   "attempts": 9,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     6
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     6
+    ],
+    [
+     [
+      "hollow"
+     ],
+     6
+    ]
+   ]
+  },
+  {
+   "round": 7,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": true
+   },
+   "match": 87.0,
+   "base": 10,
+   "attempts": 10,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     6
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     6
+    ],
+    [
+     [
+      "hollow"
+     ],
+     6
+    ]
+   ]
+  },
+  {
+   "round": 8,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": true
+   },
+   "match": 87.0,
+   "base": 11,
+   "attempts": 11,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     6
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     6
+    ],
+    [
+     [
+      "hollow"
+     ],
+     6
+    ]
+   ]
+  },
+  {
+   "round": 9,
+   "seen": {
+    "needs section": true,
+    "glyph verdict": true,
+    "colour line": true,
+    "dispute question": true,
+    "dispute heard": true
+   },
+   "match": 87.0,
+   "base": 12,
+   "attempts": 12,
+   "stuck": [
+    [
+     [
+      "type",
+      "weight",
+      0
+     ],
+     6
+    ],
+    [
+     [
+      "ink",
+      1
+     ],
+     6
+    ],
+    [
+     [
+      "hollow"
+     ],
+     6
+    ]
+   ]
+  }
+ ],
+ "first_seen": {
+  "needs section": 1,
+  "glyph verdict": 1,
+  "colour line": 1,
+  "dispute question": 3,
+  "dispute heard": 6
+ },
+ "disputes_recorded": [
+  {
+   "key": [
+    "hollow"
+   ],
+   "phrase": "the containers drawn empty",
+   "rounds": [
+    {
+     "n": 7,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    },
+    {
+     "n": 8,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    },
+    {
+     "n": 9,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    },
+    {
+     "n": 10,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    },
+    {
+     "n": 11,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    },
+    {
+     "n": 12,
+     "saw": "there is no icon at that position in the design, the box is the whole of what is drawn there."
+    }
+   ]
+  }
+ ]
+}
