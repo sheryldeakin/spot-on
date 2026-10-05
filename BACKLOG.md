@@ -30,6 +30,18 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   assets"), which the needs list owns. From zero correct uses before, so the
   narrowing worked; it did not fully land.
 
+- **Five visible things the report still cannot name.** Size: small each, medium
+  together. Trigger: a run where one of them is the fault. Found by building pairs
+  of pages that differ in exactly one property and asking whether any sentence names
+  what changed (`scripts/unmeasured_survey.py`). A border added costs 35.9 points
+  and the report talks about a text element scoring low; a drop shadow costs 23.5
+  and it talks about the silhouette; panel opacity costs 12.3 and it says only that
+  the palette is off somewhere. Letter case is the odd one: it costs 3.9 and is
+  actively misattributed, reported as a box 17% wider rather than as CONTINUE
+  against Continue, which sends a round after the width. Corner radius costs 0.5
+  and is not worth a line. Border and shadow first, then case for the
+  misattribution rather than for the score.
+
 ## Deliberate limits
 
 - **A dispute needs two rounds to agree before it is repeated to anyone.** One round

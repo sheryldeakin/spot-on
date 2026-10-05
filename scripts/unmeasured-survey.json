@@ -1,0 +1,121 @@
+{
+ "cases": 12,
+ "unnamed": 5,
+ "rows": [
+  {
+   "property": "text colour",
+   "match": 97.5,
+   "named": true,
+   "matched_words": [
+    "wrong colour",
+    "draws it"
+   ],
+   "problems": 6,
+   "first": "Part of the text at x 50, y 57 (the top, centre left of the page) is set heavier in the design than in the att"
+  },
+  {
+   "property": "button fill colour",
+   "match": 91.5,
+   "named": true,
+   "matched_words": [
+    "colour"
+   ],
+   "problems": 6,
+   "first": "The palette is off by 8.4, on a scale where 2.3 is the smallest difference a person can see: a design colour h"
+  },
+  {
+   "property": "card fill colour",
+   "match": 83.4,
+   "named": true,
+   "matched_words": [
+    "colour"
+   ],
+   "problems": 7,
+   "first": "11% of the design has nothing drawn near it, mostly in the lower middle, centre left of the page. Something is"
+  },
+  {
+   "property": "corner radius",
+   "match": 99.5,
+   "named": false,
+   "matched_words": [],
+   "problems": 2,
+   "first": "Close on every axis. What is left is antialiasing and sub-pixel placement, which is not worth chasing."
+  },
+  {
+   "property": "border added",
+   "match": 64.1,
+   "named": false,
+   "matched_words": [],
+   "problems": 5,
+   "first": "The 404x16px text at x 51, y 92 (upper middle, centre left of the page) scores 49.4 where the design puts it b"
+  },
+  {
+   "property": "drop shadow added",
+   "match": 76.5,
+   "named": false,
+   "matched_words": [],
+   "problems": 4,
+   "first": "The silhouette is off: 22% of the drawn area overlaps the design. The design covers 8.1% of the page, the atte"
+  },
+  {
+   "property": "text alignment",
+   "match": 47.6,
+   "named": true,
+   "matched_words": [
+    "centre"
+   ],
+   "problems": 6,
+   "first": "43% of the design has nothing drawn near it, mostly in the upper middle, left of the page. Something is missin"
+  },
+  {
+   "property": "letter case",
+   "match": 96.1,
+   "named": false,
+   "matched_words": [],
+   "problems": 2,
+   "first": "The box at x 50, y 113 (101x37px, the upper middle, left of the page) is about 17% wider (118px against 101px)"
+  },
+  {
+   "property": "letter spacing",
+   "match": 92.2,
+   "named": true,
+   "matched_words": [
+    "spacing",
+    "letter"
+   ],
+   "problems": 2,
+   "first": "The text at x 50, y 57 (170x23px, the top, centre left of the page) is about 41% narrower (101px against 170px"
+  },
+  {
+   "property": "padding inside the card",
+   "match": 31.3,
+   "named": true,
+   "matched_words": [
+    "padding",
+    "margin",
+    "gap"
+   ],
+   "problems": 7,
+   "first": "From about 60px down (the top of the page), content sits about 16px lower than in the design. Something above "
+  },
+  {
+   "property": "panel opacity",
+   "match": 87.7,
+   "named": false,
+   "matched_words": [],
+   "problems": 7,
+   "first": "The palette is off by 8.1, on a scale where 2.3 is the smallest difference a person can see: a design colour h"
+  },
+  {
+   "property": "font weight",
+   "match": 57.4,
+   "named": true,
+   "matched_words": [
+    "weight",
+    "heavier"
+   ],
+   "problems": 6,
+   "first": "From about 90px down (the upper middle of the page), content sits about 5px lower than in the design. Somethin"
+  }
+ ]
+}

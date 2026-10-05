@@ -1839,7 +1839,7 @@ def _cell_name(cell):
 # changes which boxes it names on every run already on disk.
 # Bumped to 7 when each problem gained a plain-words headline, so an attempt scored
 # before that gains one the next time its report is read rather than never.
-SCORER_VERSION = 7
+SCORER_VERSION = 8
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
