@@ -33,6 +33,8 @@ FONTS = json.loads((ROOT / "scripts" / "font-changes.json").read_text(encoding="
 INK = json.loads((ROOT / "scripts" / "ink-colour-survey.json").read_text(encoding="utf-8"))
 SCRATCH = json.loads((ROOT / "scripts" / "from-scratch.json").read_text(encoding="utf-8"))
 UNNAMED = json.loads((ROOT / "scripts" / "unmeasured-survey.json").read_text(encoding="utf-8"))
+BLOCKED = json.loads((ROOT / "scripts" / "blocked-lines.json").read_text(encoding="utf-8"))
+WORKLIST = json.loads((ROOT / "scripts" / "worklist-items.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -221,6 +223,40 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(3)), INK["over_10_mixed"])
         # The split is the whole reason the finding is built on chroma.
         self.assertGreater(INK["over_10_mostly_colour"], INK["over_10_mostly_lightness"])
+
+    def test_the_worklist_counts_match_their_source(self):
+        m = re.search(r"written here, (\d+) distinct items across (\d+) runs: "
+                      r"(\d+) asked for the rendering", README)
+        self.assertIsNotNone(m, "the worklist sentence changed")
+        self.assertEqual(int(m.group(1)), WORKLIST["items"])
+        self.assertEqual(int(m.group(2)), WORKLIST["runs"])
+        self.assertEqual(int(m.group(3)), WORKLIST["loops_own_job"])
+        m = re.search(r"and (\d+) asked for material the needs list", README)
+        self.assertIsNotNone(m, "the material-gap sentence changed")
+        self.assertEqual(int(m.group(1)), WORKLIST["material_gaps"])
+        # The classifier in the tool is what the script counted with.
+        for row in WORKLIST["rows"]:
+            self.assertEqual(bool(TOOL._is_the_loops_job(row["text"])), row["loop"],
+                             row["text"])
+            self.assertEqual(bool(TOOL._is_material_gap(row["text"])), row["gap"],
+                             row["text"])
+
+    def test_the_blocked_line_counts_match_their_source(self):
+        m = re.search(r"on this machine \((\d+) of them across (\d+) attempts\): "
+                      r"(\d+) material gaps, (\d+) real blockers, (\d+) of (\d+) "
+                      r"agreeing", README)
+        self.assertIsNotNone(m, "the blocked-line sentence changed")
+        self.assertEqual(int(m.group(1)), BLOCKED["blocked_lines"])
+        self.assertEqual(int(m.group(2)), BLOCKED["attempt_files"])
+        self.assertEqual(int(m.group(3)), BLOCKED["material_gaps"])
+        self.assertEqual(int(m.group(4)), BLOCKED["real_blockers"])
+        self.assertEqual(int(m.group(5)), BLOCKED["agreed_with_hand"])
+        self.assertEqual(int(m.group(6)), BLOCKED["judged"])
+        # The filter in the tool is what the script scored, so a change to one
+        # without the other fails here rather than quietly disagreeing.
+        for row in BLOCKED["rows"]:
+            self.assertEqual(bool(TOOL._is_material_gap(row["text"])), row["gap"],
+                             row["text"])
 
     def test_the_unnamed_property_costs_match_their_source(self):
         """What a border, a shadow and the wrong case cost, each read off the pair

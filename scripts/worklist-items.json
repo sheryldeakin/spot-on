@@ -1,0 +1,471 @@
+{
+ "runs": 3,
+ "items": 77,
+ "loops_own_job": 7,
+ "material_gaps": 35,
+ "real_work": 35,
+ "rows": [
+  {
+   "run": "hud-concept",
+   "text": "Check by rendering that the top bezel line is not too bright",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Row spacing items 14 and 15 still need the row measured",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Globe text/box height (items 3, 8) untouched",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Render and score this attempt to check the Up Next panel move, since panel...",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Read 104-diff.png and fix the Today's Focus rows and the 10-item row at y...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Install or identify the design's typeface (item 1), which the report says is wrong...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Item 2: Discord glyph at x272,y694 still reads as empty; compare it with the...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Item 6: RECENT FILES heading shows italic in the render though the CSS says...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Items 14 and 15: row pitch (Recent Files 45 vs 50, Quick Access 57...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Item 12/13: Tasks list gaps not touched",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Items 1 and 5: font family and the bold span; typeface probably not installed",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Items 14 and 15: measure the row pitch of the 10-item and 4-item rows...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Item 1 and 5: check which typeface is installed before changing font-family",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Globe canvas size (items 3, 8): try it alone, apart from the logo tick...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Render and score this attempt to check the Discord tile and RECENT FILES heading...",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the row pitch for items 14 and 15 from the design image",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Install or identify the design's typeface (item 1)",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the rows for items 14 and 15 before moving them",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Items 3 and 8 (globe size) still untouched",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the row pitch for items 14 and 15 from reference.png before moving any...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Redraw the top frame line at x 373, y 21 as the design's angled...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the 10-item and 4-item row pitch from the design image before moving them...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Check which typeface is installed before changing font-family (items 1, 5)",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Render and score this globe change, and tune ring radii if the group is...",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the row pitch for items 14 and 15 from reference.png before moving them",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Render and score this attempt to confirm the globe change helped",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Measure the 10-item and 4-item row pitch from the design image before moving them",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "hud-concept",
+   "text": "Globe: the design's continents are blue-lit with a bright rim; the render is speckle...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Check by rendering that JARVIS at 15px spacing scores better than 10px (attempt 102...",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "hud-concept",
+   "text": "Render and score the Discord glyph change",
+   "loop": true,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Real app logos and icons in Quick Access, ring menu, nav",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Globe artwork and cityscape backdrop need exported images",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Real app logos and icons are not drawn; placeholder tiles stand in",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Cityscape background artwork needs an exported image",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Draw real app logos and nav/ring icons from icons.py",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Globe continents and city lights need artwork",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Fine-tune panel borders and glows against diff",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Globe and cityscape artwork need exported images",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Letter-spacing and widths of the title and tagline text",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Clock typeface weight",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Canva, Notion, GitHub brand marks drawn from the design",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Clock face typeface is too heavy (Arial ignores weight 200)",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Globe and cityscape backdrop need exported images",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Draw the Notion, GitHub and Spotify marks more faithfully from the design",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Match the design's typeface and weight on the title, greeting and clock when a...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Draw the Bambu Studio, Chrome and Notion glyphs in Recent Apps from what the...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-off",
+   "text": "Spacing of the ten-item row at y 893 (45px apart, design 50px)",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Greeting text weight and letter-spacing",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-off",
+   "text": "Canva tile glyph drawn from the design",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Real icons for nav, ring menu, quick access apps and file lists",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Draw the globe's continents and city lights closer to the design",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Cityscape background behind the panels needs the artwork image",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Gauge rings in system status need partial arcs, not full circles",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Real app logos and icons for quick access, nav and ring menu",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Globe artwork and cityscape background need the supplied image",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Real app logos and icons from icons.py",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Globe artwork and cityscape background need exported images",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Gauge rings in system status need partial arcs",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Row spacing fixes for items 16 and 17",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Left edge alignment near x 48 not changed this round",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Real city-lights globe artwork needs the design's image",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Fill remaining empty icon boxes (Recent Files and Daily Stats glyphs)",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Left edge alignment near x 48",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Row spacing fixes for items 16 and 17 (since attempt 8)",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Draw the globe's continents and city lights closer to the design (since attempt 2)",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Cityscape background behind the panels needs the artwork image (since attempt 2)",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Daily Stats glyphs (water bottle, running figure, moon, smiley) still plain blocks",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Globe continents and city lights still blobs",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Artwork behind panels needs the design's image",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Left edge alignment near x 48 not changed this round (since attempt 8)",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Draw inline the remaining unmatched glyphs at x 48 y 425 and x 350...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Row spacing fixes for items 15 and 16",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Globe continents and city lights still approximate; the artwork needs the image from the...",
+   "loop": false,
+   "gap": true
+  },
+  {
+   "run": "tb-on",
+   "text": "Row spacing in quick access (22 vs 29) and top nav rows not changed",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Left-edge alignment near x 48 not changed",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Quick access row spacing 22 vs 29 and top nav row spacing 789 vs...",
+   "loop": false,
+   "gap": false
+  },
+  {
+   "run": "tb-on",
+   "text": "Remaining unmatched glyphs at x 350 y 681, x 272 y 694, x 367...",
+   "loop": false,
+   "gap": true
+  }
+ ]
+}

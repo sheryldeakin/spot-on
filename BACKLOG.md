@@ -6,10 +6,21 @@ schedule. Finishing an item deletes its line in the commit that does the work.
 
 ## Deferred
 
-- **Lexical dedup cannot catch paraphrases.** Size: medium. Trigger: a worklist
-  filling with restatements again. "items 14 and 15" and "the 10-item and 4-item row
-  pitch" are one job with no words in common. The schema now asks rounds to reuse an
-  earlier wording, which is unmeasured.
+- **Lexical dedup cannot catch paraphrases, and that is now the only thing left in
+  the worklists.** Size: medium. Trigger: a worklist filling with restatements again.
+  Measured over every worklist line written on this machine
+  (`scripts/worklist_items.py`): 77 distinct items across 3 runs, of which
+  7 asked for the rendering and scoring the harness does anyway and 35 asked
+  for material the needs list owns. Both are now read off the line and dropped, and
+  the open lists went from 26 items to 13. What survives is the real thing: on
+  hud-concept "Row spacing items 14 and 15 still need the row measured" and "Measure
+  the 10-item and 4-item row pitch from the design image" are one job with no words
+  in common, and on tb-on "Row spacing fixes for items 16 and 17" and "Row spacing in
+  quick access (22 vs 29) and top nav rows not changed" are another. Two pairs in 13
+  items, so about 4 of 13 lines are two jobs wearing four names. Lexical matching
+  cannot close that: the shared thing is the coordinates and the report item number,
+  not the words, so the fix is to key an item to the fault it is about rather than to
+  its text. The schema asking rounds to reuse an earlier wording did not do it.
 - **The findings tie-break stays off, and one trial did not settle it.** Size:
   medium. Trigger: enough appetite to run several seeds per arm. Two arms on
   hud-concept attempt 1, four rounds, three candidates, 24 minutes
@@ -21,14 +32,6 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   model noise. What a real answer needs is several seeds per arm, which is hours of
   model time, so the honest position is that it is cheap, it works as designed, and
   nobody knows whether it helps.
-
-- **Two of six `blocked` entries still name the material gaps.** Size: small.
-  Trigger: another run that produces them. Eight real rounds under the new wording
-  used the field six times: four correctly ("Write to attempt.html was denied",
-  "Could not render or score the page this round") and twice with the old mistake
-  ("Globe and cityscape artwork and the design's typeface are not available as
-  assets"), which the needs list owns. From zero correct uses before, so the
-  narrowing worked; it did not fully land.
 
 - **One panel at the wrong alpha is still only "the palette is off".** Size: small.
   Trigger: a run where a single translucent panel is the fault. The other four of the
@@ -53,6 +56,25 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   stays unnamed on purpose: 0.5 points, which is not worth a line.
 
 ## Deliberate limits
+
+- **Both worklist filters are word lists under a rule, so a new phrasing gets
+  through.** They were built from every line on this machine and are checked against
+  all of them, which is the only honest claim available: they read what has been
+  written, not what could be. The near miss is instructive: "Draw the Notion, GitHub
+  and Spotify marks more faithfully from the design" is work, because the needs
+  section asks a round to draw what the set lacks, while "Globe and cityscape
+  backdrop need exported images" is a request for material. One word apart, opposite
+  answers.
+
+- **A `blocked` line is read, not trusted.** The schema says the field is for what
+  stopped the round, and rounds still used it for material nobody has, which the
+  needs list already owns and says better. A line naming a typeface, artwork, a
+  photograph, a glyph or an icon is dropped unless it also names something that
+  failed, because "the icon script was refused" is a real blocker that happens to
+  name an icon. Scored against every blocked line on this machine
+  (`scripts/blocked_lines.py`): 8 lines, 4 material gaps, 4 real
+  blockers, 8 of 8 agreeing with the hand reading. It is a word list
+  under a rule, so a round that invents a new way to say it will get through.
 
 - **The letter-case reading cannot tell capitals from different words.** It measures
   where the ink sits between the cap line and the baseline, and setting other words

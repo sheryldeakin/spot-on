@@ -2209,9 +2209,15 @@ class TheRoundsKeepAListBetweenThem(unittest.TestCase):
 
     def test_what_blocked_a_round_is_kept_apart_and_does_not_close(self):
         # These are not work to be done, they are reasons work cannot be.
-        w = so.worklist([self.round(1, blocked=["the typeface is not installed"]),
-                         self.round(2, done=["the typeface is not installed"])])
-        self.assertEqual([i["text"] for i in w["blocked"]], ["the typeface is not installed"])
+        # This fixture used to be "the typeface is not installed", which is now
+        # dropped on purpose: that is the needs list's business and it says more
+        # about it. A blocker is something that failed.
+        stopped = "Write to attempt.html was denied"
+        w = so.worklist([self.round(1, blocked=[stopped]),
+                         self.round(2, done=[stopped])])
+        self.assertEqual([i["text"] for i in w["blocked"]], [stopped])
+        gap = so.worklist([self.round(1, blocked=["the typeface is not installed"])])
+        self.assertEqual(gap["blocked"], [])
 
     def test_the_same_job_said_three_ways_is_one_item(self):
         # Regression, from the first real use: three rounds on one page produced
@@ -2291,10 +2297,11 @@ class TheRoundsKeepAListBetweenThem(unittest.TestCase):
 
     def test_the_next_round_is_handed_the_open_list(self):
         text = "\n".join(so._worklist_section(so.worklist(
-            [self.round(1, nxt=["fill the wells"], blocked=["the typeface is not installed"])])))
+            [self.round(1, nxt=["fill the wells"],
+                        blocked=["Write to attempt.html was denied"])])))
         self.assertIn("fill the wells", text)
         self.assertIn("since attempt 1", text)
-        self.assertIn("the typeface is not installed", text)
+        self.assertIn("Write to attempt.html was denied", text)
 
     def test_it_is_told_that_claiming_an_item_proves_nothing(self):
         # Rounds have claimed work they had not done, and one reported a script as
@@ -4538,6 +4545,112 @@ class ElementsAreScoredOnTheirOwn(unittest.TestCase):
                          {"structure", "shape", "colour", "detail", "coverage"})
         self.assertEqual(rep["problems"], [])
         self.assertNotIn("element_scores", rep)
+
+
+class BlockedIsWhatStoppedTheRoundNotWhatIsMissing(unittest.TestCase):
+    """Every `blocked` line every round on this machine has written, scored.
+
+    The field is for what stopped the round. Rounds also used it for the material
+    the design needs and nobody has, which the needs list already owns and states
+    better, with what it is worth and how to hand it over. Said in both places the
+    same impossible job goes to every later round as if it were work.
+    """
+
+    # The four real ones kept, the four real ones dropped, and the case that makes
+    # the rule a rule rather than a word list: a tool failure that names an icon.
+    GAPS = ["Globe and cityscape artwork and the design's typeface are not "
+            "available as assets",
+            "The design's typeface is not installed, so item 1 cannot be fixed in code.",
+            "The globe artwork is a photograph-like render and cannot be reproduced "
+            "by code.",
+            "No photograph of the hero image was provided"]
+    REAL = ["Write to attempt.html was denied, so the page was returned directly",
+            "Could not render or score the page this round, so edits are unmeasured",
+            "Could not render or score the page in this session, so the edits are",
+            "Could not render or score the page in this session, so the change is",
+            "The icon script was refused, so the glyph wells are still empty",
+            "three.js would not load from the CDN, so the globe is flat"]
+
+    def test_a_material_gap_is_not_a_blocker(self):
+        for line in self.GAPS:
+            self.assertTrue(so._is_material_gap(line), line)
+
+    def test_what_actually_stopped_a_round_is_kept(self):
+        for line in self.REAL:
+            self.assertFalse(so._is_material_gap(line), line)
+
+    def test_a_tool_failure_that_names_a_material_is_kept(self):
+        # The reason this is a rule and not a word list. Both of these name a
+        # material and both are real blockers.
+        self.assertFalse(so._is_material_gap(
+            "The icon script was refused, so the glyph wells are still empty"))
+        self.assertFalse(so._is_material_gap(
+            "The font file would not load, so the typeface is still the fallback"))
+
+    def test_the_worklist_drops_them_and_keeps_the_rest(self):
+        history = [{"n": 1, "blocked": [self.GAPS[0]], "next": [], "done": []},
+                   {"n": 2, "blocked": [self.REAL[0]], "next": [], "done": []}]
+        got = so.worklist(history)
+        self.assertEqual([i["text"] for i in got["blocked"]],
+                         [so._trim_item(self.REAL[0])])
+
+    def test_the_round_is_never_shown_a_material_gap_as_a_blocker(self):
+        said = " ".join(so._worklist_section(
+            so.worklist([{"n": 1, "blocked": self.GAPS, "next": [], "done": []}])))
+        self.assertNotIn("typeface", said)
+        self.assertNotIn("artwork", said)
+
+
+class TheWorklistIsNotTheLoopsOwnJob(unittest.TestCase):
+    """Half of every open worklist was things no round could ever close.
+
+    Measured over every worklist line written on this machine
+    (`scripts/worklist_items.py`), 77 distinct items: 7 asked for the rendering
+    and scoring the harness does on its own, and 35 asked for material the needs
+    list already owns. After the two filters the open lists go from 26 items to 13.
+    """
+
+    LOOPS = ["Render and score this attempt to check the Up Next panel move",
+             "Render and score this globe change, and tune ring radii",
+             "Check by rendering that JARVIS at 15px spacing scores better",
+             "Re-render and compare against the diff"]
+    WORK = ["Row spacing fixes for items 16 and 17",
+            "Left edge alignment near x 48 not changed this round",
+            "Redraw the top frame line at x 373, y 21 as the angled shape",
+            "Read 104-diff.png and fix the Today's Focus rows",
+            "Draw the Notion, GitHub and Spotify marks more faithfully from the design"]
+
+    def test_the_loops_own_job_is_recognised(self):
+        for line in self.LOOPS:
+            self.assertTrue(so._is_the_loops_job(line), line)
+
+    def test_real_work_is_left_alone(self):
+        for line in self.WORK:
+            self.assertFalse(so._is_the_loops_job(line), line)
+            self.assertFalse(so._is_material_gap(line), line)
+
+    def test_drawing_a_mark_inline_is_work_not_a_gap(self):
+        """The needs section asks a round to draw what the set does not have, so an
+        item proposing exactly that is the work, not a request for material. Asking
+        for the file is the gap."""
+        self.assertFalse(so._is_material_gap(
+            "Draw the Notion, GitHub and Spotify marks more faithfully from the design"))
+        self.assertTrue(so._is_material_gap(
+            "Globe and cityscape backdrop need exported images"))
+
+    def test_neither_kind_reaches_the_open_list(self):
+        history = [{"n": 1, "next": [self.LOOPS[0], "Artwork behind panels needs "
+                                     "the design's image", self.WORK[0]],
+                    "done": [], "blocked": []}]
+        got = so.worklist(history)
+        self.assertEqual([i["text"] for i in got["open"]],
+                         [so._trim_item(self.WORK[0])])
+
+    def test_an_item_the_round_closes_still_closes(self):
+        # The filters must not swallow an item and leave `done` pointing at nothing.
+        history = [{"n": 1, "next": [self.WORK[1]], "done": [], "blocked": []},
+                   {"n": 2, "next": [], "done": [self.WORK[1]], "blocked": []}]
+        self.assertEqual(so.worklist(history)["open"], [])
 
 
 class LinesNothingElseCanSee(unittest.TestCase):

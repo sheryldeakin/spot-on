@@ -3735,6 +3735,47 @@ def has_stalled(history, rounds=PLATEAU_ROUNDS, gain=PLATEAU_GAIN):
     return seen[-1] - seen[-1 - rounds] < gain
 
 
+# A `blocked` line is meant to carry what stopped the round: a refused command, a
+# library that would not load, a file that was not there. Rounds also use it for the
+# material the design needs and nobody has, which the needs list already owns and
+# states better, with what it is worth and how to hand it over. Saying it in both
+# places puts the same impossible job in front of every later round as if it were
+# work. Narrowing the schema wording moved this from every use to two of six; the
+# rest is read off the line.
+GAP_MATERIAL = ("typeface", "font", "artwork", "photograph", "photo", "render",
+                "illustration", "imagery", "glyph", "icon",
+                "exported image", "the design's image")
+# What a real blocker reads like. A line that names one of these is kept whatever
+# else it mentions, because "the icon script was refused" is a tool failure that
+# happens to name an icon.
+GAP_TOOL = ("denied", "refused", "not permitted", "permission", "would not load",
+            "could not load", "could not render", "could not score", "failed",
+            "error", "timed out", "timeout", "not found", "no network", "crashed",
+            "unavailable tool", "sandbox")
+
+
+# Work the harness does for the round, which the schema already tells it not to
+# list. An item like this completes itself and can never be closed, so it sits on
+# the open list for the rest of the run and every later round reads it as a job.
+LOOP_OWN = ("render and score", "render & score", "score this", "screenshot",
+            "re-render", "rerender", "render the attempt", "render this",
+            "check by rendering", "render to check", "render and check",
+            "verify by rendering", "score the page")
+
+
+def _is_the_loops_job(text):
+    """An item that asks for the rendering and scoring the loop already does."""
+    return any(w in (text or "").lower() for w in LOOP_OWN)
+
+
+def _is_material_gap(text):
+    """A blocked line that is really the needs list's business."""
+    low = (text or "").lower()
+    if any(w in low for w in GAP_TOOL):
+        return False
+    return any(w in low for w in GAP_MATERIAL)
+
+
 def worklist(history, asks=()):
     """What the rounds say they could not do, and what they say is still left.
 
@@ -3767,11 +3808,19 @@ def worklist(history, asks=()):
                 closed.add(got)
         for item in (a.get("next") or []):
             t = _trim_item(item)
+            # Two kinds of item are dropped rather than carried. One asks for the
+            # rendering the loop does anyway, so it can never be closed by a round
+            # and sits there for the rest of the run. The other asks for material
+            # the needs list owns, which says more about it than this list can.
+            if t and (_is_the_loops_job(t) or _is_material_gap(t)):
+                continue
             # The first wording wins: it dates from the round that first raised it.
             if t and not any(_same_item(t, i["text"]) for i in open_items):
                 open_items.append({"text": t, "since": a["n"], "asked": False})
         for item in (a.get("blocked") or []):
             t = _trim_item(item)
+            if t and _is_material_gap(t):
+                continue
             if t and not any(_same_item(t, i["text"]) for i in blocked):
                 blocked.append({"text": t, "since": a["n"]})
     still = [i for i in open_items

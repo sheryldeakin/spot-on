@@ -1,0 +1,67 @@
+{
+ "runs_scanned": 3,
+ "attempt_files": 528,
+ "blocked_lines": 8,
+ "material_gaps": 4,
+ "real_blockers": 4,
+ "agreed_with_hand": 8,
+ "judged": 8,
+ "rows": [
+  {
+   "run": "hud-concept",
+   "n": 114,
+   "text": "The design's typeface is not installed, so item 1 cannot be fixed in code.",
+   "gap": true,
+   "by_hand": true
+  },
+  {
+   "run": "hud-concept",
+   "n": 114,
+   "text": "The globe artwork is a photograph-like render and cannot be reproduced by code.",
+   "gap": true,
+   "by_hand": true
+  },
+  {
+   "run": "tb-off",
+   "n": 9,
+   "text": "Globe and cityscape artwork and the design's typeface are not available as assets",
+   "gap": true,
+   "by_hand": true
+  },
+  {
+   "run": "tb-off",
+   "n": 12,
+   "text": "Globe and cityscape artwork and the design's typeface are not available as assets",
+   "gap": true,
+   "by_hand": true
+  },
+  {
+   "run": "tb-on",
+   "n": 2,
+   "text": "Write to attempt.html was denied, so the page was returned directly and never rendered...",
+   "gap": false,
+   "by_hand": null
+  },
+  {
+   "run": "tb-on",
+   "n": 5,
+   "text": "Could not render or score the page in this session, so the edits are...",
+   "gap": false,
+   "by_hand": null
+  },
+  {
+   "run": "tb-on",
+   "n": 8,
+   "text": "Could not render or score the page this round, so edits are unmeasured",
+   "gap": false,
+   "by_hand": null
+  },
+  {
+   "run": "tb-on",
+   "n": 12,
+   "text": "Could not render or score the page in this session, so the change is...",
+   "gap": false,
+   "by_hand": null
+  }
+ ]
+}
