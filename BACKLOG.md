@@ -30,6 +30,20 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   assets"), which the needs list owns. From zero correct uses before, so the
   narrowing worked; it did not fully land.
 
+- **Prove a run started from nothing gets all of this by default.** Size: medium.
+  Trigger: before trusting any of the last session's work. Sheryl, 2026-10-05: she
+  wants to know the fixes are innate rather than patched into the runs they were
+  developed against. Everything shipped on 2026-10-04 and 05 was verified against
+  existing runs, which is the weaker test: a stored report, a run folder with
+  history, a design already captured. The real question is whether a new design,
+  a new run and a first attempt produce the needs list, the supply controls, the
+  glyph verdicts, the colour findings and the dispute prompt with nothing done by
+  hand. One of these already failed that way: the colour finding computed
+  correctly and reached no round until SCORER_VERSION was bumped, because prompts
+  read the stored report. Probe: create a run from a design the tool has never
+  seen, render a first attempt, and assert the round prompt contains the needs
+  section, the dispute question, a glyph verdict and a colour line, with no
+  manual rescore. Worth making that a test rather than a one-off check.
 - **Five visible things the report still cannot name.** Size: small each, medium
   together. Trigger: a run where one of them is the fault. Found by building pairs
   of pages that differ in exactly one property and asking whether any sentence names
