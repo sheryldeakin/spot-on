@@ -114,9 +114,33 @@ PHRASES = {
 }
 
 
+def flat(text):
+    """One space between words, so a phrase cannot miss on a line break.
+
+    The first version searched the prompt as written. The prompt wraps between
+    "put it in" and the field name, so the dispute phrase could never match and
+    nine rounds were reported as never asking the question. The mechanism was
+    fine; the instrument was not.
+    """
+    return " ".join((text or "").lower().split())
+
+
+def stale_phrases():
+    """The phrases above that are no longer anywhere in the tool's source.
+
+    The control the first version lacked. A phrase that never turns up has two
+    possible causes needing opposite work: the feature really is missing, or the
+    phrase here has gone stale and the probe is lying about the tool. Searching
+    the source separates them, so a never-seen phrase can no longer be read as a
+    finding without the script saying which kind it is.
+    """
+    src = flat((ROOT / "spot-on.py").read_text(encoding="utf-8"))
+    return [name for name, phrase in PHRASES.items() if flat(phrase) not in src]
+
+
 def seen(prompt):
-    low = prompt.lower()
-    return {k: v.lower() in low for k, v in PHRASES.items()}
+    said = flat(prompt)
+    return {k: flat(v) in said for k, v in PHRASES.items()}
 
 
 def main():
@@ -194,11 +218,23 @@ def main():
         print("first attempt scored {:.1f} on scorer {}, needs: {}".format(
             report["match"], so.SCORER_VERSION, ", ".join(out["needs"]) or "(none)"))
         print()
+        stale = stale_phrases()
         for k in PHRASES:
             r = out["first_seen"][k]
             print("   {:<18} {}".format(
-                k, "round {}".format(r) if r else "NEVER"))
+                k, "round {}".format(r) if r else
+                "NEVER, and this probe's phrase is stale" if k in stale else "NEVER"))
         print()
+        missing = [k for k in PHRASES if out["first_seen"][k] is None]
+        if stale:
+            print("STOP. {} of these phrases are not in spot-on.py at all: {}. That is"
+                  .format(len(stale), ", ".join(stale)))
+            print("this script being out of date, not the tool losing a feature. Fix the")
+            print("phrase against the source before reading anything else here.")
+        elif missing:
+            print("{} never reached a round, and every phrase is still in the source, so"
+                  .format(", ".join(missing)))
+            print("this is the tool and not the probe.")
         print("wrote", path)
     finally:
         so.RUNS_DIR, so.run_agent = saved_runs, saved_agent

@@ -6,6 +6,26 @@ schedule. Finishing an item deletes its line in the commit that does the work.
 
 ## Deferred
 
+- **Four letter-case thresholds, each removable without a test noticing.** Size:
+  small. Trigger: the next change to `_case_findings`. `scripts/check_guards.py`
+  moves a threshold and requires the class that guards it to go red. Of 16
+  declared thresholds 12 are caught; the 4 that are not are all of
+  `CASE_MIN_BAND`, `CASE_FLAT`, `CASE_CHANGE` and `CASE_MARKS`. Measured: disabling
+  any one of them leaves every test green, and disabling all four together fails two,
+  so they are collectively load-bearing and individually redundant on the fixtures
+  that exist. That is a design smell rather than a test gap. Either build pairs of
+  pages that isolate each (tried, and the readings overlap: a heavier face and a
+  larger one are rejected by `CASE_FLAT` and `CASE_CHANGE` at once), or accept that
+  fewer guards would do and delete the ones that cannot be shown to earn their place.
+  My reading is the second.
+
+- **48 of 76 numeric constants have no declared guard.** Size:
+  medium, and it does not have to be done at once. `scripts/check_guards.py` lists
+  them. Each is either a threshold that should have a test that goes red when it
+  moves, or a number that is not a threshold at all and belongs in the script's
+  `NOT_A_THRESHOLD` set with a reason. The point is that the list shrinks and that a
+  new constant cannot be added without landing on it.
+
 - **Lexical dedup cannot catch paraphrases, and that is now the only thing left in
   the worklists.** Size: medium. Trigger: a worklist filling with restatements again.
   Measured over every worklist line written on this machine

@@ -35,6 +35,7 @@ SCRATCH = json.loads((ROOT / "scripts" / "from-scratch.json").read_text(encoding
 UNNAMED = json.loads((ROOT / "scripts" / "unmeasured-survey.json").read_text(encoding="utf-8"))
 BLOCKED = json.loads((ROOT / "scripts" / "blocked-lines.json").read_text(encoding="utf-8"))
 WORKLIST = json.loads((ROOT / "scripts" / "worklist-items.json").read_text(encoding="utf-8"))
+GUARDS = json.loads((ROOT / "scripts" / "guard-coverage.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -223,6 +224,34 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(3)), INK["over_10_mixed"])
         # The split is the whole reason the finding is built on chroma.
         self.assertGreater(INK["over_10_mostly_colour"], INK["over_10_mostly_lightness"])
+
+    def test_the_guard_coverage_matches_its_source(self):
+        """How many thresholds a test actually notices moving. The number only
+        means anything if it is the one the script last printed."""
+        m = re.search(r"Of (\d+) declared, (\d+) are caught and (\d+) are not", README)
+        self.assertIsNotNone(m, "the guard-coverage sentence changed")
+        self.assertEqual(int(m.group(1)), GUARDS["declared"])
+        self.assertEqual(int(m.group(2)), GUARDS["caught"])
+        self.assertEqual(int(m.group(3)), len(GUARDS["unguarded"]))
+        m = re.search(r"(\d+) of the (\d+) numeric constants in the tool", README)
+        self.assertIsNotNone(m, "the undeclared-constant sentence changed")
+        self.assertEqual(int(m.group(1)), len(GUARDS["undeclared"]))
+        self.assertEqual(int(m.group(2)), GUARDS["constants"])
+
+    def test_every_declared_guard_still_names_a_real_constant(self):
+        """A renamed or deleted threshold would otherwise leave the checker
+        reporting on something that no longer exists."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "guards", ROOT / "scripts" / "check_guards.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        src = (ROOT / "spot-on.py").read_text(encoding="utf-8")
+        present = mod.constants(src)
+        for name in mod.GUARDS:
+            self.assertIn(name, present, name + " is declared but not in the tool")
+        for name in mod.NOT_A_THRESHOLD:
+            self.assertIn(name, present, name + " is excused but not in the tool")
 
     def test_the_worklist_counts_match_their_source(self):
         m = re.search(r"written here, (\d+) distinct items across (\d+) runs: "

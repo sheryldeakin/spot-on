@@ -1,0 +1,175 @@
+{
+ "declared": 16,
+ "caught": 12,
+ "unguarded": [
+  "CASE_CHANGE",
+  "CASE_FLAT",
+  "CASE_MARKS",
+  "CASE_MIN_BAND"
+ ],
+ "constants": 76,
+ "undeclared": [
+  "ARG_SAFE_CHARS",
+  "ASKS_MAX",
+  "CMD_SHIM_LIMIT",
+  "COLOUR_FALLOFF",
+  "CONTENT_ACCEPT",
+  "CONTENT_FAR_W",
+  "CONTENT_GATE",
+  "CREATE_PROCESS_LIMIT",
+  "DELTA_E_VISIBLE",
+  "DISPUTE_WORDS",
+  "ELEMENT_BEHIND",
+  "ELEMENT_BUILT",
+  "ELEMENT_MIN",
+  "ELEMENT_MOVED",
+  "ELEMENT_TAIL",
+  "ELEMENT_TAIL_MIN",
+  "FILL_DELTA",
+  "FINDING_PENALTY",
+  "FIND_LIMIT",
+  "FIND_TIMEOUT",
+  "GIVE_UP_AFTER",
+  "HOLLOW_INK_GAP",
+  "ICON_FAMILY",
+  "ICON_MARGIN",
+  "ICON_NORM",
+  "ICON_READABLE",
+  "INK_ABOVE",
+  "INK_EDGE",
+  "INK_MIN_PIXELS",
+  "INK_MIN_WIDTH",
+  "INK_SHARE",
+  "INSIST_CANDIDATES",
+  "LAYOUT_TRUST",
+  "NEEDS_ARTWORK_SHARE",
+  "NEEDS_FONT_ROUNDS",
+  "NEEDS_FONT_WEAK",
+  "NEEDS_VERSION",
+  "PLATEAU_GAIN",
+  "PLATEAU_ROUNDS",
+  "PRESS_LIMIT",
+  "REPAIR_TOLERANCE",
+  "RESCORE_WITHIN",
+  "RESIDUAL_SCALE",
+  "RULE_SAME",
+  "UNEXPLAINED_BELOW",
+  "WORKLIST_MAX",
+  "WORKLIST_SAME",
+  "WORKLIST_WORDS"
+ ],
+ "rows": [
+  {
+   "constant": "CASE_CHANGE",
+   "target": "CapitalsAreNotAWiderBox",
+   "was": "0.25",
+   "moved_to": "0.01",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "CASE_FLAT",
+   "target": "CapitalsAreNotAWiderBox",
+   "was": "0.90",
+   "moved_to": "0.10",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "CASE_MARKS",
+   "target": "CapitalsAreNotAWiderBox",
+   "was": "1",
+   "moved_to": "99",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "CASE_MIN_BAND",
+   "target": "CapitalsAreNotAWiderBox",
+   "was": "10",
+   "moved_to": "3",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "DISPUTE_AFTER",
+   "target": "WhenTheRoundsSayTheReportIsWrong",
+   "was": "2",
+   "moved_to": "1",
+   "result": "caught"
+  },
+  {
+   "constant": "ICON_NAME",
+   "target": "WhatTheSetKnowsAboutOneWell",
+   "was": "0.92",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "ICON_PRESENT",
+   "target": "WhatTheSetKnowsAboutOneWell",
+   "was": "0.80",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "INK_CHROMA",
+   "target": "TextTheWrongColour",
+   "was": "12.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "RULE_CORNER",
+   "target": "LinesNothingElseCanSee",
+   "was": "14",
+   "moved_to": "400",
+   "result": "caught"
+  },
+  {
+   "constant": "RULE_RIDGE",
+   "target": "LinesNothingElseCanSee",
+   "was": "0.75",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "RULE_SHARE",
+   "target": "LinesNothingElseCanSee",
+   "was": "0.22",
+   "moved_to": "0.01",
+   "result": "caught"
+  },
+  {
+   "constant": "RULE_STEP",
+   "target": "LinesNothingElseCanSee",
+   "was": "10.0",
+   "moved_to": "0.5",
+   "result": "caught"
+  },
+  {
+   "constant": "RULE_THICK",
+   "target": "LinesNothingElseCanSee",
+   "was": "4",
+   "moved_to": "200",
+   "result": "caught"
+  },
+  {
+   "constant": "SHADOW_DEPTH",
+   "target": "ASoftShadowNothingElseCanSee",
+   "was": "8.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "SHADOW_REACH",
+   "target": "ASoftShadowNothingElseCanSee",
+   "was": "22",
+   "moved_to": "2",
+   "result": "caught"
+  },
+  {
+   "constant": "SHADOW_SPREAD",
+   "target": "ASoftShadowNothingElseCanSee",
+   "was": "4",
+   "moved_to": "0",
+   "result": "caught"
+  }
+ ]
+}

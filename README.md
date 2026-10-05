@@ -250,6 +250,12 @@ It prints the report, the change from the previous attempt, the best score so fa
 python -m unittest discover -s tests -v
 ```
 
+```
+python scripts/check_guards.py
+```
+
+Separately, because it edits the tool in place while it runs. Every detector here rests on a number somebody chose, and the project's rule is to prove a check can fail before trusting it, by moving the number and watching a test go red. Done by hand that goes stale: a threshold proved load-bearing in the morning stopped being so when a second guard was added in the afternoon, and nothing said. This moves each declared threshold and requires the class that guards it to fail. Of 16 declared, 12 are caught and 4 are not, all of them in the letter-case detector, where any one guard can be removed with every test still green and removing all four fails two. 48 of the 76 numeric constants in the tool are neither declared nor excused yet; the script lists them.
+
 Scoring, guards and geometry run anywhere. The server and screenshot tests need Chrome or Edge and are skipped without one. `tests/test_docs.py` fails if the calibration or demo tables in this README drift from the files the scripts generate.
 
 ### Checking a run that starts from nothing

@@ -3052,6 +3052,17 @@ class TextTheWrongColour(unittest.TestCase):
         self.assertEqual(self.findings(self.shot(self.page("#64748B")),
                                        self.shot(self.page("#64748B"))), [])
 
+    def test_a_hue_shift_too_small_to_see_is_not_a_fault(self):
+        """INK_CHROMA. Two slates a nudge apart are the same colour to anyone
+        looking at the page, and naming them spends a round on nothing. Found
+        unguarded by scripts/check_guards.py: the threshold could be moved to
+        zero and every test in this class still passed."""
+        self.assertEqual(self.findings(self.shot(self.page("#64748B")),
+                                       self.shot(self.page("#657590"))), [])
+        # And the real one still lands, so this is a floor rather than a mute.
+        self.assertTrue(self.findings(self.shot(self.page("#64748B")),
+                                      self.shot(self.page("#3D5A99"))))
+
     def test_it_becomes_a_pressable_fault(self):
         rep = {"elements": {"colour": [{"x": 10, "y": 570, "where": "left",
                                         "design": "#7CF2FD", "attempt": "#E6F8FF",
@@ -4721,6 +4732,22 @@ class LinesNothingElseCanSee(unittest.TestCase):
             attempt[26 + i, 40:340] = 240.0 - i * 2.0
         self.assertEqual(self.found(self.panel(self.blank()), attempt), [])
 
+    def test_an_edge_too_faint_to_be_drawn_is_not_a_line(self):
+        """RULE_STEP. A panel one level off its ground is not a keyline, and a
+        detector that calls it one puts a border on every soft boundary."""
+        g = self.blank()
+        g[150:152, 60:340] = 236.0          # 4 levels, below the threshold
+        self.assertEqual(self.found(g, self.blank()), [])
+        g[150:152, 60:340] = 110.0          # the same line, drawn
+        self.assertEqual(len(self.found(g, self.blank())), 1)
+
+    def test_a_line_too_short_to_be_a_rule_is_not_one(self):
+        """RULE_SHARE. Without a floor every underline, every dash and every edge
+        of every button is a keyline, and the page fills with them."""
+        g = self.blank()
+        g[150:152, 60:100] = 110.0          # 40px on a 400px page
+        self.assertEqual(self.found(g, self.blank()), [])
+
     def test_a_single_divider_is_named_as_a_line_not_an_outline(self):
         design = self.blank()
         design[150:152, 60:340] = 110.0
@@ -4899,6 +4926,12 @@ class ASoftShadowNothingElseCanSee(unittest.TestCase):
         self.assertEqual(self.found(self.page(), bordered), [])
         self.assertGreater(so._shadow_at(bordered, so._rules(bordered)[0])[0],
                            so._shadow_at(self.page(40.0), so._rules(self.page(40.0))[0])[0])
+
+    def test_a_shadow_too_faint_to_see_is_not_reported(self):
+        """SHADOW_DEPTH. Antialiasing and a soft background leave a level or two
+        beside every edge, and without a floor each one becomes a box-shadow."""
+        self.assertEqual(self.found(self.page(), self.page(3.0)), [])
+        self.assertEqual(len(self.found(self.page(), self.page(40.0))), 1)
 
     def test_the_finding_can_be_pressed_and_given_up_like_any_other(self):
         rep = {"elements": {"shadow": [{"side": "design", "x": 60, "y": 70, "w": 260,
