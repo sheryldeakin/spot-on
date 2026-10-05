@@ -2988,6 +2988,68 @@ class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
         self.assertEqual(so.SUPPLY_TYPES[".png"], "image")
 
 
+class TextTheWrongColour(unittest.TestCase):
+    """Noticed by eye, then measured, and the obvious version would have misfired.
+
+    Of 205 text runs differing by more than 10 of perceptual distance, 20 are mostly
+    lightness, which a heavier face moves on its own at the same declared colour.
+    Reporting those as a colour fault would duplicate the weight finding and send
+    rounds after the wrong thing, which is what the empty-container detector did for
+    twenty rounds. So this judges hue and chroma and ignores lightness.
+    """
+
+    def page(self, ink, weight="400", size=28):
+        return ("<div style=\"width:420px;height:120px;background:#FFFFFF\">"
+                "<div style=\"font:{w} {s}px Arial;color:{c};padding:30px\">"
+                "Read the privacy policy</div></div>").format(c=ink, w=weight, s=size)
+
+    def shot(self, html):
+        out = Path(tempfile.mkdtemp()) / "p.png"
+        return so.render_code(html, "html", 420, 120, out)
+
+    def findings(self, a, b):
+        ra = np.asarray(a.convert("RGB"), dtype=np.float64)
+        rb = np.asarray(b.convert("RGB"), dtype=np.float64)
+        ga, gb = so._gray(ra), so._gray(rb)
+        return so.compare_elements(ga, gb, rgb_ref=ra, rgb_att=rb)["colour"]
+
+    def test_a_different_hue_is_named_with_both_colours(self):
+        got = self.findings(self.shot(self.page("#64748B")),
+                            self.shot(self.page("#3D5A99")))
+        self.assertTrue(got, "a slate heading rendered indigo was not named")
+        said = so._colour_sentence(got[0])
+        self.assertIn("the wrong colour", said)
+        self.assertIn("#64748B", said.upper())
+        self.assertIn("not the font weight", said)
+
+    def test_the_same_colour_in_a_heavier_face_is_not_a_colour_fault(self):
+        # The confound. Both are #64748B; only the weight differs, and the weight
+        # has its own finding.
+        got = self.findings(self.shot(self.page("#64748B", weight="400")),
+                            self.shot(self.page("#64748B", weight="800")))
+        self.assertEqual(got, [], "a bolder face was reported as a colour change")
+
+    def test_the_same_colour_is_not_a_fault(self):
+        self.assertEqual(self.findings(self.shot(self.page("#64748B")),
+                                       self.shot(self.page("#64748B"))), [])
+
+    def test_it_becomes_a_pressable_fault(self):
+        rep = {"elements": {"colour": [{"x": 10, "y": 570, "where": "left",
+                                        "design": "#7CF2FD", "attempt": "#E6F8FF",
+                                        "chroma": 27.9, "gap": 17.2, "area": 900}]}}
+        self.assertIn(("ink", 11), so.problem_keys(rep))
+        self.assertEqual(so.stuck_phrase(("ink", 11)), "the text colour around y 550px")
+
+    def test_a_dot_the_detector_called_text_is_not_measured(self):
+        # The first survey of this was measuring a Discord tile and a brain drawing,
+        # because the detector labels any small box text.
+        tiny = {"kind": "text", "x": 0, "y": 0, "w": 14, "h": 9}
+        rgb = np.full((40, 40, 3), 255.0)
+        rgb[2:7, 2:12] = 0.0
+        self.assertEqual(
+            so._colour_findings([(tiny, tiny)], lambda v: v, (40, 40), rgb, rgb), [])
+
+
 class AGlyphFamilyWhenTheVariantIsACoinToss(unittest.TestCase):
     """The matcher knows it is a map pin and cannot say which kind.
 

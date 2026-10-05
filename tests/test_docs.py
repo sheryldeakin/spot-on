@@ -30,6 +30,7 @@ TRIAL = json.loads((ROOT / "scripts" / "match-trial.json").read_text(encoding="u
 ICONS = json.loads((ROOT / "scripts" / "icon-trial.json").read_text(encoding="utf-8"))
 ICONS_REAL = json.loads((ROOT / "scripts" / "icon-real.json").read_text(encoding="utf-8"))
 FONTS = json.loads((ROOT / "scripts" / "font-changes.json").read_text(encoding="utf-8"))
+INK = json.loads((ROOT / "scripts" / "ink-colour-survey.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -203,6 +204,21 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(float(m.group(4)), max(a["absent_named_pct"] for a in arms))
         self.assertEqual(float(m.group(5)), min(a["right_pct"] for a in arms))
         self.assertEqual(float(m.group(6)), max(a["right_pct"] for a in arms))
+
+    def test_the_text_colour_numbers_match_their_source(self):
+        m = re.search(r"Across (\d+) text runs on best attempts, (\d+) differ by more "
+                      r"than 10", README)
+        self.assertIsNotNone(m, "the text-colour sentence changed")
+        self.assertEqual(int(m.group(1)), INK["text_elements"])
+        self.assertEqual(int(m.group(2)), INK["over_10"])
+        m = re.search(r"(\d+) are mostly lightness, (\d+) are mostly hue or chroma, "
+                      r"(\d+) are mixed", README)
+        self.assertIsNotNone(m, "the lightness split sentence changed")
+        self.assertEqual(int(m.group(1)), INK["over_10_mostly_lightness"])
+        self.assertEqual(int(m.group(2)), INK["over_10_mostly_colour"])
+        self.assertEqual(int(m.group(3)), INK["over_10_mixed"])
+        # The split is the whole reason the finding is built on chroma.
+        self.assertGreater(INK["over_10_mostly_colour"], INK["over_10_mostly_lightness"])
 
     def test_the_font_change_numbers_match_their_source(self):
         """These were read off a top-six list printed in a throwaway command and two

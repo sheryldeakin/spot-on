@@ -820,7 +820,8 @@ def _glyph_check(g_ref, g_att, matched):
             "median": round(float(np.median(scores)), 3)}
 
 
-def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
+def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None,
+                     rgb_ref=None, rgb_att=None):
     """Element-level differences in CSS pixels, grouped and ordered by how much they matter.
 
     Page-wide numbers stop helping once a page is close: they say the structure is
@@ -916,6 +917,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None):
             "alignment": _alignment(matched, css),
             "emphasis": _emphasis_findings(matched, css, size),
             "hollow": _hollow(matched, css, size, limit=8, g_ref=g_ref),
+            "colour": _colour_findings(matched, css, size, rgb_ref, rgb_att),
             "fill": _fill_findings(matched, css, size)}
 
 
@@ -1101,6 +1103,12 @@ def _hollow(matched, css, size, limit=2, g_ref=None):
     merged.sort(key=lambda f: -f["score"])
     return merged[:limit]
 
+
+INK_SHARE = 0.04         # the core of a stroke; wider pulls in the antialiased edge
+INK_MIN_PIXELS = 24
+INK_MIN_WIDTH = 60       # a text run, not a dot the detector called text
+INK_CHROMA = 12.0        # hue and chroma distance before the colour is called wrong
+INK_FOUND = 2            # how many are named
 
 HOLLOW_NAMED = 10
 
@@ -1354,6 +1362,69 @@ def _emphasis_sentence(f):
     return _EMPHASIS_WORDING[f["prop"]].format(**f)
 
 
+def _rgb_hex(c):
+    return "#{:02X}{:02X}{:02X}".format(*[max(0, min(255, int(round(v)))) for v in c])
+
+
+def _ink_colour(rgb, el):
+    """The colour of the stroke itself, taken from its core.
+
+    Not the mean of the box, which is mostly background, and not a wide share of it,
+    which is the antialiased edge blending towards whatever is behind: both move with
+    the typeface instead of with the colour.
+    """
+    y0, x0 = max(0, el["y"]), max(0, el["x"])
+    crop = rgb[y0:el["y"] + el["h"], x0:el["x"] + el["w"]]
+    if crop.size < INK_MIN_PIXELS * 3:
+        return None
+    flat = crop.reshape(-1, 3)
+    border = np.concatenate([crop[0], crop[-1], crop[:, 0], crop[:, -1]])
+    ground = np.median(border, axis=0)
+    far = np.abs(flat - ground).sum(axis=1)
+    keep = max(INK_MIN_PIXELS, int(len(flat) * INK_SHARE))
+    idx = np.argsort(-far)[:keep]
+    if float(far[idx].mean()) < 30:
+        return None
+    return flat[idx].mean(axis=0)
+
+
+def _colour_findings(matched, css, size, rgb_ref, rgb_att, limit=INK_FOUND):
+    """Text whose ink is a different colour, judged on hue and chroma only.
+
+    Lightness is left out on purpose. A bolder face at the same declared colour reads
+    darker here, and the weight is already its own finding, so a gap in lightness is
+    not evidence that anything about the colour is wrong.
+    """
+    if rgb_ref is None or rgb_att is None:
+        return []
+    out = []
+    for d, a in matched:
+        if d["kind"] != "text" or d["w"] < INK_MIN_WIDTH or d["h"] < 10:
+            continue
+        if d["w"] < d["h"] * 2:          # a block, not a line of type
+            continue
+        cd, ca = _ink_colour(rgb_ref, d), _ink_colour(rgb_att, a)
+        if cd is None or ca is None:
+            continue
+        ld, la = _srgb_to_lab(cd.astype(np.float64)), _srgb_to_lab(ca.astype(np.float64))
+        chroma = float(((ld[1] - la[1]) ** 2 + (ld[2] - la[2]) ** 2) ** 0.5)
+        if chroma < INK_CHROMA:
+            continue
+        out.append({"x": css(d["x"]), "y": css(d["y"]), "where": _where(d, size),
+                    "design": _rgb_hex(cd), "attempt": _rgb_hex(ca),
+                    "chroma": round(chroma, 1),
+                    "gap": round(_lab_gap(cd, ca), 1),
+                    "area": d["w"] * d["h"]})
+    out.sort(key=lambda f: -(f["chroma"] * f["area"]))
+    return out[:limit]
+
+
+def _colour_sentence(f):
+    return ("The text at x {x}, y {y} (the {where} of the page) is the wrong colour: the "
+            "design draws it {design} and the attempt draws it {attempt}. Judged on hue "
+            "rather than on how dark it looks, so this is not the font weight.".format(**f))
+
+
 def _type_findings(matched, css, size, limit=2):
     """Where the type itself differs, named as the property that sets it."""
     out = []
@@ -1451,6 +1522,8 @@ def problem_keys(report):
     # empty containers for twenty rounds and never once be told it had been asked
     # already. Keyed without a count, so the fault is the same fault while any of it
     # remains and stops being named the moment the last box is filled.
+    for f in els.get("colour") or []:
+        keys.add(("ink", f["y"] // 50))
     if els.get("hollow"):
         keys.add(("hollow",))
     if els.get("fill"):
@@ -1510,6 +1583,8 @@ def stuck_phrase(key):
     if kind == "element":
         what = ", ".join(key[3]) or "position"
         return "the {} around y {}px ({})".format(key[1], key[2] * 50, what)
+    if kind == "ink":
+        return "the text colour around y {}px".format(key[1] * 50)
     if kind == "hollow":
         return "the containers drawn empty"
     if kind == "fill":
@@ -1953,7 +2028,8 @@ def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=Non
     report["offsets"] = off
     shift_css = (off["vertical"] or {}).get("css_shift", 0)
     try:
-        report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css, how=how)
+        report["elements"] = compare_elements(g_ref, g_att, px_per_css, shift_css, how=how,
+                                              rgb_ref=ref, rgb_att=att)
         every_element = _element_scores(
             ref_img, att_img, g_ref, g_att, px_per_css, how=how, limit=None)
         report["element_scores"] = every_element[:ELEMENT_SCORES]
@@ -2418,6 +2494,7 @@ PROBLEM_HEADLINES = [
     (r"(is|are) the right size in the right place but empty", "Container left empty"),
     (r"The palette is off by", "Colours slightly off"),
     (r"panels are the wrong shade", "Panels the wrong alpha"),
+    (r"is the wrong colour: the design draws it", "Text the wrong colour"),
     (r"That is font-size", "Text the wrong size"),
     (r"That is font-weight", "Text the wrong weight"),
     (r"That is font-style", "Text slanted wrongly"),
@@ -2606,7 +2683,9 @@ def _problems(report):
     out.extend(_type_sentence(f) for f in type_findings)
     emphasis_findings = els.get("emphasis") or []
     out.extend(_emphasis_sentence(f) for f in emphasis_findings)
-    if type_findings or emphasis_findings:
+    colour_findings = els.get("colour") or []
+    out.extend(_colour_sentence(f) for f in colour_findings)
+    if type_findings or emphasis_findings or colour_findings:
         said.add("type")
     # Alignment before the individual elements too: a ragged column is one container,
     # and naming it here stops the list below repeating it once per element.
