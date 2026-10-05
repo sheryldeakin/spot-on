@@ -10,35 +10,17 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   filling with restatements again. "items 14 and 15" and "the 10-item and 4-item row
   pitch" are one job with no words in common. The schema now asks rounds to reuse an
   earlier wording, which is unmeasured.
-- **The findings tie-break is off by default** (`SPOT_ON_REPAIR`). Size: medium.
-  Trigger: ready to run. Both selection paths now record what they did
-  (`selection` and `base_selection` on each attempt), so a trial can ask the data
-  whether the mechanism fired. A survey of what is already on disk
-  (`scripts/tiebreak_survey.py`) says it is not rare: across 136 rounds with more
-  than one candidate it could act on 44 and would change the pick on 22. Subjects
-  with both headroom and ties are `bl-with` (74.2, changes 2 of 3 chances) and
-  `cmarix` (79.6); the 96-point runs tie constantly but have nowhere to climb.
-  What is still unknown is whether the changed pick ends the run higher, which
-  needs two arms on one seed: `scripts/ab_trial.py` is the harness, and it refuses
-  a seed that cannot show the effect. The right seed is hud-concept attempt 1,
-  because the chances and the headroom have to coincide and mostly they do not:
-  rounds the tie-break could act on have a median of 0.15 left to gain against 0.45
-  for the rest, since candidates only cluster once a page nears its ceiling. Thirteen
-  of the 44 chances had 1.0 or more still to gain and every one of them is hud-concept
-  climbing from 69.6 to 72.1, which is where to seed.
-
-## Guards that exist because a written rule did not hold
-
-- **Stray control characters are a test, not a warning.** `tests/test_docs.py` scans
-  every tracked text file. A shell heredoc collapses a doubled backslash, so a patch
-  written that way puts a real backspace where the source said `\b`; it parses, it
-  runs, and the regex quietly stops matching. Three times in one session, in a repo
-  whose CLAUDE.md warns about it. The silent class is exactly `\a \b \f \v \0`;
-  the rest either survive or fail loudly.
-- **A round is run through `scripts/round.py`, which proves it happened.** It records
-  the attempts before, and exits non-zero unless a new one exists after. A round was
-  once dispatched in a way that died on startup, the wrapper exited 0, and it was
-  reported as having run; the newest attempt file was two hours old.
+- **The findings tie-break stays off, and one trial did not settle it.** Size:
+  medium. Trigger: enough appetite to run several seeds per arm. Two arms on
+  hud-concept attempt 1, four rounds, three candidates, 24 minutes
+  (`scripts/ab_trial.py`, output in `scripts/ab-tb.json`). The mechanism fires
+  reliably when it can, 2 of 2 chances, and costs almost nothing in fidelity, 0.1
+  and 0.2. The arm with it on ended 1.5 lower, 72.0 against 73.5, and that number
+  cannot be attributed to it: the arms had already diverged by 0.7 in round one,
+  where the mechanism could not act at all, and one run per arm says nothing about
+  model noise. What a real answer needs is several seeds per arm, which is hours of
+  model time, so the honest position is that it is cheap, it works as designed, and
+  nobody knows whether it helps.
 
 - **Whether narrowing `blocked` worked is unmeasured.** Size: small. Trigger: the
   next run where a command is refused or a library will not load. Its examples used

@@ -2143,15 +2143,20 @@ def _penalty_of(att):
     return ((att.get("report") or {}).get("penalty")) or 0.0
 
 
-def selection_note(records, chosen, floor=None):
+def selection_note(records, chosen, plain, floor=None):
     """What the tie-break did here, as a record rather than as a count.
 
     Written by both places that select, so a trial can ask "did it fire" of the data
     instead of of a counter that only one path increments.
+
+    `plain` is what that caller would have picked on fidelity alone, and the caller
+    passes it rather than this working it out, because the two callers break an exact
+    fidelity tie differently: one keeps the first, the other the highest numbered.
+    Computing it here one way made an exact tie look like the tie-break reordering
+    something, and the arm with the mechanism off duly reported that it had acted.
     """
     if len(records) < 2:
         return None
-    plain = max(records, key=rank_of)
     note = {"on": bool(REPAIR_SELECTION), "candidates": len(records),
             "fidelity_pick": plain["n"], "chosen": chosen["n"],
             "acted": chosen["n"] != plain["n"],
@@ -3319,7 +3324,8 @@ def iteration_base(history, slug=None):
         best = min(band, key=lambda a: (_penalty_of(a), -rank_of(a), -a["n"]))
     # The second place the tie-break acts. A trial once watched only the other one
     # and could not say whether the thing under test had fired at all.
-    iteration_base.last_note = selection_note(history, best)
+    iteration_base.last_note = selection_note(
+        history, best, max(history, key=lambda a: (rank_of(a), a["n"])))
     latest = history[-1]
     if slug is not None:
         best = refresh_report(slug, best)
@@ -4171,7 +4177,8 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     floor = _load_run(slug).get("best_match")
     best = choose_attempt(records, floor=floor)
     best["candidate_scores"] = [r["match"] for r in records]
-    best["selection"] = selection_note(records, best, floor=floor)
+    best["selection"] = selection_note(records, best, max(records, key=rank_of),
+                                       floor=floor)
     best["base_selection"] = getattr(iteration_base, "last_note", None)
     # What the round was pressed on, and whether it moved. This is the part the page
     # and the command line show: a fault that survives a round it was named in is the

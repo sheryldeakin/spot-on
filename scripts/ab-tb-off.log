@@ -1,0 +1,7 @@
+round 1 attempt 4 match 70.2
+round 2 attempt 7 match 73.3
+round 3 attempt 9 match 73.5
+round 4 attempt 16 match 73.5
+RESULT [{"n": 4, "match": 70.2, "selection": {"on": false, "candidates": 3, "fidelity_pick": 4, "chosen": 4, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": false}, "base_selection": null}, {"n": 7, "match": 73.3, "selection": {"on": false, "candidates": 3, "fidelity_pick": 7, "chosen": 7, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": true}, "base_selection": {"on": false, "candidates": 4, "fidelity_pick": 4, "chosen": 4, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": false}}, {"n": 9, "match": 73.5, "selection": {"on": false, "candidates": 3, "fidelity_pick": 9, "chosen": 9, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": true}, "base_selection": {"on": false, "candidates": 8, "fidelity_pick": 7, "chosen": 7, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": true}}, {"n": 16, "match": 73.5, "selection": null, "base_selection": {"on": false, "candidates": 15, "fidelity_pick": 9, "chosen": 15, "acted": true, "gave_up": 0.0, "penalty_saved": 0.165, "could_have": true}}]
+
+--- stderr ---

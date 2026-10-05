@@ -3070,7 +3070,8 @@ class BothSelectionPathsSayWhatTheyDid(unittest.TestCase):
         recs = [self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]
         with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
         pick = with_repair.choose_attempt(recs)
-        note = with_repair.selection_note(recs, pick)
+        note = with_repair.selection_note(recs, pick,
+                                          max(recs, key=with_repair.rank_of))
         self.assertTrue(note["acted"])
         self.assertTrue(note["could_have"])
         self.assertEqual(note["fidelity_pick"], 5)
@@ -3083,20 +3084,23 @@ class BothSelectionPathsSayWhatTheyDid(unittest.TestCase):
         # cannot fire where the candidates differ by 12 to 24 points.
         recs = [self.att(5, 80.0, 1.2), self.att(6, 74.0, 0.0)]
         with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
-        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs))
+        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs),
+                                          max(recs, key=with_repair.rank_of))
         self.assertFalse(note["acted"])
         self.assertFalse(note["could_have"])
 
     def test_equal_penalties_are_not_an_opportunity_either(self):
         recs = [self.att(5, 80.0, 0.5), self.att(6, 79.8, 0.5)]
         with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
-        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs))
+        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs),
+                                          max(recs, key=with_repair.rank_of))
         self.assertFalse(note["could_have"])
 
     def test_it_says_whether_the_mechanism_was_even_on(self):
         recs = [self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]
         off = load_tool({"SPOT_ON_REPAIR": ""})
-        note = off.selection_note(recs, off.choose_attempt(recs))
+        note = off.selection_note(recs, off.choose_attempt(recs),
+                                  max(recs, key=off.rank_of))
         self.assertFalse(note["on"])
         self.assertFalse(note["acted"])
         # Still reports that the chance was there, which is what makes an arm with
@@ -3104,8 +3108,40 @@ class BothSelectionPathsSayWhatTheyDid(unittest.TestCase):
         self.assertTrue(note["could_have"])
 
     def test_one_candidate_has_nothing_to_say(self):
-        self.assertIsNone(so.selection_note([self.att(5, 80.0, 0.0)],
-                                            self.att(5, 80.0, 0.0)))
+        one = self.att(5, 80.0, 0.0)
+        self.assertIsNone(so.selection_note([one], one, one))
+
+    def test_an_arm_with_the_mechanism_off_can_never_report_acting(self):
+        """Caught by the trial this instrumentation was built for.
+
+        The two callers break an exact fidelity tie differently: choose_attempt keeps
+        the first, iteration_base the highest numbered. The note computed its own
+        baseline one way and compared it against both, so an exact tie looked like
+        the tie-break reordering something, and the off arm reported a firing that
+        could not have happened. Recording whether the mechanism was ON beside
+        whether it ACTED is what made the contradiction visible.
+        """
+        tie = [self.att(1, 70.0, 0.0), self.att(5, 73.5, 0.5), self.att(9, 73.5, 0.2)]
+        off = load_tool({"SPOT_ON_REPAIR": ""})
+        off.iteration_base(tie)
+        note = off.iteration_base.last_note
+        self.assertFalse(note["on"])
+        self.assertFalse(note["acted"], "an exact tie is not the tie-break acting")
+        self.assertTrue(note["could_have"])
+
+    def test_it_still_reports_acting_when_the_pick_really_moves(self):
+        near = [self.att(1, 70.0, 0.0), self.att(5, 73.5, 0.5), self.att(9, 73.3, 0.2)]
+        on = load_tool({"SPOT_ON_REPAIR": "1"})
+        base, _ = on.iteration_base(near)
+        note = on.iteration_base.last_note
+        self.assertEqual(base["n"], 9)
+        self.assertTrue(note["acted"])
+        self.assertAlmostEqual(note["gave_up"], 0.2, places=3)
+        # And the same history with the mechanism off keeps the higher fidelity.
+        off = load_tool({"SPOT_ON_REPAIR": ""})
+        base_off, _ = off.iteration_base(near)
+        self.assertEqual(base_off["n"], 5)
+        self.assertFalse(off.iteration_base.last_note["acted"])
 
     def test_the_between_round_pick_is_recorded_too(self):
         hist = [self.att(1, 70.0, 0.0), self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]

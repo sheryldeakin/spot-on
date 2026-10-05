@@ -1,0 +1,7 @@
+round 1 attempt 2 match 69.5
+round 2 attempt 7 match 70.8
+round 3 attempt 12 match 71.8
+round 4 attempt 16 match 71.8
+RESULT [{"n": 2, "match": 69.5, "selection": {"on": true, "candidates": 3, "fidelity_pick": 2, "chosen": 2, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": false}, "base_selection": null}, {"n": 7, "match": 70.8, "selection": {"on": true, "candidates": 3, "fidelity_pick": 7, "chosen": 7, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": false}, "base_selection": {"on": true, "candidates": 4, "fidelity_pick": 2, "chosen": 2, "acted": false, "gave_up": 0.0, "penalty_saved": 0.0, "could_have": false}}, {"n": 12, "match": 71.8, "selection": null, "base_selection": {"on": true, "candidates": 11, "fidelity_pick": 11, "chosen": 9, "acted": true, "gave_up": 0.1, "penalty_saved": 0.032, "could_have": true}}, {"n": 16, "match": 71.8, "selection": null, "base_selection": {"on": true, "candidates": 15, "fidelity_pick": 13, "chosen": 15, "acted": true, "gave_up": 0.2, "penalty_saved": 0.137, "could_have": true}}]
+
+--- stderr ---
