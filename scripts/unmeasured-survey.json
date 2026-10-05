@@ -1,6 +1,6 @@
 {
  "cases": 12,
- "unnamed": 5,
+ "unnamed": 2,
  "rows": [
   {
    "property": "text colour",
@@ -35,7 +35,7 @@
   },
   {
    "property": "corner radius",
-   "match": 99.5,
+   "match": 99.2,
    "named": false,
    "matched_words": [],
    "problems": 2,
@@ -44,18 +44,23 @@
   {
    "property": "border added",
    "match": 64.1,
-   "named": false,
-   "matched_words": [],
-   "problems": 5,
-   "first": "The 404x16px text at x 51, y 92 (upper middle, centre left of the page) scores 49.4 where the design puts it b"
+   "named": true,
+   "matched_words": [
+    "border",
+    "outline"
+   ],
+   "problems": 6,
+   "first": "The attempt draws an outline around the 446x124px area at x 35, y 35 (the upper middle, centre left of the pag"
   },
   {
    "property": "drop shadow added",
    "match": 76.5,
-   "named": false,
-   "matched_words": [],
-   "problems": 4,
-   "first": "The silhouette is off: 22% of the drawn area overlaps the design. The design covers 8.1% of the page, the atte"
+   "named": true,
+   "matched_words": [
+    "shadow"
+   ],
+   "problems": 5,
+   "first": "The attempt draws a soft shadow around the 448x114px panel at x 35, y 43 (the upper middle, centre left of the"
   },
   {
    "property": "text alignment",
@@ -70,10 +75,13 @@
   {
    "property": "letter case",
    "match": 96.1,
-   "named": false,
-   "matched_words": [],
-   "problems": 2,
-   "first": "The box at x 50, y 113 (101x37px, the upper middle, left of the page) is about 17% wider (118px against 101px)"
+   "named": true,
+   "matched_words": [
+    "case",
+    "capital"
+   ],
+   "problems": 3,
+   "first": "The text at x 68, y 125 (65x13px, the upper middle, left of the page) is set in mixed case in the design and i"
   },
   {
    "property": "letter spacing",

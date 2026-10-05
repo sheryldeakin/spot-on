@@ -32,6 +32,7 @@ ICONS_REAL = json.loads((ROOT / "scripts" / "icon-real.json").read_text(encoding
 FONTS = json.loads((ROOT / "scripts" / "font-changes.json").read_text(encoding="utf-8"))
 INK = json.loads((ROOT / "scripts" / "ink-colour-survey.json").read_text(encoding="utf-8"))
 SCRATCH = json.loads((ROOT / "scripts" / "from-scratch.json").read_text(encoding="utf-8"))
+UNNAMED = json.loads((ROOT / "scripts" / "unmeasured-survey.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -220,6 +221,24 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(3)), INK["over_10_mixed"])
         # The split is the whole reason the finding is built on chroma.
         self.assertGreater(INK["over_10_mostly_colour"], INK["over_10_mostly_lightness"])
+
+    def test_the_unnamed_property_costs_match_their_source(self):
+        """What a border, a shadow and the wrong case cost, each read off the pair
+        of pages that differ only in that one thing."""
+        rows = {r["property"]: r for r in UNNAMED["rows"]}
+        for name, pattern in (
+                ("border added", r"a border drawn around one cost ([\d.]+) points"),
+                ("drop shadow added", r"a drop shadow cost ([\d.]+) while"),
+                ("letter case", r"Continue costs ([\d.]+) points")):
+            m = re.search(pattern, README)
+            self.assertIsNotNone(m, "the sentence for " + name + " changed")
+            self.assertAlmostEqual(float(m.group(1)), 100.0 - rows[name]["match"],
+                                   places=1, msg=name)
+            # And the claim that it is named now is the survey's to make.
+            self.assertTrue(rows[name]["named"], name)
+        m = re.search(r"(\w+) of twelve went unnamed", README)
+        self.assertIsNotNone(m, "the unnamed count sentence changed")
+        self.assertEqual(len(UNNAMED["rows"]), 12)
 
     def test_the_from_scratch_rounds_match_their_source(self):
         """Which round each thing first reaches a prompt in. A sentence saying the

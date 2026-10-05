@@ -1,5 +1,5 @@
 {
- "scorer_version": 8,
+ "scorer_version": 11,
  "first_match": 54.4,
  "first_problems": [
   "From about 108px down (the upper middle of the page), content sits about 36px lower than in the design. Something above that point is missing, extra or the wrong height. Fix that first: most of the error below it follows from this one shift.",
@@ -37,23 +37,21 @@
    "stuck": [
     [
      [
-      "type",
-      "weight",
-      0
-     ],
-     1
-    ],
-    [
-     [
-      "spacing",
-      1
-     ],
-     1
-    ],
-    [
-     [
       "colour",
       "palette"
+     ],
+     1
+    ],
+    [
+     [
+      "hollow"
+     ],
+     1
+    ],
+    [
+     [
+      "ink",
+      1
      ],
      1
     ],
@@ -81,7 +79,23 @@
     ],
     [
      [
-      "hollow"
+      "shift",
+      "vertical"
+     ],
+     1
+    ],
+    [
+     [
+      "spacing",
+      1
+     ],
+     1
+    ],
+    [
+     [
+      "type",
+      "weight",
+      0
      ],
      1
     ],
@@ -93,20 +107,6 @@
       [
        "missing"
       ]
-     ],
-     1
-    ],
-    [
-     [
-      "shift",
-      "vertical"
-     ],
-     1
-    ],
-    [
-     [
-      "ink",
-      1
      ],
      1
     ]
@@ -127,21 +127,6 @@
    "stuck": [
     [
      [
-      "type",
-      "weight",
-      0
-     ],
-     2
-    ],
-    [
-     [
-      "spacing",
-      1
-     ],
-     2
-    ],
-    [
-     [
       "colour",
       "palette"
      ],
@@ -155,6 +140,13 @@
     ],
     [
      [
+      "ink",
+      1
+     ],
+     2
+    ],
+    [
+     [
       "shift",
       "vertical"
      ],
@@ -162,8 +154,16 @@
     ],
     [
      [
-      "ink",
+      "spacing",
       1
+     ],
+     2
+    ],
+    [
+     [
+      "type",
+      "weight",
+      0
      ],
      2
     ]
@@ -184,22 +184,14 @@
    "stuck": [
     [
      [
-      "type",
-      "weight",
-      0
-     ],
-     4
-    ],
-    [
-     [
-      "spacing",
-      1
-     ],
-     4
-    ],
-    [
-     [
       "hollow"
+     ],
+     4
+    ],
+    [
+     [
+      "ink",
+      1
      ],
      4
     ],
@@ -212,8 +204,16 @@
     ],
     [
      [
-      "ink",
+      "spacing",
       1
+     ],
+     4
+    ],
+    [
+     [
+      "type",
+      "weight",
+      0
      ],
      4
     ]
@@ -242,14 +242,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      5
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      5
     ],
@@ -285,14 +285,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      6
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      6
     ]
@@ -321,14 +321,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      6
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      6
     ]
@@ -357,14 +357,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      6
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      6
     ]
@@ -393,14 +393,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      6
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      6
     ]
@@ -429,14 +429,14 @@
     ],
     [
      [
-      "ink",
-      1
+      "hollow"
      ],
      6
     ],
     [
      [
-      "hollow"
+      "ink",
+      1
      ],
      6
     ]

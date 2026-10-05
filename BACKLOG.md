@@ -30,19 +30,30 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   assets"), which the needs list owns. From zero correct uses before, so the
   narrowing worked; it did not fully land.
 
-- **Five visible things the report still cannot name.** Size: small each, medium
-  together. Trigger: a run where one of them is the fault. Found by building pairs
-  of pages that differ in exactly one property and asking whether any sentence names
-  what changed (`scripts/unmeasured_survey.py`). A border added costs 35.9 points
-  and the report talks about a text element scoring low; a drop shadow costs 23.5
-  and it talks about the silhouette; panel opacity costs 12.3 and it says only that
-  the palette is off somewhere. Letter case is the odd one: it costs 3.9 and is
-  actively misattributed, reported as a box 17% wider rather than as CONTINUE
-  against Continue, which sends a round after the width. Corner radius costs 0.5
-  and is not worth a line. Border and shadow first, then case for the
-  misattribution rather than for the score.
+- **One panel at the wrong alpha is still only "the palette is off".** Size: small.
+  Trigger: a run where a single translucent panel is the fault. The other four of the
+  five unnamed properties are closed; this one is left because the reason is narrow.
+  `_fill_findings` wants two panels wrong the same way, deliberately, since one panel
+  off is that panel and four off is the fill rule behind them. But the survey page has
+  one card and it is not an element at all, being white on near-white, so nothing is
+  measured and the page-wide palette line is all that fires: 12.3 points, and no
+  sentence saying where. Border and shadow were closed by measuring off the page
+  instead of off an element, and the same move would work here: a large contiguous
+  area whose brightness differs by a near-constant amount. Corner radius is the fifth
+  and stays unnamed on purpose: 0.5 points, which is not worth a line.
 
 ## Deliberate limits
+
+- **The letter-case reading cannot tell capitals from different words.** It measures
+  where the ink sits between the cap line and the baseline, and setting other words
+  there moves it the same way: measured, "ocean nurse" reads 1.02 and "summer our"
+  1.19, both above CONTINUE at 1.10, because a word with no ascenders fills its band
+  evenly too. Comparing design against attempt cancels most of it, since the same
+  words read the same on both sides, and the glyph-group count has to match within
+  one. What is left is a rebuild that used the wrong words, so the sentence names
+  both readings rather than asserting the one it cannot prove. It also says nothing
+  below a band of 10 rows, about 13px of type, where the reading is coarse: a real
+  case change at 9px was measured and is deliberately not reported.
 
 - **A dispute needs two rounds to agree before it is repeated to anyone.** One round
   saying a fault is not there is an opinion, and models are agreeable enough that

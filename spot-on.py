@@ -909,6 +909,7 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None,
         a["ink_inside"] = _interior_ink(g_att, a)
         d["fill"], a["fill"] = _fill_level(g_ref, d), _fill_level(g_att, a)
 
+    lines_ref, lines_att = _rules(g_ref), _rules(g_att)
     return {"design_count": len(design), "attempt_count": len(attempt), "matched": len(matched),
             "groups": groups, "glyph": _glyph_check(g_ref, g_att, matched),
             "spacing": _spacing_gaps(matched, css, size),
@@ -916,9 +917,337 @@ def compare_elements(g_ref, g_att, px_per_css=1.0, shift_css=0, how=None,
             "type": _type_findings(matched, css, size),
             "alignment": _alignment(matched, css),
             "emphasis": _emphasis_findings(matched, css, size),
+            "case": _case_findings(matched, g_ref, g_att, css, size),
             "hollow": _hollow(matched, css, size, limit=8, g_ref=g_ref),
             "colour": _colour_findings(matched, css, size, rgb_ref, rgb_att),
-            "fill": _fill_findings(matched, css, size)}
+            "fill": _fill_findings(matched, css, size),
+            # One pass over the page finds the lines; both findings read them.
+            "rules": _rule_findings(g_ref, g_att, css, size, lines_ref, lines_att),
+            "shadow": _shadow_findings(g_ref, g_att, lines_ref, lines_att, css, size)}
+
+
+RULE_STEP = 10.0      # levels across an edge before it counts as a drawn line
+RULE_SHARE = 0.22     # of the page side: shorter than this is not a rule
+RULE_SAME = 6         # px: a line that moved this far is the same line
+RULE_THICK = 4        # px: two parallel edges this close are one stroke's two sides
+RULE_CORNER = 14      # px: ends this close count as meeting
+RULE_REACH = 6        # px: how far either side of a line its profile is read
+RULE_RIDGE = 0.75     # how far the profile must come back before it is a stroke
+RULE_FOUND = 2
+
+
+def _long_runs(mask, min_len):
+    """Every run of True at least min_len long, as (row, start, length).
+
+    Vectorised because this runs over every row and every column of the page, and the
+    obvious loop costs more than the deep score it would be added to.
+    """
+    pad = np.zeros((mask.shape[0], 1), bool)
+    edges = np.diff(np.hstack([pad, mask, pad]).astype(np.int8), axis=1)
+    rows, starts = np.nonzero(edges == 1)
+    _, ends = np.nonzero(edges == -1)
+    lengths = ends - starts
+    keep = lengths >= min_len
+    return rows[keep], starts[keep], lengths[keep]
+
+
+def _rules(g, step=RULE_STEP, share=RULE_SHARE):
+    """Long straight edges: borders, dividers, table rules, keylines.
+
+    These are invisible to everything else here. A card is white on near-white and
+    carries too little contrast to be ink, so `_elements` never sees it and a border
+    drawn around it belongs to no element. Measured on a page whose only difference
+    was a 2px outline, the score fell 35.9 and the report talked about a text element
+    scoring low, because the outline had nowhere to be reported.
+
+    A line is found as a long run of strong gradient across one row or one column,
+    which is what a drawn rule is, and the two sides of a stroke are merged so a 2px
+    border is one line rather than two. Each one is then marked a stroke or not, which
+    is the part that decides whether it can be reported at all: see `_rule_ridge`.
+    """
+    h, w = g.shape
+    out = []
+    # A horizontal line is a long run along x in one row of the across-rows gradient;
+    # a vertical one is the same thing transposed. `pos` is the row or the column the
+    # line sits on, `start` is where it begins along the other axis.
+    for tag, mask, span in (
+            ("h", np.abs(np.diff(g, axis=0)) >= step, w),
+            ("v", (np.abs(np.diff(g, axis=1)) >= step).T, h)):
+        pos, start, length = _long_runs(mask, max(8, int(span * share)))
+        out.extend({"o": tag, "pos": int(p), "start": int(s), "len": int(n)}
+                   for p, s, n in zip(pos, start, length))
+    out = [_stroke_part(g, r) for r in _merge_rules(out)]
+    return [r for r in out if r is not None]
+
+
+def _stroke_part(g, r, reach=RULE_REACH, share=RULE_SHARE):
+    """Trim a line to the part of it that is a stroke, and say whether any is.
+
+    Crossing a stroke the page goes ground, dark, ground: it comes back. Crossing the
+    edge of a panel it goes ground, interior, and stays. That difference is the whole
+    reason this can be reported at all, because almost everything that moves a panel
+    edge also makes a long straight gradient: measured on the survey pages, a changed
+    card fill, a changed padding and an added drop shadow each produced one, and only
+    the border was a stroke. Three wrong out of four, each sending a round after a
+    border that was never the fault.
+
+    Measured per column rather than once for the line, because two unrelated edges
+    can share a row. On the survey page a collapsed margin puts a full-width edge on
+    the same row as the card's top border, and read as a whole the line came back
+    520px wide starting at x 0, for a border that is 448px wide starting at x 36.
+    """
+    lo, hi = r["pos"] - reach, r["pos"] + reach + 2
+    if r["o"] == "h":
+        if lo < 0 or hi > g.shape[0]:
+            return None
+        band = g[lo:hi, r["start"]:r["start"] + r["len"]]
+    else:
+        if lo < 0 or hi > g.shape[1]:
+            return None
+        band = g[r["start"]:r["start"] + r["len"], lo:hi].T
+    if band.shape[0] < 4 or band.shape[1] < 1:
+        return None
+    before, after = band[0], band[-1]
+    middle = (before + after) / 2.0
+    high, low = band.max(axis=0), band.min(axis=0)
+    peak = np.where(np.abs(high - middle) > np.abs(low - middle), high, low)
+    went, came = np.abs(peak - before), np.abs(peak - after)
+    ridge = np.minimum(went, came) / np.maximum(np.maximum(went, came), 0.01)
+    rows, starts, lengths = _long_runs((ridge >= RULE_RIDGE)[None, :],
+                                       max(8, int(len(ridge) * 0.25)))
+    out = dict(r, ridge=float(ridge.mean()), stroke=False)
+    if len(lengths):
+        best = int(np.argmax(lengths))
+        out["stroke"] = True
+        out["start"] = r["start"] + int(starts[best])
+        out["len"] = int(lengths[best])
+    return out
+
+
+def _merge_rules(found):
+    """One stroke, not its two sides. A 2px border draws an edge at each face."""
+    out = []
+    for r in sorted(found, key=lambda r: (r["o"], r["pos"], r["start"])):
+        near = next((o for o in out
+                     if o["o"] == r["o"] and abs(o["pos"] - r["pos"]) <= RULE_THICK
+                     and r["start"] < o["start"] + o["len"] + RULE_SAME
+                     and o["start"] < r["start"] + r["len"] + RULE_SAME), None)
+        if near is None:
+            out.append(dict(r))
+            continue
+        end = max(near["start"] + near["len"], r["start"] + r["len"])
+        near["start"] = min(near["start"], r["start"])
+        near["len"] = end - near["start"]
+    return out
+
+
+def _same_rule(r, others):
+    """The same line in the other image, allowing for a few pixels of drift."""
+    return _twin_rule(r, others) is not None
+
+
+def _twin_rule(r, others):
+    """The line in the other image that is this one, or None."""
+    near = [o for o in others
+            if o["o"] == r["o"] and abs(o["pos"] - r["pos"]) <= RULE_SAME
+            and o["start"] < r["start"] + r["len"] + RULE_SAME * 3
+            and r["start"] < o["start"] + o["len"] + RULE_SAME * 3]
+    return min(near, key=lambda o: abs(o["pos"] - r["pos"])) if near else None
+
+
+def _rule_box(lines):
+    """Four unmatched lines that close a rectangle, which is an outline rather than
+    four separate rules. Reported as one thing because it is one CSS property."""
+    hs = sorted((r for r in lines if r["o"] == "h"), key=lambda r: r["pos"])
+    vs = sorted((r for r in lines if r["o"] == "v"), key=lambda r: r["pos"])
+    if len(hs) < 2 or len(vs) < 2:
+        return None
+    top, bottom, left, right = hs[0], hs[-1], vs[0], vs[-1]
+    if bottom["pos"] - top["pos"] < RULE_CORNER or right["pos"] - left["pos"] < RULE_CORNER:
+        return None
+    for h in (top, bottom):
+        if abs(h["start"] - left["pos"]) > RULE_CORNER or \
+                abs(h["start"] + h["len"] - right["pos"]) > RULE_CORNER:
+            return None
+    for v in (left, right):
+        if abs(v["start"] - top["pos"]) > RULE_CORNER or \
+                abs(v["start"] + v["len"] - bottom["pos"]) > RULE_CORNER:
+            return None
+    return {"x": left["pos"], "y": top["pos"],
+            "w": right["pos"] - left["pos"], "h": bottom["pos"] - top["pos"]}
+
+
+SHADOW_REACH = 22     # px outside an edge a drop shadow can reach
+SHADOW_FAR = 6        # px at the far end taken as the unshadowed page
+SHADOW_DEPTH = 8.0    # levels darker beside the edge than away from it
+SHADOW_SPREAD = 4     # px the darkening is spread over: a ramp, not a step
+
+
+def _beside(g, r, outwards, reach=SHADOW_REACH):
+    """The brightness profile stepping away from a line, in one direction."""
+    if outwards:
+        lo, hi = r["pos"] + 2, r["pos"] + 2 + reach
+        limit = g.shape[0] if r["o"] == "h" else g.shape[1]
+        if hi > limit:
+            return None
+        band = (g[lo:hi, r["start"]:r["start"] + r["len"]] if r["o"] == "h"
+                else g[r["start"]:r["start"] + r["len"], lo:hi])
+        return np.median(band, axis=1 if r["o"] == "h" else 0)
+    lo, hi = r["pos"] - reach, r["pos"]
+    if lo < 0:
+        return None
+    band = (g[lo:hi, r["start"]:r["start"] + r["len"]] if r["o"] == "h"
+            else g[r["start"]:r["start"] + r["len"], lo:hi])
+    return np.median(band, axis=1 if r["o"] == "h" else 0)[::-1]
+
+
+def _shadow_at(g, r):
+    """How deep the darkening beside a line is, and over how many pixels.
+
+    A drop shadow is the one thing here that is soft on purpose. It is not a stroke,
+    so the border detector refuses it by design, and it moves no element, so nothing
+    else sees it either: measured, a shadow added to one card cost 23.5 points while
+    the report talked about the silhouette.
+
+    Depth alone does not identify it, because a border beside the same edge is deeper
+    still. What separates them is the spread: measured on the survey pages a shadow
+    ramps over 12 to 13 pixels and a 2px border over none at all.
+    """
+    best = (0.0, 0)
+    for outwards in (True, False):
+        p = _beside(g, r, outwards)
+        if p is None or p.size < SHADOW_FAR + 4:
+            continue
+        far = float(np.median(p[-SHADOW_FAR:]))
+        depth = far - float(p.min())
+        if depth <= 0 or depth <= best[0]:
+            continue
+        mid = (p > far - depth * 0.85) & (p < far - depth * 0.15)
+        best = (depth, int(mid.sum()))
+    return best
+
+
+def _is_shadow(pair):
+    return pair[0] >= SHADOW_DEPTH and pair[1] >= SHADOW_SPREAD
+
+
+def _shadow_findings(g_ref, g_att, want, got, css, size):
+    """A soft shade beside an edge in one image and not the other."""
+    out = []
+    for side, mine, theirs, gm, gt in (("design", want, got, g_ref, g_att),
+                                       ("attempt", got, want, g_att, g_ref)):
+        lines = []
+        for r in mine:
+            twin = _twin_rule(r, theirs)
+            if twin is None or not _is_shadow(_shadow_at(gm, r)):
+                continue
+            if not _is_shadow(_shadow_at(gt, twin)):
+                lines.append(r)
+        if not lines:
+            continue
+        depth = max(_shadow_at(gm, r)[0] for r in lines)
+        box = _rule_box(lines) or _span_box(lines)
+        out.append({"side": side, "x": css(box["x"]), "y": css(box["y"]),
+                    "w": css(box["w"]), "h": css(box["h"]), "edges": len(lines),
+                    "depth": round(depth, 1), "where": _where(box, size)})
+    out.sort(key=lambda f: -f["depth"])
+    return out[:1]
+
+
+def _shadow_sentence(f):
+    missing = f["side"] == "design"
+    return (
+        "{} a soft shadow around the {}x{}px panel at x {}, y {} (the {} of the page) "
+        "and the {} has none: the page beside it is up to {:.0f} levels darker than "
+        "further away, fading over about {} pixels rather than stopping at an edge. "
+        "Nothing else here can see it, because it moves no element and draws no line. "
+        "It is one CSS property, `box-shadow`.".format(
+            "The design draws" if missing else "The attempt draws",
+            f["w"], f["h"], f["x"], f["y"], f["where"],
+            "attempt" if missing else "design", f["depth"], SHADOW_REACH))
+
+
+def _span_box(lines):
+    """The area a set of edges bounds, when they do not close a rectangle.
+
+    A panel usually gives up only two or three of its four edges to the detector,
+    because one of them runs along something else. Taking the extent of what was
+    found beats the degenerate alternative: the first version reported a shadow
+    around "the 434x1px panel", which names a place a round cannot act on.
+    """
+    hs = [r for r in lines if r["o"] == "h"]
+    vs = [r for r in lines if r["o"] == "v"]
+    xs = ([r["pos"] for r in vs] + [r["start"] for r in hs]
+          + [r["start"] + r["len"] for r in hs])
+    ys = ([r["pos"] for r in hs] + [r["start"] for r in vs]
+          + [r["start"] + r["len"] for r in vs])
+    return {"x": min(xs), "y": min(ys),
+            "w": max(xs) - min(xs), "h": max(ys) - min(ys)}
+
+
+def _rule_findings(g_ref, g_att, css, size, want=None, got=None, limit=RULE_FOUND):
+    """Strokes one image draws and the other does not.
+
+    Compared on whether a line is a STROKE rather than on whether a line is there at
+    all, because the edge of a panel is a line in both images whether or not it is
+    bordered. A border turns that edge into a stroke, so the honest comparison is
+    stroke against no stroke in the same place, and a line present in neither as a
+    stroke is somebody else's finding.
+    """
+    want = _rules(g_ref) if want is None else want
+    got = _rules(g_att) if got is None else got
+    out = []
+    for side, mine, theirs in (("design", want, got), ("attempt", got, want)):
+        odd = []
+        for r in mine:
+            if not r["stroke"]:
+                continue
+            twin = _twin_rule(r, theirs)
+            if twin is None or not twin["stroke"]:
+                odd.append(r)
+        if not odd:
+            continue
+        box = _rule_box(odd)
+        if box:
+            out.append({"side": side, "kind": "outline", "x": css(box["x"]),
+                        "y": css(box["y"]), "w": css(box["w"]), "h": css(box["h"]),
+                        "where": _where(box, size), "weight": box["w"] + box["h"]})
+            continue
+        r = max(odd, key=lambda r: r["len"])
+        across = r["o"] == "h"
+        out.append({"side": side, "kind": "rule", "across": across,
+                    "x": css(r["start"] if across else r["pos"]),
+                    "y": css(r["pos"] if across else r["start"]),
+                    "len": css(r["len"]),
+                    "where": _where({"x": r["start"] if across else r["pos"],
+                                     "y": r["pos"] if across else r["start"],
+                                     "w": r["len"] if across else 1,
+                                     "h": 1 if across else r["len"]}, size),
+                    "weight": r["len"]})
+    out.sort(key=lambda f: -f["weight"])
+    return out[:limit]
+
+
+def _rule_sentence(f):
+    missing = f["side"] == "design"
+    if f["kind"] == "outline":
+        return (
+            "{} an outline around the {}x{}px area at x {}, y {} (the {} of the page){}. "
+            "Nothing else in this report can see it: a panel that light carries too "
+            "little contrast to be measured as an element, so its border belongs to no "
+            "element and only shows up as the page scoring worse. It is one CSS "
+            "property, `border`.".format(
+                "The design draws" if missing else "The attempt draws",
+                f["w"], f["h"], f["x"], f["y"], f["where"],
+                " and the attempt does not" if missing else " and the design has none"))
+    return (
+        "{} a {}px {} line at x {}, y {} (the {} of the page){}. A divider, a keyline "
+        "or a rule: one border or one thin filled box, not a change to anything "
+        "already drawn there.".format(
+            "The design draws" if missing else "The attempt draws",
+            f["len"], "horizontal" if f["across"] else "vertical",
+            f["x"], f["y"], f["where"],
+            " and the attempt does not" if missing else " and the design has none"))
 
 
 def _type_metrics(g, el):
@@ -1279,6 +1608,102 @@ def _emphasis_metrics(g, el):
             "density": float(band.mean()), "x": el["x"], "w": el["w"]}
 
 
+CASE_MIN_BAND = 10     # rows of letter band before the measure means anything
+CASE_INK = 40.0        # levels from the box's own ground before a pixel is ink
+CASE_TOP = 0.42        # the share of the band above the x-height
+CASE_FLAT = 0.90       # a band this evenly filled is capitals
+CASE_CHANGE = 0.25     # how far the two sides must differ
+CASE_MARKS = 1         # glyph groups the two sides may differ by
+
+
+def _letter_band(g, el):
+    """How evenly the ink fills the letter band, and how tall that band is.
+
+    In mixed case most letters stop at the x-height, so the top of the band holds
+    only the initial and the ascenders and reads much lighter than the bottom. In
+    capitals every glyph fills the whole band and the two read the same.
+
+    Ink is measured against the box's own ground rather than the page's, so this
+    works for dark text on a light button and for light text on a dark one.
+    """
+    crop = g[el["y"]:el["y"] + el["h"], el["x"]:el["x"] + el["w"]]
+    if crop.size < 200:
+        return None
+    ink = np.abs(crop - float(np.median(crop))) > CASE_INK
+    rows = ink.mean(axis=1)
+    if rows.max() <= 0:
+        return None
+    on = np.nonzero(rows > rows.max() * 0.12)[0]
+    if on.size < CASE_MIN_BAND:
+        return None
+    band = rows[int(on[0]):int(on[-1]) + 1]
+    if len(band) < CASE_MIN_BAND:
+        return None
+    cut = max(1, int(len(band) * CASE_TOP))
+    # Glyph groups too, because the same words in another case keep their count and
+    # different words usually do not: Continue and CONTINUE are 8 and 8, Lightbulb
+    # and LIGHTBULB 9 and 9. It is a weak guard, not a strong one. See the sentence.
+    marks = ink.mean(axis=0) > 0.01
+    return {"ratio": float(band[:cut].mean() / max(band[cut:].mean(), 1e-6)),
+            "band": len(band),
+            "marks": int(np.diff(np.concatenate(
+                [[0], marks.astype(np.int8), [0]])).clip(min=0).sum())}
+
+
+def _case_findings(matched, g_ref, g_att, css, size, limit=1):
+    """Text set in capitals on one side and mixed case on the other.
+
+    Worth its own line for the misattribution rather than for the score. CONTINUE
+    against Continue costs 3.9 points, and the report called it a box 17% wider,
+    which sends a round after the width of a button. The width is the symptom:
+    capitals are wider. Nothing said what had actually changed.
+
+    Only on a band of at least {} rows. Below that there are too few rows to tell the
+    x-height from the cap height, and a line of ordinary mixed-case body text at 14px
+    reads as evenly filled as capitals do.
+    """.format(CASE_MIN_BAND)
+    out = []
+    for d, a in matched:
+        if d["kind"] != "text":
+            continue
+        want, got = _letter_band(g_ref, d), _letter_band(g_att, a)
+        if want is None or got is None:
+            continue
+        change = got["ratio"] - want["ratio"]
+        if abs(change) < CASE_CHANGE or max(want["ratio"], got["ratio"]) < CASE_FLAT:
+            continue
+        if abs(got["marks"] - want["marks"]) > CASE_MARKS:
+            continue
+        out.append({"x": css(d["x"]), "y": css(d["y"]), "w": css(d["w"]),
+                    "h": css(d["h"]), "where": _where(d, size),
+                    "caps": "attempt" if change > 0 else "design",
+                    "ratio": round(got["ratio"], 2), "design_ratio": round(want["ratio"], 2),
+                    "wider": round((a["w"] - d["w"]) * 100.0 / max(1, d["w"]), 1),
+                    "area": d["w"] * d["h"]})
+    out.sort(key=lambda f: -f["area"])
+    return out[:limit]
+
+
+def _case_sentence(f):
+    caps_here = f["caps"] == "attempt"
+    tail = ""
+    if abs(f["wider"]) >= 4:
+        tail = (" The box around it measures {:.0f}% {} because of it, so that is this "
+                "same change and not a second one.".format(
+                    abs(f["wider"]), "wider" if f["wider"] > 0 else "narrower"))
+    return (
+        "The text at x {}, y {} ({}x{}px, the {} of the page) reads as {} in the "
+        "design and {} in the attempt. Measured as where the ink sits between the cap "
+        "line and the baseline: capitals fill that band evenly, and mixed case leaves "
+        "the top of it to the initial and the ascenders. The same reading comes of "
+        "setting different words there, so check the design image: it is "
+        "`text-transform`, or the wrong words, and in neither case is it the size, "
+        "the spacing or the box.{}".format(
+            f["x"], f["y"], f["w"], f["h"], f["where"],
+            "mixed case" if caps_here else "capitals",
+            "capitals" if caps_here else "mixed case", tail))
+
+
 def _emphasis_findings(matched, css, size, limit=2):
     """Where the design emphasises text and the attempt does not, or the reverse."""
     out = []
@@ -1524,6 +1949,12 @@ def problem_keys(report):
     # remains and stops being named the moment the last box is filled.
     for f in els.get("colour") or []:
         keys.add(("ink", f["y"] // 50))
+    for f in els.get("case") or []:
+        keys.add(("case", f["y"] // 50))
+    for f in els.get("rules") or []:
+        keys.add(("rule", f["side"], f["y"] // 50))
+    for f in els.get("shadow") or []:
+        keys.add(("shadow", f["side"]))
     if els.get("hollow"):
         keys.add(("hollow",))
     if els.get("fill"):
@@ -1585,6 +2016,12 @@ def stuck_phrase(key):
         return "the {} around y {}px ({})".format(key[1], key[2] * 50, what)
     if kind == "ink":
         return "the text colour around y {}px".format(key[1] * 50)
+    if kind == "case":
+        return "the letter case around y {}px".format(key[1] * 50)
+    if kind == "rule":
+        return "the line around y {}px that the {} draws".format(key[2] * 50, key[1])
+    if kind == "shadow":
+        return "the soft shadow the {} draws".format(key[1])
     if kind == "hollow":
         return "the containers drawn empty"
     if kind == "fill":
@@ -1839,7 +2276,7 @@ def _cell_name(cell):
 # changes which boxes it names on every run already on disk.
 # Bumped to 7 when each problem gained a plain-words headline, so an attempt scored
 # before that gains one the next time its report is read rather than never.
-SCORER_VERSION = 8
+SCORER_VERSION = 11
 
 
 def score_images(ref_img, att_img, px_per_css=1.0, ignore=None, design_fonts=None,
@@ -2494,7 +2931,11 @@ PROBLEM_HEADLINES = [
     (r"(is|are) the right size in the right place but empty", "Container left empty"),
     (r"The palette is off by", "Colours slightly off"),
     (r"panels are the wrong shade", "Panels the wrong alpha"),
+    (r"a soft shadow around the \d+x\d+px panel", "Shadow missing or added"),
+    (r"an outline around the \d+x\d+px area", "Border missing or added"),
+    (r"a \d+px (horizontal|vertical) line at", "Line missing or added"),
     (r"is the wrong colour: the design draws it", "Text the wrong colour"),
+    (r"reads as (capitals|mixed case) in the design", "Wrong letter case"),
     (r"That is font-size", "Text the wrong size"),
     (r"That is font-weight", "Text the wrong weight"),
     (r"That is font-style", "Text slanted wrongly"),
@@ -2675,6 +3116,15 @@ def _problems(report):
     if fill_findings:
         out.append(_fill_sentence(fill_findings))
         said.add("colour")
+    # Beside them, and for the same reason: a line that is absent is worth more than a
+    # box that is present and slightly off. A border also belongs to no element, so
+    # nothing below this can reach it, and it was costing 35.9 points unnamed.
+    rule_findings = els.get("rules") or []
+    out.extend(_rule_sentence(f) for f in rule_findings)
+    shadow_findings = els.get("shadow") or []
+    out.extend(_shadow_sentence(f) for f in shadow_findings)
+    if rule_findings or shadow_findings:
+        said.add("shape")
 
     # Type before the element boxes: a wrong font-size is reported again by every box
     # around it as a wrong width and a wrong height, so fixing it first removes several
@@ -2683,9 +3133,11 @@ def _problems(report):
     out.extend(_type_sentence(f) for f in type_findings)
     emphasis_findings = els.get("emphasis") or []
     out.extend(_emphasis_sentence(f) for f in emphasis_findings)
+    case_findings = els.get("case") or []
+    out.extend(_case_sentence(f) for f in case_findings)
     colour_findings = els.get("colour") or []
     out.extend(_colour_sentence(f) for f in colour_findings)
-    if type_findings or emphasis_findings or colour_findings:
+    if type_findings or emphasis_findings or colour_findings or case_findings:
         said.add("type")
     # Alignment before the individual elements too: a ragged column is one container,
     # and naming it here stops the list below repeating it once per element.

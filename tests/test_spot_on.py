@@ -4540,6 +4540,262 @@ class ElementsAreScoredOnTheirOwn(unittest.TestCase):
         self.assertNotIn("element_scores", rep)
 
 
+class LinesNothingElseCanSee(unittest.TestCase):
+    """Borders, dividers and keylines, which belonged to no element.
+
+    A card is white on near-white and carries too little contrast to be ink, so
+    `_elements` never sees it and a border drawn around it had nowhere to be
+    reported. Measured on a page whose only difference was a 2px outline, the score
+    fell 35.9 and the report talked about a text element scoring low.
+    """
+
+    W, H = 400, 300
+
+    def blank(self, ground=240.0):
+        return np.full((self.H, self.W), ground, dtype=np.float64)
+
+    def panel(self, g, x=40, y=40, w=300, h=180, fill=255.0, border=None, thick=2):
+        g[y:y + h, x:x + w] = fill
+        if border is not None:
+            g[y:y + thick, x:x + w] = border
+            g[y + h - thick:y + h, x:x + w] = border
+            g[y:y + h, x:x + thick] = border
+            g[y:y + h, x + w - thick:x + w] = border
+        return g
+
+    def found(self, ref, att):
+        return so._rule_findings(ref, att, lambda v: int(v), (self.W, self.H))
+
+    def test_two_identical_pages_have_no_lines_between_them(self):
+        self.assertEqual(self.found(self.panel(self.blank()),
+                                    self.panel(self.blank())), [])
+
+    def test_a_border_the_attempt_added_is_named_as_an_outline(self):
+        got = self.found(self.panel(self.blank()),
+                         self.panel(self.blank(), border=120.0))
+        self.assertEqual([f["kind"] for f in got], ["outline"])
+        self.assertEqual(got[0]["side"], "attempt")
+        # The geometry has to be the panel's, because a round is sent there.
+        self.assertAlmostEqual(got[0]["x"], 40, delta=3)
+        self.assertAlmostEqual(got[0]["y"], 40, delta=3)
+        self.assertAlmostEqual(got[0]["w"], 300, delta=4)
+        self.assertAlmostEqual(got[0]["h"], 180, delta=4)
+        self.assertIn("border", so._rule_sentence(got[0]))
+
+    def test_a_border_the_attempt_dropped_is_named_the_other_way(self):
+        got = self.found(self.panel(self.blank(), border=120.0),
+                         self.panel(self.blank()))
+        self.assertEqual(got[0]["side"], "design")
+        self.assertIn("The design draws", so._rule_sentence(got[0]))
+
+    def test_a_panel_edge_is_not_a_line(self):
+        """The guard the whole detector rests on. Almost everything that moves a
+        panel edge makes a long straight gradient: measured on the survey pages a
+        changed fill, a changed padding and an added shadow each produced one and
+        only the border was a stroke. Three wrong out of four without this."""
+        design = self.panel(self.blank())
+        for name, attempt in (
+                ("a different fill", self.panel(self.blank(), fill=225.0)),
+                ("a panel that moved", self.panel(self.blank(), y=60)),
+                ("a panel that grew", self.panel(self.blank(), h=220))):
+            self.assertEqual(self.found(design, attempt), [], name)
+
+    def test_a_soft_ramp_into_an_edge_is_not_a_line(self):
+        # A drop shadow: brightness falls away towards the panel and does not come
+        # back, so it reads 0.59 where a real border reads 1.00.
+        attempt = self.panel(self.blank())
+        for i in range(14):
+            attempt[26 + i, 40:340] = 240.0 - i * 2.0
+        self.assertEqual(self.found(self.panel(self.blank()), attempt), [])
+
+    def test_a_single_divider_is_named_as_a_line_not_an_outline(self):
+        design = self.blank()
+        design[150:152, 60:340] = 110.0
+        got = self.found(design, self.blank())
+        self.assertEqual([f["kind"] for f in got], ["rule"])
+        self.assertTrue(got[0]["across"])
+        self.assertAlmostEqual(got[0]["len"], 280, delta=6)
+        self.assertIn("divider", so._rule_sentence(got[0]))
+
+    def test_a_line_is_trimmed_to_the_part_that_is_a_stroke(self):
+        """Two unrelated edges can share a row. On the survey page a collapsed
+        margin put a full-width edge on the same row as the card's top border, and
+        the line came back 520px wide at x 0 for a border 448px wide at x 36."""
+        g = self.blank()
+        g[100:, :] = 255.0            # a full-width step at y 100
+        g[100:102, 150:380] = 110.0   # a stroke along part of that same row
+        line = next(r for r in so._rules(g)
+                    if r["o"] == "h" and abs(r["pos"] - 99) <= 2)
+        self.assertTrue(line["stroke"])
+        self.assertAlmostEqual(line["start"], 150, delta=4)
+        self.assertAlmostEqual(line["len"], 230, delta=8)
+
+    def test_the_finding_can_be_pressed_and_given_up_like_any_other(self):
+        rep = {"elements": {"rules": [{"side": "attempt", "kind": "outline", "x": 40,
+                                       "y": 40, "w": 300, "h": 180,
+                                       "where": "top, left", "weight": 480}]},
+               "components": {}, "offsets": {}, "raw": {}}
+        self.assertIn(("rule", "attempt", 0), so.problem_keys(rep))
+        self.assertIn("line", so.stuck_phrase(("rule", "attempt", 0)))
+
+    def test_every_sentence_it_writes_has_a_headline(self):
+        for f in ({"side": "attempt", "kind": "outline", "x": 1, "y": 1, "w": 9,
+                   "h": 9, "where": "top, left", "weight": 18},
+                  {"side": "design", "kind": "rule", "across": True, "x": 1, "y": 1,
+                   "len": 90, "where": "top, left", "weight": 90},
+                  {"side": "design", "kind": "rule", "across": False, "x": 1, "y": 1,
+                   "len": 90, "where": "top, left", "weight": 90}):
+            said = so._rule_sentence(f)
+            self.assertIsNotNone(so.problem_headline(said), said)
+
+
+@unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
+class CapitalsAreNotAWiderBox(unittest.TestCase):
+    """CONTINUE against Continue was reported as a box 17% wider.
+
+    It costs 3.9 points, so this is for the misattribution rather than the score:
+    the width is the symptom, capitals are wider, and a round told the box is wide
+    goes after the padding of a button that was never wrong.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spot-on-case-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def page(self, label="Continue", weight="400", size=19):
+        return ('<div style="width:320px;height:120px;background:#FFFFFF;'
+                'font-family:Arial;padding:28px">'
+                '<div style="color:#1F2937;font-size:{}px;font-weight:{}">{}</div>'
+                '</div>').format(size, weight, label)
+
+    def shot(self, name, **kw):
+        return so.render_code(self.page(**kw), "html", 320, 120, self.tmp / name)
+
+    def found(self, a, b):
+        ga = so._gray(np.asarray(a, dtype=np.float64))
+        gb = so._gray(np.asarray(b, dtype=np.float64))
+        matched, _ = so._match_elements(so._elements(ga), so._elements(gb), ga, gb)
+        return so._case_findings(matched, ga, gb, lambda v: int(v), (320, 120))
+
+    def test_capitals_in_the_attempt_are_named_as_case(self):
+        got = self.found(self.shot("a.png"), self.shot("b.png", label="CONTINUE"))
+        self.assertEqual(len(got), 1, got)
+        self.assertEqual(got[0]["caps"], "attempt")
+        said = so._case_sentence(got[0])
+        self.assertIn("capitals", said)
+        self.assertIn("text-transform", said)
+        # The same reading comes of different words, and the sentence says so
+        # rather than asserting a cause it cannot tell apart.
+        self.assertIn("the wrong words", said)
+        self.assertIsNotNone(so.problem_headline(said), said)
+
+    def test_capitals_in_the_design_are_named_the_other_way(self):
+        got = self.found(self.shot("a.png", label="CONTINUE"), self.shot("b.png"))
+        self.assertEqual(got[0]["caps"], "design")
+
+    def test_the_width_is_said_to_follow_from_the_case(self):
+        # The point of the finding: stop a round going after the box.
+        got = self.found(self.shot("a.png"), self.shot("b.png", label="CONTINUE"))
+        self.assertIn("because of it", so._case_sentence(got[0]))
+
+    def test_the_same_words_are_not_a_case_change(self):
+        self.assertEqual(self.found(self.shot("a.png"), self.shot("b.png")), [])
+
+    def test_a_heavier_or_larger_face_is_not_a_case_change(self):
+        """Both widen the text, and neither is this. Measured on the survey page a
+        weight change moves the reading 0.07 where capitals move it 0.38."""
+        base = self.shot("a.png")
+        for name, other in (("heavier", self.shot("b.png", weight="800")),
+                            ("larger", self.shot("c.png", size=23))):
+            self.assertEqual(self.found(base, other), [], name)
+
+    def test_a_band_too_short_to_read_says_nothing(self):
+        """Deliberately conservative. A band of seven rows still separates these two
+        cleanly, 1.12 against 0.21, but at that size the reading is coarse and it is
+        content as much as case: a long mixed-case line of 14px body text, full of
+        ascenders, reads 1.06, which is what capitals read. Case in text that small
+        is worth little, and a wrong line costs a round, so the floor stays."""
+        got = self.found(self.shot("a.png", label="Continue", size=9),
+                         self.shot("b.png", label="CONTINUE", size=9))
+        self.assertEqual(got, [])
+
+
+class ASoftShadowNothingElseCanSee(unittest.TestCase):
+    """A drop shadow moves no element and draws no line, so nothing saw it.
+
+    Measured: a shadow added to one card cost 23.5 points while the report talked
+    about the silhouette. The border detector refuses it on purpose, because it is
+    a ramp rather than a stroke, which is why it needs a measure of its own.
+    """
+
+    W, H = 400, 300
+    X, Y, PW, PH = 60, 70, 260, 150
+
+    def page(self, shadow=0.0, fade=14):
+        g = np.full((self.H, self.W), 240.0)
+        if shadow:
+            for i in range(fade):
+                near = shadow * (1.0 - i / float(fade))
+                g[self.Y + self.PH + i, self.X:self.X + self.PW] -= near
+                g[self.Y - 1 - i, self.X:self.X + self.PW] -= near * 0.4
+                g[self.Y:self.Y + self.PH, self.X - 1 - i] -= near * 0.7
+                g[self.Y:self.Y + self.PH, self.X + self.PW + i] -= near * 0.7
+        g[self.Y:self.Y + self.PH, self.X:self.X + self.PW] = 255.0
+        return g
+
+    def found(self, ref, att):
+        return so._shadow_findings(ref, att, so._rules(ref), so._rules(att),
+                                   lambda v: int(v), (self.W, self.H))
+
+    def test_two_identical_pages_have_no_shadow_between_them(self):
+        self.assertEqual(self.found(self.page(), self.page()), [])
+        self.assertEqual(self.found(self.page(40.0), self.page(40.0)), [])
+
+    def test_a_shadow_the_attempt_added_is_named(self):
+        got = self.found(self.page(), self.page(40.0))
+        self.assertEqual(len(got), 1, got)
+        self.assertEqual(got[0]["side"], "attempt")
+        said = so._shadow_sentence(got[0])
+        self.assertIn("box-shadow", said)
+        self.assertIsNotNone(so.problem_headline(said), said)
+
+    def test_a_shadow_the_attempt_dropped_is_named_the_other_way(self):
+        got = self.found(self.page(40.0), self.page())
+        self.assertEqual(got[0]["side"], "design")
+        self.assertIn("The design draws", so._shadow_sentence(got[0]))
+
+    def test_it_points_at_the_panel_the_shadow_is_under(self):
+        got = self.found(self.page(), self.page(40.0))
+        self.assertAlmostEqual(got[0]["x"], self.X, delta=6)
+        self.assertAlmostEqual(got[0]["w"], self.PW, delta=10)
+        # Regression: with only some edges found the box came back 1px tall, which
+        # named a place no round could act on.
+        self.assertGreater(got[0]["h"], 20)
+
+    def test_a_border_is_deeper_than_a_shadow_and_is_still_not_one(self):
+        """Depth alone cannot tell them apart: beside the same edge a 2px border
+        reads deeper than the shadow does. The spread is what separates them, 12 to
+        13 pixels against none."""
+        bordered = self.page()
+        bordered[self.Y:self.Y + 2, self.X:self.X + self.PW] = 120.0
+        bordered[self.Y + self.PH - 2:self.Y + self.PH, self.X:self.X + self.PW] = 120.0
+        bordered[self.Y:self.Y + self.PH, self.X:self.X + 2] = 120.0
+        bordered[self.Y:self.Y + self.PH, self.X + self.PW - 2:self.X + self.PW] = 120.0
+        self.assertEqual(self.found(self.page(), bordered), [])
+        self.assertGreater(so._shadow_at(bordered, so._rules(bordered)[0])[0],
+                           so._shadow_at(self.page(40.0), so._rules(self.page(40.0))[0])[0])
+
+    def test_the_finding_can_be_pressed_and_given_up_like_any_other(self):
+        rep = {"elements": {"shadow": [{"side": "design", "x": 60, "y": 70, "w": 260,
+                                        "h": 150, "edges": 3, "depth": 40.0,
+                                        "where": "top, left"}]},
+               "components": {}, "offsets": {}, "raw": {}}
+        self.assertIn(("shadow", "design"), so.problem_keys(rep))
+        self.assertIn("shadow", so.stuck_phrase(("shadow", "design")))
+
+
 @unittest.skipUnless(_chrome_available(), "needs Chrome or Edge")
 class ARunStartedFromNothing(unittest.TestCase):
     """Everything a round is told, on a design the tool has never seen.
