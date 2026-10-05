@@ -6,16 +6,6 @@ schedule. Finishing an item deletes its line in the commit that does the work.
 
 ## Deferred
 
-- **A glyph family, named as a family.** Size: small. Trigger: a design where naming
-  would help and the variants defeat it. The matcher can tell map-pin from heart and
-  cannot tell `map-pin-plus-inside` from `map-pin-x-inside`: on one real well those
-  scored 0.94 and 0.93. The margin gate now stays silent there, which is right and
-  wastes a true observation. Saying "a map pin, variant unclear" would keep it.
-- **`blocked` goes unused.** Size: small. Trigger: a second run where something
-  genuinely cannot be done. On first real use the rounds filed "Install or identify
-  the design's typeface" under work-to-do and left `blocked` empty, so the one
-  impossible thing was not marked impossible. Either the description needs to be
-  plainer or the distinction is not one the model makes.
 - **Lexical dedup cannot catch paraphrases.** Size: medium. Trigger: a worklist
   filling with restatements again. "items 14 and 15" and "the 10-item and 4-item row
   pitch" are one job with no words in common. The schema now asks rounds to reuse an
@@ -49,6 +39,12 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   the attempts before, and exits non-zero unless a new one exists after. A round was
   once dispatched in a way that died on startup, the wrapper exited 0, and it was
   reported as having run; the newest attempt file was two hours old.
+
+- **Whether narrowing `blocked` worked is unmeasured.** Size: small. Trigger: the
+  next run where a command is refused or a library will not load. Its examples used
+  to be the typeface and the photographs, which the needs list now owns, so a round
+  reasonably filed those as ordinary work and left the field empty. It now asks only
+  about what stopped that round. Nobody has run a round against the new wording.
 
 ## Deliberate limits
 

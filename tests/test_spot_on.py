@@ -2988,6 +2988,70 @@ class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
         self.assertEqual(so.SUPPLY_TYPES[".png"], "image")
 
 
+class AGlyphFamilyWhenTheVariantIsACoinToss(unittest.TestCase):
+    """The matcher knows it is a map pin and cannot say which kind.
+
+    On one real well map-pin-plus-inside scored 0.94 with map-pin-x-inside at 0.93.
+    The margin gate is right to refuse a name there and was throwing away the part
+    it was sure of.
+    """
+
+    def test_shared_leading_words_are_the_family(self):
+        self.assertEqual(so._family_of(["map-pin-plus-inside", "map-pin-x-inside",
+                                        "map-pin-check-inside"]), "map pin")
+
+    def test_one_shared_word_is_not_a_family(self):
+        # heart beside heart-minus shares only "heart", which is the whole of the
+        # top match anyway, so saying it as a family would be a downgrade.
+        self.assertIsNone(so._family_of(["heart", "heart-minus", "heart-plus"]))
+
+    def test_unrelated_names_share_nothing(self):
+        self.assertIsNone(so._family_of(["wifi", "droplet"]))
+        self.assertIsNone(so._family_of(["wifi"]))
+
+    def test_the_report_says_the_family_and_the_variants(self):
+        said = so._glyph_note({"glyph": {"family": "map pin", "score": 0.94,
+                                         "variants": ["map-pin-x-inside",
+                                                      "map-pin-plus-inside"]}})
+        self.assertIn("a map pin", said)
+        self.assertIn("not which kind", said)
+        self.assertIn("map-pin-x-inside", said)
+
+    def test_a_confident_name_is_still_a_name(self):
+        said = so._glyph_note({"glyph": {"name": "wifi", "score": 0.95}})
+        self.assertIn("the set has this: wifi", said)
+        self.assertNotIn("not which kind", said)
+
+
+class BlockedIsAboutTheRoundNotTheDesign(unittest.TestCase):
+    """It went unused because its examples belonged to another mechanism.
+
+    The field asked for "a typeface that is not installed, a photograph you do not
+    have", which are exactly the things the needs list now detects on its own, so a
+    round reasonably filed the typeface as ordinary work and left blocked empty.
+    """
+
+    def test_the_schema_asks_about_this_round(self):
+        said = so.ITERATE_SCHEMA["properties"]["blocked"]["description"]
+        self.assertIn("THIS ROUND", said)
+        for example in ("refused", "library", "file"):
+            self.assertIn(example, said)
+
+    def test_it_no_longer_claims_the_material_gaps(self):
+        said = so.ITERATE_SCHEMA["properties"]["blocked"]["description"]
+        self.assertIn("Not the design's typeface", said)
+        # The needs list owns those, and says so in its own words.
+        rep = {"elements": {}, "artwork": {"share": 50.0, "where": "lower middle"}}
+        self.assertEqual([n["kind"] for n in so.needs_from_you(rep)], ["image"])
+
+    def test_the_prompt_reads_it_back_the_same_way(self):
+        lists = {"open": [], "blocked": [{"text": "the icon script was refused"}],
+                 "done": []}
+        said = chr(10).join(so._worklist_section(lists))
+        self.assertIn("refused command", said)
+        self.assertIn("the icon script was refused", said)
+
+
 class BothSelectionPathsSayWhatTheyDid(unittest.TestCase):
     """The stated prerequisite for trialling the findings tie-break again.
 

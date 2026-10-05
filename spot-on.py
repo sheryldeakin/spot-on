@@ -1112,6 +1112,9 @@ def _glyph_note(f):
         return "nothing in the set is this shape, draw it inline"
     if g.get("name"):
         return "the set has this: {}".format(g["name"])
+    if g.get("family"):
+        return ("the set has a {}, though not which kind: {}"
+                .format(g["family"], ", ".join(g["variants"])))
     return None
 
 
@@ -3089,9 +3092,13 @@ ITERATE_SCHEMA = {
         "changes": {"type": "string", "description": "one line on what was changed and why"},
         "blocked": {
             "type": "array", "items": {"type": "string"},
-            "description": "things you could not do and why, one short line each: a typeface "
-                           "that is not installed, a photograph you do not have, a command you "
-                           "were not allowed to run. Empty if nothing blocked you.",
+            "description": "things that stopped YOU THIS ROUND and that nobody watching "
+                           "the page could see, one short line each: a command that was "
+                           "refused, a library that would not load, a file you expected "
+                           "and did not find. Not the design's typeface, its photographs "
+                           "or its icons: those are already detected and are being asked "
+                           "for from the person, so they belong in `next` or nowhere. "
+                           "Empty if nothing stopped you, which is the usual answer.",
         },
         "next": {
             "type": "array", "items": {"type": "string"},
@@ -3260,8 +3267,9 @@ def _worklist_section(lists):
         out += ["Finish one and copy its line into `done` exactly. Do not name one you did not",
                 "do: the report measures the page, not this list.", ""]
     if lists.get("blocked"):
-        out.append("Reported as impossible here. Leave them unless you can see something the")
-        out.append("earlier rounds could not:")
+        out.append("Reported by an earlier round as having stopped it: a refused command, a")
+        out.append("library that would not load, a file that was not there. Leave them unless")
+        out.append("you can see something that round could not:")
         for item in lists["blocked"]:
             out.append("  {}".format(item["text"]))
         out.append("")
@@ -4744,6 +4752,7 @@ ICON_NORM = 32           # side of the ink map two glyphs are compared on
 ICON_PRESENT = 0.80      # below this, the set has nothing like the glyph
 ICON_NAME = 0.92         # at or above this, and the name is worth printing
 ICON_MARGIN = 0.03       # and this far clear of the nearest different drawing
+ICON_FAMILY = 2          # names sharing this many leading words are one family
 ICON_READABLE = 24       # px: below this a glyph cannot be told from its neighbours
 ICON_PLAIN = frozenset(
     "circle circle-small dot square squircle rectangle-horizontal rectangle-vertical "
@@ -4808,6 +4817,29 @@ def _icon_templates():
     return _ICON_TEMPLATES
 
 
+def _family_of(names):
+    """The longest leading run of hyphen-separated words every name shares.
+
+    `map-pin-plus-inside`, `map-pin-x-inside` and `map-pin-check-inside` share
+    `map pin`, which is the true part of what the match saw. `heart` beside
+    `heart-minus` shares `heart`, one word, which is not enough to be worth saying:
+    a single shared word is usually the whole of the smaller name and says nothing
+    the top match did not already say.
+    """
+    if len(names) < 2:
+        return None
+    parts = [n.split("-") for n in names]
+    shared = []
+    for i in range(min(len(p) for p in parts)):
+        word = parts[0][i]
+        if any(p[i] != word for p in parts):
+            break
+        shared.append(word)
+    if len(shared) < ICON_FAMILY:
+        return None
+    return " ".join(shared)
+
+
 def glyph_identity(gray, box):
     """What the set says about the glyph drawn in one box of the design.
 
@@ -4852,6 +4884,15 @@ def glyph_identity(gray, box):
     # name is worse than none, because the round takes it rather than looking.
     if best >= ICON_NAME and best - rival >= ICON_MARGIN and names[i] not in ICON_PLAIN:
         return {"name": str(names[i]), "score": round(best, 3)}
+    # Clear of nothing in particular, but the near misses may all be the same
+    # drawing in different variants, and the family is then the part the match is
+    # sure of. Said only when the top match is strong enough to be worth repeating.
+    if best >= ICON_NAME:
+        close = [str(names[j]) for j in order[:4] if float(sims[j]) >= best - 0.08]
+        family = _family_of(close)
+        if family and not any(n in ICON_PLAIN for n in close):
+            return {"family": family, "score": round(best, 3),
+                    "variants": sorted(close)[:4]}
     return None
 
 
