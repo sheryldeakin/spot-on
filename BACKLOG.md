@@ -38,9 +38,19 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   one card and it is not an element at all, being white on near-white, so nothing is
   measured and the page-wide palette line is all that fires: 12.3 points, and no
   sentence saying where. Border and shadow were closed by measuring off the page
-  instead of off an element, and the same move would work here: a large contiguous
-  area whose brightness differs by a near-constant amount. Corner radius is the fifth
-  and stays unnamed on purpose: 0.5 points, which is not worth a line.
+  instead of off an element, and the obvious version of the same move was tried here
+  and does NOT work. Read on a 16px grid, cells whose difference is large and flat
+  find the wrong alpha cleanly, 191 cells at a uniform -6.4 levels with nothing from
+  a border, a shadow, a button fill or a weight change. They also find a changed
+  padding: 77 cells at a uniform +13.6, because content moving down 16px leaves a
+  band that is uniformly brighter. The two are identical to the measure, both
+  perfectly consistent across the region, so there is no threshold that separates
+  them, and content moving is the commonest rebuild fault of all. What would separate
+  them is differencing AFTER putting the two images back in register, band by band,
+  using the per-band offsets the report already computes, so that a shift explains
+  itself away and only a real shade change is left. That is the work, and it is why
+  this is still here rather than shipped. Corner radius is the fifth of the five and
+  stays unnamed on purpose: 0.5 points, which is not worth a line.
 
 ## Deliberate limits
 
