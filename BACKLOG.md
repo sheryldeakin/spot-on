@@ -29,7 +29,13 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   with both headroom and ties are `bl-with` (74.2, changes 2 of 3 chances) and
   `cmarix` (79.6); the 96-point runs tie constantly but have nowhere to climb.
   What is still unknown is whether the changed pick ends the run higher, which
-  needs two arms on one seed.
+  needs two arms on one seed: `scripts/ab_trial.py` is the harness, and it refuses
+  a seed that cannot show the effect. The right seed is hud-concept attempt 1,
+  because the chances and the headroom have to coincide and mostly they do not:
+  rounds the tie-break could act on have a median of 0.15 left to gain against 0.45
+  for the rest, since candidates only cluster once a page nears its ceiling. Thirteen
+  of the 44 chances had 1.0 or more still to gain and every one of them is hud-concept
+  climbing from 69.6 to 72.1, which is where to seed.
 
 ## Guards that exist because a written rule did not hold
 
