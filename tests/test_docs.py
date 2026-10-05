@@ -14,6 +14,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+TOOL_SOURCE = (ROOT / "spot-on.py").read_text(encoding="utf-8")
 WORDS = {"six": 6, "fourteen": 14}
 
 spec = importlib.util.spec_from_file_location("sync_readme", ROOT / "scripts" / "sync_readme.py")
@@ -28,6 +29,7 @@ SWEEP = json.loads((ROOT / "scripts" / "match-sweep.json").read_text(encoding="u
 TRIAL = json.loads((ROOT / "scripts" / "match-trial.json").read_text(encoding="utf-8"))
 ICONS = json.loads((ROOT / "scripts" / "icon-trial.json").read_text(encoding="utf-8"))
 ICONS_REAL = json.loads((ROOT / "scripts" / "icon-real.json").read_text(encoding="utf-8"))
+FONTS = json.loads((ROOT / "scripts" / "font-changes.json").read_text(encoding="utf-8"))
 
 
 class GeneratedTables(unittest.TestCase):
@@ -201,6 +203,33 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(float(m.group(4)), max(a["absent_named_pct"] for a in arms))
         self.assertEqual(float(m.group(5)), min(a["right_pct"] for a in arms))
         self.assertEqual(float(m.group(6)), max(a["right_pct"] for a in arms))
+
+    def test_the_font_change_numbers_match_their_source(self):
+        """These were read off a top-six list printed in a throwaway command and two
+        of the four were wrong, which the committed script caught at once. Hence the
+        rule: no number without a script, and the echo checked in the same edit."""
+        m = re.search(r"across (\d+) attempts here whose change mentions the font, "
+                      r"(\d+) cut the share of wrong letters by a third or more, "
+                      r"(\w+) went from every line wrong to none, and the best single "
+                      r"change was worth (\d+\.\d+) points of match", README)
+        self.assertIsNotNone(m, "the font-change sentence changed")
+        self.assertEqual(int(m.group(1)), FONTS["font_changes"])
+        self.assertEqual(int(m.group(2)), FONTS["cut_weak_share_by_0_3_or_more"])
+        words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+        said = m.group(3)
+        self.assertEqual(words.get(said, said if not said.isdigit() else int(said)),
+                         FONTS["went_from_every_line_wrong_to_none"])
+        self.assertEqual(float(m.group(4)), FONTS["best_match_change"])
+
+    def test_the_tool_quotes_the_same_font_numbers_as_the_readme(self):
+        # The claim lives in three places: the README, a docstring, and the sentence
+        # the person reads in the needs panel. Anything written twice drifts.
+        src = TOOL_SOURCE
+        for value in (str(FONTS["font_changes"]),
+                      str(FONTS["cut_weak_share_by_0_3_or_more"])):
+            self.assertIn(value, src, "the tool no longer quotes " + value)
+        self.assertNotIn("134", src, "a stale font count is still in the tool")
+        self.assertNotIn("134", README, "a stale font count is still in the README")
 
     def test_the_real_design_survey_numbers_match_their_source(self):
         m = re.search(r"Over every icon-sized box in the (\d+) distinct designs on this "

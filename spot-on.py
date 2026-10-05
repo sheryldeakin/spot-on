@@ -3399,8 +3399,8 @@ def search_fonts(query, limit=FIND_LIMIT):
 
     Searching for a typeface was left out at first, on the reasoning that a lookalike
     is the same bad substitution as a lookalike icon. The runs say otherwise. Across
-    134 attempts here whose change mentions the font, the share of text lines whose
-    letters differ fell by 0.3 or more on 17 of them, four went from every line wrong
+    135 attempts here whose change mentions the font, the share of text lines whose
+    letters differ fell by 0.3 or more on 17 of them, one went from every line wrong
     to none, and the best single change was worth 26.0 points of match. Most do
     nothing, which is what best-of-N is for. A lookalike font is a real repair.
 
@@ -3700,7 +3700,7 @@ def needs_from_you(report, font_rounds=0):
                       "has survived {} rounds of trying other stacks.".format(font_rounds)),
             "ask": ("Install the font on this machine, hand over the file, or search Google "
                     "Fonts below for it or for the closest thing to it. A lookalike is worth "
-                    "having: measured over 134 font changes here, 17 cut the share of wrong "
+                    "having: measured over 135 font changes here, 17 cut the share of wrong "
                     "letters by a third or more and the best was worth 26.0 points."),
         })
     return out
