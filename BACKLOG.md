@@ -18,9 +18,23 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   in common, and on tb-on "Row spacing fixes for items 16 and 17" and "Row spacing in
   quick access (22 vs 29) and top nav rows not changed" are another. Two pairs in 13
   items, so about 4 of 13 lines are two jobs wearing four names. Lexical matching
-  cannot close that: the shared thing is the coordinates and the report item number,
-  not the words, so the fix is to key an item to the fault it is about rather than to
-  its text. The schema asking rounds to reuse an earlier wording did not do it.
+  cannot close that, and nor can the obvious next thing: the two lines of each pair
+  do not even share coordinates, because one names report items 14 and 15 and the
+  other describes the rows by their contents. Three ways out, and choosing between
+  them is the work:
+  (a) KEY AN ITEM TO A FAULT. Classify a line by the fault kind it is about, the way
+  `DISPUTE_KINDS` classifies a report sentence, and merge two lines with the same
+  kind in the same place. Offline and cheap. It needs a location both lines carry,
+  which this pair does not have, so it would close some pairs and not these.
+  (b) STOP ASKING FOR FREE TEXT. Hand the round the open list with an id against each
+  line and have `next` return ids to keep plus new lines only. Closes the problem
+  outright rather than detecting it, costs a schema change and a prompt change, and
+  rounds have ignored list instructions before, so it would need measuring.
+  (c) MATCH ON MEANING. An embedding or a model call. It would work and it ends the
+  tool being able to run with nothing but a browser, which is a real property to
+  give up for this.
+  My reading is (b), because it removes the need to recognise a restatement at all,
+  but it is a change to the contract with the round and is yours to call.
 - **The findings tie-break stays off, and one trial did not settle it.** Size:
   medium. Trigger: enough appetite to run several seeds per arm. Two arms on
   hud-concept attempt 1, four rounds, three candidates, 24 minutes
