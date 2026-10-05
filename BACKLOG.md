@@ -22,11 +22,13 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   model time, so the honest position is that it is cheap, it works as designed, and
   nobody knows whether it helps.
 
-- **Whether narrowing `blocked` worked is unmeasured.** Size: small. Trigger: the
-  next run where a command is refused or a library will not load. Its examples used
-  to be the typeface and the photographs, which the needs list now owns, so a round
-  reasonably filed those as ordinary work and left the field empty. It now asks only
-  about what stopped that round. Nobody has run a round against the new wording.
+- **Two of six `blocked` entries still name the material gaps.** Size: small.
+  Trigger: another run that produces them. Eight real rounds under the new wording
+  used the field six times: four correctly ("Write to attempt.html was denied",
+  "Could not render or score the page this round") and twice with the old mistake
+  ("Globe and cityscape artwork and the design's typeface are not available as
+  assets"), which the needs list owns. From zero correct uses before, so the
+  narrowing worked; it did not fully land.
 
 ## Deliberate limits
 

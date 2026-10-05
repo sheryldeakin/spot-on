@@ -3180,6 +3180,42 @@ class WhenTheRoundsSayTheReportIsWrong(unittest.TestCase):
         hist = [{"n": 1, "disputed": ["the typeface: it looks right to me"]}]
         self.assertEqual(so.disputes(hist, self.spent()), [])
 
+    def test_a_round_quoting_the_report_sentence_is_heard(self):
+        """What eight real rounds actually wrote, and the tool heard none of it.
+
+        The schema says to copy the item's own words. To a round the item is the
+        sentence it was shown, so every one of 17 dispute lines began "The text at
+        x 495, y 133 ..." while the matcher wanted the short internal phrase from
+        the spent list. The coordinates are the thing both sides share.
+        """
+        spent = [{"key": ["text", 2], "rounds": 5},
+                 {"key": ["element", "text", 2, []], "rounds": 6}]
+        line = ("The text at x 495, y 133 (the upper middle, centre left of the page) "
+                "is wrong: that block is artwork, not text")
+        hist = [{"n": 4, "disputed": [line]}, {"n": 6, "disputed": [line]}]
+        got = so.disputes(hist, spent)
+        self.assertEqual(len(got), 1, got)
+        self.assertEqual(len(got[0]["rounds"]), 2)
+        self.assertIn("artwork", got[0]["rounds"][0]["saw"])
+
+    def test_a_coordinate_in_another_band_is_not_that_fault(self):
+        spent = [{"key": ["element", "text", 2, []], "rounds": 6}]
+        far = [{"n": 4, "disputed": ["The text at x 10, y 900 (the bottom) is wrong: no"]},
+               {"n": 6, "disputed": ["The text at x 10, y 900 (the bottom) is wrong: no"]}]
+        self.assertEqual(so.disputes(far, spent), [])
+
+    def test_the_observation_is_not_trimmed_away(self):
+        """The half that says what the round saw is the point of the field, and a
+        fourteen-word cap was removing it before it reached disk."""
+        line = ("The text at x 495, y 133 is reported as the wrong height: I looked at "
+                "the design and that block is artwork, a photograph, not text at all")
+        got = so.round_lists(json.dumps({"code": "<i/>", "changes": "x",
+                                         "disputed": [line], "next": [line]}))
+        self.assertIn(":", got["disputed"][0])
+        self.assertIn("artwork", got["disputed"][0])
+        # An ordinary worklist item is still a line.
+        self.assertLessEqual(len(got["next"][0].split()), so.WORKLIST_WORDS + 1)
+
     def test_a_line_that_names_nothing_known_is_ignored(self):
         hist = [{"n": 1, "disputed": ["something else entirely: ignored"]},
                 {"n": 2, "disputed": ["something else entirely: still ignored"]}]

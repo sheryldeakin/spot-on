@@ -3173,12 +3173,12 @@ def _same_item(a, b):
     return len(first & second) / float(min(len(first), len(second))) >= WORKLIST_SAME
 
 
-def _trim_item(text):
+def _trim_item(text, limit=WORKLIST_WORDS):
     """One line, not a paragraph."""
     words = " ".join(str(text or "").split()).split(" ")
     if not words or not words[0]:
         return ""
-    return " ".join(words[:WORKLIST_WORDS]) + ("..." if len(words) > WORKLIST_WORDS else "")
+    return " ".join(words[:limit]) + ("..." if len(words) > limit else "")
 
 
 def has_stalled(history, rounds=PLATEAU_ROUNDS, gain=PLATEAU_GAIN):
@@ -3842,6 +3842,21 @@ def _needs_section(needs):
     return out
 
 
+def _fault_row(key):
+    """The 50px band a fault sits in, for the keys that carry one.
+
+    problem_keys buckets a position so an element that shifted a few pixels is still
+    the same element, and the report's own sentences carry the real coordinates. That
+    is the one thing a dispute line and a fault reliably share.
+    """
+    kind = key[0]
+    if kind in ("type", "element") and len(key) > 2 and isinstance(key[2], int):
+        return key[2]
+    if kind == "spacing" and len(key) > 1 and isinstance(key[1], int):
+        return key[1]
+    return None
+
+
 def disputes(history, spent=()):
     """Which long-running faults the rounds say are not there, and what they see.
 
@@ -3856,17 +3871,36 @@ def disputes(history, spent=()):
     models are agreeable enough that asking the question at all invites a yes.
     """.format(DISPUTE_AFTER)
     phrases = {stuck_phrase(tuple(item["key"])): tuple(item["key"]) for item in (spent or [])}
+    rows = {}
+    for phrase, key in phrases.items():
+        row = _fault_row(key)
+        if row is not None:
+            rows.setdefault(row, (phrase, key))
     found = {}
     for a in history:
         for line in (a.get("disputed") or []):
             text = str(line).strip()
             low = text.lower()
+            hit = None
             for phrase, key in phrases.items():
                 if low.startswith(phrase.lower()):
-                    saw = text[len(phrase):].lstrip(" :.-").strip()
-                    found.setdefault(phrase, {"key": list(key), "phrase": phrase, "rounds": []})
-                    found[phrase]["rounds"].append({"n": a["n"], "saw": saw})
+                    hit = (phrase, key, text[len(phrase):].lstrip(" :.-").strip())
                     break
+            if hit is None:
+                # Every round quoted the report's sentence instead, which carries the
+                # real coordinates. Match on the band they share.
+                for found_y in re.findall(r"\by\s+(\d+)", low):
+                    got = rows.get(int(found_y) // 50)
+                    if got:
+                        phrase, key = got
+                        saw = text.split(":", 1)[1].strip() if ":" in text else ""
+                        hit = (phrase, key, saw)
+                        break
+            if hit is None:
+                continue
+            phrase, key, saw = hit
+            found.setdefault(phrase, {"key": list(key), "phrase": phrase, "rounds": []})
+            found[phrase]["rounds"].append({"n": a["n"], "saw": saw})
     out = [v for v in found.values() if len(v["rounds"]) >= DISPUTE_AFTER]
     out.sort(key=lambda v: -len(v["rounds"]))
     return out
@@ -4105,6 +4139,7 @@ def gather_candidates(agent, prompt, cwd, images, count, kind, panel=False):
 
 GIVE_UP_AFTER = 3
 DISPUTE_AFTER = 2        # rounds that must independently say a fault is not there
+DISPUTE_WORDS = 60       # a dispute carries an observation, not a list item
 SUPPLY_DIR = "materials"     # where a handed-over file lives inside the run
 SUPPLY_MAX = 12 * 1024 * 1024
 SUPPLY_TYPES = {
@@ -4264,7 +4299,12 @@ def round_lists(stdout):
     said = payload.get("structured_output")
     if not isinstance(said, dict):
         said = payload if "code" in payload else {}
-    return {k: [_trim_item(x) for x in (said.get(k) or []) if isinstance(x, str) and x.strip()]
+    # Disputes are trimmed far longer than the rest: a worklist item is a line and a
+    # dispute is a line plus what the round saw, and the short cap was cutting the
+    # second half off before it was ever stored.
+    caps = {"disputed": DISPUTE_WORDS}
+    return {k: [_trim_item(x, caps.get(k, WORKLIST_WORDS))
+                for x in (said.get(k) or []) if isinstance(x, str) and x.strip()]
             for k in ("blocked", "next", "done", "disputed")}
 
 
