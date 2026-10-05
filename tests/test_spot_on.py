@@ -2988,6 +2988,71 @@ class HandingOverTheMaterialTheRoundCannotMake(unittest.TestCase):
         self.assertEqual(so.SUPPLY_TYPES[".png"], "image")
 
 
+class BothSelectionPathsSayWhatTheyDid(unittest.TestCase):
+    """The stated prerequisite for trialling the findings tie-break again.
+
+    A counter watched choose_attempt while the mechanism also acts through
+    iteration_base, so a trial could show a difference between arms with no way to
+    tell whether the thing under test had fired. Twice before, a headline number
+    looked like a result and the mechanism had never run once.
+    """
+
+    def att(self, n, match, penalty):
+        return {"n": n, "match": match,
+                "report": {"match": match, "scorer": so.SCORER_VERSION,
+                           "penalty": penalty}}
+
+    def test_it_records_acting_and_what_that_cost(self):
+        recs = [self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]
+        with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
+        pick = with_repair.choose_attempt(recs)
+        note = with_repair.selection_note(recs, pick)
+        self.assertTrue(note["acted"])
+        self.assertTrue(note["could_have"])
+        self.assertEqual(note["fidelity_pick"], 5)
+        self.assertEqual(note["chosen"], 6)
+        self.assertAlmostEqual(note["gave_up"], 0.2, places=3)
+        self.assertAlmostEqual(note["penalty_saved"], 1.2, places=3)
+
+    def test_candidates_far_apart_are_not_an_opportunity(self):
+        # The subject two earlier trials were wasted on: a one-point tie-break
+        # cannot fire where the candidates differ by 12 to 24 points.
+        recs = [self.att(5, 80.0, 1.2), self.att(6, 74.0, 0.0)]
+        with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
+        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs))
+        self.assertFalse(note["acted"])
+        self.assertFalse(note["could_have"])
+
+    def test_equal_penalties_are_not_an_opportunity_either(self):
+        recs = [self.att(5, 80.0, 0.5), self.att(6, 79.8, 0.5)]
+        with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
+        note = with_repair.selection_note(recs, with_repair.choose_attempt(recs))
+        self.assertFalse(note["could_have"])
+
+    def test_it_says_whether_the_mechanism_was_even_on(self):
+        recs = [self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]
+        off = load_tool({"SPOT_ON_REPAIR": ""})
+        note = off.selection_note(recs, off.choose_attempt(recs))
+        self.assertFalse(note["on"])
+        self.assertFalse(note["acted"])
+        # Still reports that the chance was there, which is what makes an arm with
+        # the mechanism off a usable control rather than a blank.
+        self.assertTrue(note["could_have"])
+
+    def test_one_candidate_has_nothing_to_say(self):
+        self.assertIsNone(so.selection_note([self.att(5, 80.0, 0.0)],
+                                            self.att(5, 80.0, 0.0)))
+
+    def test_the_between_round_pick_is_recorded_too(self):
+        hist = [self.att(1, 70.0, 0.0), self.att(5, 80.0, 1.2), self.att(6, 79.8, 0.0)]
+        with_repair = load_tool({"SPOT_ON_REPAIR": "1"})
+        base, _ = with_repair.iteration_base(hist)
+        note = with_repair.iteration_base.last_note
+        self.assertEqual(base["n"], 6)
+        self.assertTrue(note["acted"])
+        self.assertEqual(note["fidelity_pick"], 5)
+
+
 class WhenTheRoundsSayTheReportIsWrong(unittest.TestCase):
     """The case this exists for, replayed.
 

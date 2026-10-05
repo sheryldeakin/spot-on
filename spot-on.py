@@ -2140,6 +2140,29 @@ def _penalty_of(att):
     return ((att.get("report") or {}).get("penalty")) or 0.0
 
 
+def selection_note(records, chosen, floor=None):
+    """What the tie-break did here, as a record rather than as a count.
+
+    Written by both places that select, so a trial can ask "did it fire" of the data
+    instead of of a counter that only one path increments.
+    """
+    if len(records) < 2:
+        return None
+    plain = max(records, key=rank_of)
+    note = {"on": bool(REPAIR_SELECTION), "candidates": len(records),
+            "fidelity_pick": plain["n"], "chosen": chosen["n"],
+            "acted": chosen["n"] != plain["n"],
+            "gave_up": round(rank_of(plain) - rank_of(chosen), 3),
+            "penalty_saved": round(_penalty_of(plain) - _penalty_of(chosen), 3)}
+    ceiling = max(rank_of(plain), float(floor or rank_of(plain)))
+    band = [r for r in records if rank_of(r) >= ceiling - REPAIR_TOLERANCE]
+    # Whether it COULD have acted matters as much as whether it did: a round where
+    # every candidate carries the same penalty is not evidence either way.
+    note["could_have"] = (len(band) >= 2
+                          and len(set(round(_penalty_of(r), 4) for r in band)) > 1)
+    return note
+
+
 def choose_attempt(records, floor=None):
     """Pick one of several attempts: fidelity, unless fidelity cannot tell them apart.
 
@@ -3286,6 +3309,9 @@ def iteration_base(history, slug=None):
         ceiling = rank_of(best)
         band = [a for a in history if rank_of(a) >= ceiling - REPAIR_TOLERANCE]
         best = min(band, key=lambda a: (_penalty_of(a), -rank_of(a), -a["n"]))
+    # The second place the tie-break acts. A trial once watched only the other one
+    # and could not say whether the thing under test had fired at all.
+    iteration_base.last_note = selection_note(history, best)
     latest = history[-1]
     if slug is not None:
         best = refresh_report(slug, best)
@@ -4134,8 +4160,11 @@ def run_iteration(slug, extra="", agent=None, candidates=None, insist=True, pane
     records = [record_attempt(slug, c, source=who, changes=ch,
                               meta=dict({"candidate_of": n, "candidates": len(drafts)}, **lists))
                for c, ch, who, lists in drafts]
-    best = choose_attempt(records, floor=_load_run(slug).get("best_match"))
+    floor = _load_run(slug).get("best_match")
+    best = choose_attempt(records, floor=floor)
     best["candidate_scores"] = [r["match"] for r in records]
+    best["selection"] = selection_note(records, best, floor=floor)
+    best["base_selection"] = getattr(iteration_base, "last_note", None)
     # What the round was pressed on, and whether it moved. This is the part the page
     # and the command line show: a fault that survives a round it was named in is the
     # reason a run stops climbing, and it used to be invisible.

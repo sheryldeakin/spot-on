@@ -1,0 +1,1392 @@
+{
+ "tolerance": 0.5,
+ "runs": [
+  {
+   "run": "hud-concept",
+   "rounds_with_candidates": 34,
+   "rounds_the_tiebreak_could_act_on": 21,
+   "rounds_it_would_change_the_pick": 10,
+   "best_match": 73.9,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 3,
+       "match": 69.3,
+       "penalty": 0.98
+      },
+      {
+       "n": 4,
+       "match": 69.6,
+       "penalty": 0.986
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.3
+    },
+    {
+     "base": 5,
+     "candidates": [
+      {
+       "n": 9,
+       "match": 70.1,
+       "penalty": 0.986
+      },
+      {
+       "n": 10,
+       "match": 70.5,
+       "penalty": 0.985
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 20,
+     "candidates": [
+      {
+       "n": 23,
+       "match": 71.1,
+       "penalty": 0.985
+      },
+      {
+       "n": 24,
+       "match": 70.7,
+       "penalty": 0.966
+      },
+      {
+       "n": 25,
+       "match": 70.6,
+       "penalty": 0.985
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.4
+    },
+    {
+     "base": 23,
+     "candidates": [
+      {
+       "n": 26,
+       "match": 71.1,
+       "penalty": 0.985
+      },
+      {
+       "n": 27,
+       "match": 71.1,
+       "penalty": 0.981
+      },
+      {
+       "n": 28,
+       "match": 71.1,
+       "penalty": 0.983
+      },
+      {
+       "n": 29,
+       "match": 71.2,
+       "penalty": 0.983
+      },
+      {
+       "n": 30,
+       "match": 71.4,
+       "penalty": 0.969
+      },
+      {
+       "n": 31,
+       "match": 71.2,
+       "penalty": 0.98
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 33,
+     "candidates": [
+      {
+       "n": 38,
+       "match": 71.9,
+       "penalty": 0.964
+      },
+      {
+       "n": 39,
+       "match": 71.4,
+       "penalty": 0.974
+      },
+      {
+       "n": 40,
+       "match": 71.4,
+       "penalty": 0.974
+      },
+      {
+       "n": 41,
+       "match": 71.4,
+       "penalty": 0.939
+      },
+      {
+       "n": 42,
+       "match": 71.5,
+       "penalty": 0.963
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.5
+    },
+    {
+     "base": 38,
+     "candidates": [
+      {
+       "n": 44,
+       "match": 71.9,
+       "penalty": 0.964
+      },
+      {
+       "n": 45,
+       "match": 72.0,
+       "penalty": 0.957
+      },
+      {
+       "n": 46,
+       "match": 71.9,
+       "penalty": 0.959
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 45,
+     "candidates": [
+      {
+       "n": 47,
+       "match": 72.0,
+       "penalty": 0.957
+      },
+      {
+       "n": 48,
+       "match": 72.0,
+       "penalty": 0.951
+      },
+      {
+       "n": 49,
+       "match": 72.0,
+       "penalty": 0.957
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 49,
+     "candidates": [
+      {
+       "n": 50,
+       "match": 72.0,
+       "penalty": 0.932
+      },
+      {
+       "n": 51,
+       "match": 72.0,
+       "penalty": 0.957
+      },
+      {
+       "n": 52,
+       "match": 72.1,
+       "penalty": 0.956
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.1
+    },
+    {
+     "base": 52,
+     "candidates": [
+      {
+       "n": 53,
+       "match": 72.2,
+       "penalty": 0.94
+      },
+      {
+       "n": 54,
+       "match": 72.2,
+       "penalty": 0.956
+      },
+      {
+       "n": 55,
+       "match": 72.2,
+       "penalty": 0.956
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 55,
+     "candidates": [
+      {
+       "n": 56,
+       "match": 72.2,
+       "penalty": 0.954
+      },
+      {
+       "n": 57,
+       "match": 72.2,
+       "penalty": 0.955
+      },
+      {
+       "n": 58,
+       "match": 72.3,
+       "penalty": 0.951
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 58,
+     "candidates": [
+      {
+       "n": 59,
+       "match": 73.4,
+       "penalty": 0.9
+      },
+      {
+       "n": 60,
+       "match": 73.1,
+       "penalty": 0.919
+      },
+      {
+       "n": 61,
+       "match": 73.1,
+       "penalty": 0.919
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 59,
+     "candidates": [
+      {
+       "n": 62,
+       "match": 73.2,
+       "penalty": 0.919
+      },
+      {
+       "n": 63,
+       "match": 73.1,
+       "penalty": 0.911
+      },
+      {
+       "n": 64,
+       "match": 73.3,
+       "penalty": 0.895
+      },
+      {
+       "n": 65,
+       "match": 73.4,
+       "penalty": 0.9
+      },
+      {
+       "n": 66,
+       "match": 73.4,
+       "penalty": 0.859
+      },
+      {
+       "n": 67,
+       "match": 73.2,
+       "penalty": 0.919
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 70,
+     "candidates": [
+      {
+       "n": 71,
+       "match": 73.5,
+       "penalty": 0.716
+      },
+      {
+       "n": 72,
+       "match": 73.4,
+       "penalty": 0.854
+      },
+      {
+       "n": 73,
+       "match": 73.5,
+       "penalty": 0.752
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 73,
+     "candidates": [
+      {
+       "n": 74,
+       "match": 73.6,
+       "penalty": 0.735
+      },
+      {
+       "n": 75,
+       "match": 73.5,
+       "penalty": 0.688
+      },
+      {
+       "n": 76,
+       "match": 73.5,
+       "penalty": 0.615
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.1
+    },
+    {
+     "base": 77,
+     "candidates": [
+      {
+       "n": 78,
+       "match": 73.6,
+       "penalty": 0.683
+      },
+      {
+       "n": 79,
+       "match": 73.6,
+       "penalty": 0.591
+      },
+      {
+       "n": 80,
+       "match": 73.7,
+       "penalty": 0.683
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.1
+    },
+    {
+     "base": 80,
+     "candidates": [
+      {
+       "n": 81,
+       "match": 73.7,
+       "penalty": 0.683
+      },
+      {
+       "n": 82,
+       "match": 73.7,
+       "penalty": 0.403
+      },
+      {
+       "n": 83,
+       "match": 73.5,
+       "penalty": 0.683
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 86,
+     "candidates": [
+      {
+       "n": 88,
+       "match": 73.8,
+       "penalty": 0.415
+      },
+      {
+       "n": 89,
+       "match": 73.8,
+       "penalty": 0.403
+      },
+      {
+       "n": 90,
+       "match": 73.9,
+       "penalty": 0.403
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 93,
+     "candidates": [
+      {
+       "n": 94,
+       "match": 73.9,
+       "penalty": 0.0
+      },
+      {
+       "n": 95,
+       "match": 73.9,
+       "penalty": 0.147
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 105,
+     "candidates": [
+      {
+       "n": 108,
+       "match": 73.9,
+       "penalty": 0.147
+      },
+      {
+       "n": 109,
+       "match": 73.9,
+       "penalty": 0.173
+      },
+      {
+       "n": 110,
+       "match": 73.9,
+       "penalty": 0.164
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 110,
+     "candidates": [
+      {
+       "n": 111,
+       "match": 73.9,
+       "penalty": 0.161
+      },
+      {
+       "n": 112,
+       "match": 73.6,
+       "penalty": 0.164
+      },
+      {
+       "n": 113,
+       "match": 73.6,
+       "penalty": 0.164
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 111,
+     "candidates": [
+      {
+       "n": 114,
+       "match": 73.9,
+       "penalty": 0.161
+      },
+      {
+       "n": 115,
+       "match": 73.9,
+       "penalty": 0.161
+      },
+      {
+       "n": 116,
+       "match": 73.9,
+       "penalty": 0.0
+      },
+      {
+       "n": 117,
+       "match": 73.9,
+       "penalty": 0.161
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "media-istockphoto-com-id-2167384710-vector-simpl",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 4,
+   "rounds_it_would_change_the_pick": 3,
+   "best_match": 96.0,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 3,
+       "match": 95.6,
+       "penalty": 0.248
+      },
+      {
+       "n": 4,
+       "match": 95.6,
+       "penalty": 0.369
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 4,
+     "candidates": [
+      {
+       "n": 5,
+       "match": 95.9,
+       "penalty": 0.284
+      },
+      {
+       "n": 6,
+       "match": 95.7,
+       "penalty": 0.0
+      },
+      {
+       "n": 7,
+       "match": 95.9,
+       "penalty": 0.37
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.2
+    },
+    {
+     "base": 7,
+     "candidates": [
+      {
+       "n": 8,
+       "match": 95.5,
+       "penalty": 0.284
+      },
+      {
+       "n": 9,
+       "match": 95.8,
+       "penalty": 0.284
+      },
+      {
+       "n": 10,
+       "match": 95.8,
+       "penalty": 0.284
+      },
+      {
+       "n": 11,
+       "match": 95.9,
+       "penalty": 0.12
+      },
+      {
+       "n": 12,
+       "match": 95.8,
+       "penalty": 0.0
+      },
+      {
+       "n": 13,
+       "match": 96.0,
+       "penalty": 0.37
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.2
+    },
+    {
+     "base": 13,
+     "candidates": [
+      {
+       "n": 14,
+       "match": 96.0,
+       "penalty": 0.12
+      },
+      {
+       "n": 15,
+       "match": 96.0,
+       "penalty": 0.284
+      },
+      {
+       "n": 16,
+       "match": 96.0,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cf-fidelity",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 3,
+   "rounds_it_would_change_the_pick": 2,
+   "best_match": 96.0,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 96.0,
+       "penalty": 0.12
+      },
+      {
+       "n": 3,
+       "match": 95.9,
+       "penalty": 0.12
+      },
+      {
+       "n": 4,
+       "match": 95.9,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.1
+    },
+    {
+     "base": 2,
+     "candidates": [
+      {
+       "n": 5,
+       "match": 95.7,
+       "penalty": 0.157
+      },
+      {
+       "n": 6,
+       "match": 95.7,
+       "penalty": 0.152
+      },
+      {
+       "n": 7,
+       "match": 95.7,
+       "penalty": 0.148
+      },
+      {
+       "n": 8,
+       "match": 95.9,
+       "penalty": 0.169
+      },
+      {
+       "n": 9,
+       "match": 96.0,
+       "penalty": 0.13
+      },
+      {
+       "n": 10,
+       "match": 95.9,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.1
+    },
+    {
+     "base": 9,
+     "candidates": [
+      {
+       "n": 11,
+       "match": 96.0,
+       "penalty": 0.0
+      },
+      {
+       "n": 12,
+       "match": 96.0,
+       "penalty": 0.143
+      },
+      {
+       "n": 13,
+       "match": 95.9,
+       "penalty": 0.138
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cf-repair",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 3,
+   "rounds_it_would_change_the_pick": 3,
+   "best_match": 96.0,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 95.6,
+       "penalty": 0.0
+      },
+      {
+       "n": 3,
+       "match": 95.9,
+       "penalty": 0.12
+      },
+      {
+       "n": 4,
+       "match": 96.0,
+       "penalty": 0.374
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.4
+    },
+    {
+     "base": 4,
+     "candidates": [
+      {
+       "n": 5,
+       "match": 96.0,
+       "penalty": 0.373
+      },
+      {
+       "n": 6,
+       "match": 96.0,
+       "penalty": 0.368
+      },
+      {
+       "n": 7,
+       "match": 95.9,
+       "penalty": 0.422
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 6,
+     "candidates": [
+      {
+       "n": 8,
+       "match": 95.9,
+       "penalty": 0.368
+      },
+      {
+       "n": 9,
+       "match": 95.9,
+       "penalty": 0.368
+      },
+      {
+       "n": 10,
+       "match": 95.9,
+       "penalty": 0.368
+      },
+      {
+       "n": 11,
+       "match": 95.7,
+       "penalty": 0.135
+      },
+      {
+       "n": 12,
+       "match": 96.0,
+       "penalty": 0.366
+      },
+      {
+       "n": 13,
+       "match": 95.7,
+       "penalty": 0.135
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.3
+    }
+   ]
+  },
+  {
+   "run": "cg-fidelity",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 3,
+   "rounds_it_would_change_the_pick": 1,
+   "best_match": 96.1,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 95.8,
+       "penalty": 0.12
+      },
+      {
+       "n": 3,
+       "match": 95.8,
+       "penalty": 0.0
+      },
+      {
+       "n": 4,
+       "match": 95.9,
+       "penalty": 0.134
+      },
+      {
+       "n": 5,
+       "match": 96.0,
+       "penalty": 0.284
+      },
+      {
+       "n": 6,
+       "match": 95.8,
+       "penalty": 0.48
+      },
+      {
+       "n": 7,
+       "match": 95.8,
+       "penalty": 0.38
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.2
+    },
+    {
+     "base": 5,
+     "candidates": [
+      {
+       "n": 8,
+       "match": 95.9,
+       "penalty": 0.284
+      },
+      {
+       "n": 9,
+       "match": 96.1,
+       "penalty": 0.284
+      },
+      {
+       "n": 10,
+       "match": 95.9,
+       "penalty": 0.441
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 9,
+     "candidates": [
+      {
+       "n": 11,
+       "match": 96.0,
+       "penalty": 0.371
+      },
+      {
+       "n": 12,
+       "match": 96.0,
+       "penalty": 0.286
+      },
+      {
+       "n": 13,
+       "match": 96.0,
+       "penalty": 0.373
+      },
+      {
+       "n": 14,
+       "match": 96.1,
+       "penalty": 0.284
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "bl-with",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 2,
+   "rounds_it_would_change_the_pick": 2,
+   "best_match": 74.2,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 74.0,
+       "penalty": 0.147
+      },
+      {
+       "n": 3,
+       "match": 74.2,
+       "penalty": 0.164
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.2
+    },
+    {
+     "base": 3,
+     "candidates": [
+      {
+       "n": 4,
+       "match": 74.2,
+       "penalty": 0.164
+      },
+      {
+       "n": 5,
+       "match": 74.2,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cg-repair",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 2,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 95.8,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 95.5,
+       "penalty": 0.162
+      },
+      {
+       "n": 3,
+       "match": 95.5,
+       "penalty": 0.173
+      },
+      {
+       "n": 4,
+       "match": 95.8,
+       "penalty": 0.12
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    },
+    {
+     "base": 6,
+     "candidates": [
+      {
+       "n": 8,
+       "match": 95.7,
+       "penalty": 0.0
+      },
+      {
+       "n": 9,
+       "match": 95.3,
+       "penalty": 0.217
+      },
+      {
+       "n": 10,
+       "match": 95.8,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cmarix-com-blog-why-to-use-threejs-in-web-applic",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 2,
+   "rounds_it_would_change_the_pick": 1,
+   "best_match": 79.6,
+   "detail": [
+    {
+     "base": 2,
+     "candidates": [
+      {
+       "n": 3,
+       "match": 77.7,
+       "penalty": 0.273
+      },
+      {
+       "n": 4,
+       "match": 77.5,
+       "penalty": 0.358
+      },
+      {
+       "n": 5,
+       "match": 77.9,
+       "penalty": 0.278
+      }
+     ],
+     "would_change_pick": true,
+     "fidelity_given_up": 0.2
+    },
+    {
+     "base": 7,
+     "candidates": [
+      {
+       "n": 9,
+       "match": 79.4,
+       "penalty": 0.278
+      },
+      {
+       "n": 10,
+       "match": 79.4,
+       "penalty": 0.278
+      },
+      {
+       "n": 11,
+       "match": 79.3,
+       "penalty": 0.278
+      },
+      {
+       "n": 13,
+       "match": 79.6,
+       "penalty": 0.126
+      },
+      {
+       "n": 15,
+       "match": 79.6,
+       "penalty": 0.139
+      },
+      {
+       "n": 16,
+       "match": 79.2,
+       "penalty": 0.139
+      },
+      {
+       "n": 17,
+       "match": 79.1,
+       "penalty": 0.139
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cm-cap3",
+   "rounds_with_candidates": 2,
+   "rounds_the_tiebreak_could_act_on": 1,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 80.6,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 79.4,
+       "penalty": 0.139
+      },
+      {
+       "n": 3,
+       "match": 79.4,
+       "penalty": 0.139
+      },
+      {
+       "n": 4,
+       "match": 79.6,
+       "penalty": 0.0
+      },
+      {
+       "n": 5,
+       "match": 79.6,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "cs-fidelity",
+   "rounds_with_candidates": 2,
+   "rounds_the_tiebreak_could_act_on": 1,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 96.0,
+   "detail": [
+    {
+     "base": 4,
+     "candidates": [
+      {
+       "n": 5,
+       "match": 95.7,
+       "penalty": 0.0
+      },
+      {
+       "n": 6,
+       "match": 95.8,
+       "penalty": 0.0
+      },
+      {
+       "n": 7,
+       "match": 95.8,
+       "penalty": 0.191
+      },
+      {
+       "n": 8,
+       "match": 95.9,
+       "penalty": 0.0
+      },
+      {
+       "n": 9,
+       "match": 95.9,
+       "penalty": 0.0
+      },
+      {
+       "n": 10,
+       "match": 95.7,
+       "penalty": 0.0
+      },
+      {
+       "n": 11,
+       "match": 95.8,
+       "penalty": 0.0
+      },
+      {
+       "n": 12,
+       "match": 95.7,
+       "penalty": 0.0
+      },
+      {
+       "n": 13,
+       "match": 96.0,
+       "penalty": 0.0
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "hi-cap3",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 1,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 87.1,
+   "detail": [
+    {
+     "base": 1,
+     "candidates": [
+      {
+       "n": 2,
+       "match": 85.2,
+       "penalty": 0.228
+      },
+      {
+       "n": 3,
+       "match": 85.2,
+       "penalty": 0.214
+      },
+      {
+       "n": 4,
+       "match": 85.6,
+       "penalty": 0.171
+      },
+      {
+       "n": 5,
+       "match": 85.2,
+       "penalty": 0.171
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "rp-repair",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 1,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 85.1,
+   "detail": [
+    {
+     "base": 6,
+     "candidates": [
+      {
+       "n": 7,
+       "match": 85.1,
+       "penalty": 0.214
+      },
+      {
+       "n": 8,
+       "match": 84.8,
+       "penalty": 0.215
+      }
+     ],
+     "would_change_pick": false,
+     "fidelity_given_up": 0.0
+    }
+   ]
+  },
+  {
+   "run": "ab-one-job",
+   "rounds_with_candidates": 1,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 72.8,
+   "detail": []
+  },
+  {
+   "run": "ab-three-jobs",
+   "rounds_with_candidates": 2,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 74.7,
+   "detail": []
+  },
+  {
+   "run": "bl-without",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 74.0,
+   "detail": []
+  },
+  {
+   "run": "blog-cdn-cmarix-com-blog-wp-content-uploads-2018",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 86.8,
+   "detail": []
+  },
+  {
+   "run": "cap2",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 78.3,
+   "detail": []
+  },
+  {
+   "run": "cap3",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 78.4,
+   "detail": []
+  },
+  {
+   "run": "cap5",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 85.5,
+   "detail": []
+  },
+  {
+   "run": "chatgpt-image-sep-23-2026-05-36-15-pm",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 71.6,
+   "detail": []
+  },
+  {
+   "run": "cm-nocap",
+   "rounds_with_candidates": 1,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 82.7,
+   "detail": []
+  },
+  {
+   "run": "cs-repair",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 96.2,
+   "detail": []
+  },
+  {
+   "run": "gradual",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 85.1,
+   "detail": []
+  },
+  {
+   "run": "hi-nocap",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 90.3,
+   "detail": []
+  },
+  {
+   "run": "nocap",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 92.6,
+   "detail": []
+  },
+  {
+   "run": "panel-support",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 86.1,
+   "detail": []
+  },
+  {
+   "run": "pricing-demo",
+   "rounds_with_candidates": 4,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 74.7,
+   "detail": []
+  },
+  {
+   "run": "reddit-com",
+   "rounds_with_candidates": 2,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 88.2,
+   "detail": []
+  },
+  {
+   "run": "retest-support",
+   "rounds_with_candidates": 2,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 83.4,
+   "detail": []
+  },
+  {
+   "run": "retrial-support",
+   "rounds_with_candidates": 5,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 75.9,
+   "detail": []
+  },
+  {
+   "run": "rp-fidelity",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 82.2,
+   "detail": []
+  },
+  {
+   "run": "three-model-support",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 86.3,
+   "detail": []
+  },
+  {
+   "run": "trial-link-login",
+   "rounds_with_candidates": 3,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 72.8,
+   "detail": []
+  },
+  {
+   "run": "trial-rebuild-support",
+   "rounds_with_candidates": 5,
+   "rounds_the_tiebreak_could_act_on": 0,
+   "rounds_it_would_change_the_pick": 0,
+   "best_match": 72.6,
+   "detail": []
+  }
+ ]
+}

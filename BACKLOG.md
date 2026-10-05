@@ -21,11 +21,15 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   pitch" are one job with no words in common. The schema now asks rounds to reuse an
   earlier wording, which is unmeasured.
 - **The findings tie-break is off by default** (`SPOT_ON_REPAIR`). Size: medium.
-  Trigger: a subject with headroom. One trial cleared both findings, held them for
-  0.3 of fidelity, and stopped climbing in the same run. One page, one run.
-- **Instrument both selection paths** before trialling that again. Size: small.
-  Trigger: doing the above. The flips counter watches `choose_attempt` only, and the
-  mechanism acts through `iteration_base`.
+  Trigger: ready to run. Both selection paths now record what they did
+  (`selection` and `base_selection` on each attempt), so a trial can ask the data
+  whether the mechanism fired. A survey of what is already on disk
+  (`scripts/tiebreak_survey.py`) says it is not rare: across 136 rounds with more
+  than one candidate it could act on 44 and would change the pick on 22. Subjects
+  with both headroom and ties are `bl-with` (74.2, changes 2 of 3 chances) and
+  `cmarix` (79.6); the 96-point runs tie constantly but have nowhere to climb.
+  What is still unknown is whether the changed pick ends the run higher, which
+  needs two arms on one seed.
 
 ## Guards that exist because a written rule did not hold
 
