@@ -233,10 +233,15 @@ class EchoedNumbers(unittest.TestCase):
         self.assertEqual(int(m.group(1)), GUARDS["declared"])
         self.assertEqual(int(m.group(2)), GUARDS["caught"])
         self.assertEqual(int(m.group(3)), len(GUARDS["unguarded"]))
-        m = re.search(r"(\d+) of the (\d+) numeric constants in the tool", README)
+        # The README now claims every constant is accounted for, which is a
+        # stronger claim than a count and has to be checked as one.
+        m = re.search(r"All (\d+) numeric constants in the tool are now either "
+                      r"declared or excused", README)
         self.assertIsNotNone(m, "the undeclared-constant sentence changed")
-        self.assertEqual(int(m.group(1)), len(GUARDS["undeclared"]))
-        self.assertEqual(int(m.group(2)), GUARDS["constants"])
+        self.assertEqual(int(m.group(1)), GUARDS["constants"])
+        self.assertEqual(GUARDS["undeclared"], [],
+                         "the README says all of them are accounted for and "
+                         "the last run found some that are not")
 
     def test_every_declared_guard_still_names_a_real_constant(self):
         """A renamed or deleted threshold would otherwise leave the checker

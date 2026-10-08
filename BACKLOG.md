@@ -6,25 +6,15 @@ schedule. Finishing an item deletes its line in the commit that does the work.
 
 ## Deferred
 
-- **Four letter-case thresholds, each removable without a test noticing.** Size:
-  small. Trigger: the next change to `_case_findings`. `scripts/check_guards.py`
-  moves a threshold and requires the class that guards it to go red. Of 16
-  declared thresholds 12 are caught; the 4 that are not are all of
-  `CASE_MIN_BAND`, `CASE_FLAT`, `CASE_CHANGE` and `CASE_MARKS`. Measured: disabling
-  any one of them leaves every test green, and disabling all four together fails two,
-  so they are collectively load-bearing and individually redundant on the fixtures
-  that exist. That is a design smell rather than a test gap. Either build pairs of
-  pages that isolate each (tried, and the readings overlap: a heavier face and a
-  larger one are rejected by `CASE_FLAT` and `CASE_CHANGE` at once), or accept that
-  fewer guards would do and delete the ones that cannot be shown to earn their place.
-  My reading is the second.
+- **11 of 48 declared thresholds are still guarded by nothing.** Size: small each.
+  Trigger: the next change to whichever detector owns one. `scripts/check_guards.py`
+  moves each number and requires the test class that guards it to go red; 37 do.
+  The 11 that do not are `COLOUR_FALLOFF`, `CONTENT_ACCEPT`, `ELEMENT_BUILT`, `ELEMENT_MOVED`, `ICON_MARGIN`, `INK_ABOVE`, `INK_EDGE`, `INK_MIN_WIDTH`, `NEEDS_FONT_WEAK`, `PRESS_LIMIT`, `RULE_SAME`. Each needs a page built so that only that
+  threshold rejects it, the way the four letter-case ones were done: that took
+  measuring eight pairs to find one per guard, so budget an hour for a handful
+  rather than a minute each. All 76 numeric constants are declared or excused now,
+  so this is a list that shrinks rather than an unknown.
 
-- **48 of 76 numeric constants have no declared guard.** Size:
-  medium, and it does not have to be done at once. `scripts/check_guards.py` lists
-  them. Each is either a threshold that should have a test that goes red when it
-  moves, or a number that is not a threshold at all and belongs in the script's
-  `NOT_A_THRESHOLD` set with a reason. The point is that the list shrinks and that a
-  new constant cannot be added without landing on it.
 
 - **Lexical dedup cannot catch paraphrases, and that is now the only thing left in
   the worklists.** Size: medium. Trigger: a worklist filling with restatements again.
@@ -90,6 +80,21 @@ schedule. Finishing an item deletes its line in the commit that does the work.
   stays unnamed on purpose: 0.5 points, which is not worth a line.
 
 ## Deliberate limits
+
+- **The four letter-case thresholds were not redundant, they were masking each
+  other.** Recorded because this entry said the opposite and the opposite was acted
+  on. `check_guards.py` reported all four as guarded by nothing, which read as
+  "delete some". Measuring it properly: every face change `CASE_FLAT` rejects is
+  also under `CASE_CHANGE`, so moving either alone left the suite green. Four pages
+  now exist, each rejected by exactly one of them, found by measuring eight pairs.
+  The one worth knowing: without `CASE_CHANGE`, two IDENTICAL pages are reported as
+  a letter-case fault, because a word with no ascenders fills its band evenly and
+  reads 1.02 on both sides.
+- **A wrong word with many ascenders still reads as capitals.** Measured: against
+  "Continue", the words "Highball" and "Daylight" are reported as a case change,
+  because both fill the letter band the way capitals do and both keep the glyph
+  count. The sentence the report writes says so rather than asserting the cause,
+  which is the honest answer available without reading the letters themselves.
 
 - **Both worklist filters are word lists under a rule, so a new phrasing gets
   through.** They were built from every line on this machine and are checked against

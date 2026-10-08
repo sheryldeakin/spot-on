@@ -3063,6 +3063,38 @@ class TextTheWrongColour(unittest.TestCase):
         self.assertTrue(self.findings(self.shot(self.page("#64748B")),
                                       self.shot(self.page("#3D5A99"))))
 
+    def test_a_hue_shift_too_small_to_see_is_not_a_fault_either(self):
+        """INK_CHROMA, with no browser in it.
+
+        The rendered version of this test flapped in `scripts/check_guards.py`:
+        one run said the threshold was guarded by nothing, the next said it was
+        caught. The cause is that element matching over two real screenshots does
+        not always pair the same boxes, so with the gate disabled there was
+        sometimes no pair to report on and the class passed. A checker that
+        changes its mind teaches you to ignore it, so this builds the pair by
+        hand and the only variable left is the threshold.
+        """
+        size = (240, 60)
+
+        def page(ink):
+            rgb = np.full((60, 240, 3), 255.0)
+            rgb[20:34, 20:200] = ink          # a run of ink, wide and short
+            return rgb
+
+        el = {"kind": "text", "x": 18, "y": 18, "w": 184, "h": 18}
+        matched = [(dict(el), dict(el))]
+
+        def css(v):
+            return int(v)
+
+        slate, nudged, indigo = (100, 116, 139), (101, 117, 144), (61, 90, 153)
+        self.assertEqual(
+            so._colour_findings(matched, css, size, page(slate), page(nudged)), [],
+            "two slates a nudge apart were reported as a colour fault")
+        self.assertTrue(
+            so._colour_findings(matched, css, size, page(slate), page(indigo)),
+            "a slate drawn indigo was not reported, so this proves nothing")
+
     def test_it_becomes_a_pressable_fault(self):
         rep = {"elements": {"colour": [{"x": 10, "y": 570, "where": "left",
                                         "design": "#7CF2FD", "attempt": "#E6F8FF",
@@ -4860,6 +4892,46 @@ class CapitalsAreNotAWiderBox(unittest.TestCase):
         got = self.found(self.shot("a.png", label="Continue", size=9),
                          self.shot("b.png", label="CONTINUE", size=9))
         self.assertEqual(got, [])
+
+    # ---- one case per threshold, each chosen because ONLY that one rejects it ----
+    #
+    # `scripts/check_guards.py` reported all four of these thresholds as guarded by
+    # nothing, and the backlog said they were redundant and some should go. Measuring
+    # it properly says the opposite: they were MASKING each other. Every face change
+    # that `CASE_FLAT` rejects is also under `CASE_CHANGE`, so moving either one alone
+    # left the tests green and both looked pointless. The four pairs below were found
+    # by searching for a case each threshold rejects on its own, and three of them say
+    # something the fixtures above could not.
+
+    def test_a_wrong_word_with_the_same_letters_is_not_a_case_change(self):
+        """CASE_FLAT alone. Continue against Flatbill: both eight glyphs, the reading
+        moves 0.33 so the change gate passes it, and the band is only 0.74 filled so
+        it is not capitals. Without this threshold the report would call a wrong word
+        a case change and send a round after `text-transform`."""
+        self.assertEqual(self.found(self.shot("a.png", label="Continue"),
+                                    self.shot("b.png", label="Flatbill")), [])
+
+    def test_two_identical_pages_are_never_a_case_change(self):
+        """CASE_CHANGE alone, and it is the one that matters most. A word with no
+        ascenders fills its band evenly, so it reads 1.02 on BOTH sides and passes
+        the capitals gate twice. Without a floor on the difference, two identical
+        renders report a case change."""
+        self.assertEqual(self.found(self.shot("a.png", label="ocean nurse"),
+                                    self.shot("b.png", label="ocean nurse")), [])
+
+    def test_a_different_word_of_a_different_length_is_not_a_case_change(self):
+        """CASE_MARKS alone. Continue against surname reads 0.41 to 1.04, which looks
+        exactly like capitals, and the glyph count is what gives it away: eight
+        against six."""
+        self.assertEqual(self.found(self.shot("a.png", label="Continue"),
+                                    self.shot("b.png", label="surname")), [])
+
+    def test_the_thresholds_are_the_ones_the_tests_were_chosen_for(self):
+        """The cases above are only meaningful at the values they were measured at,
+        so a change to any of them has to come back here and re-measure rather than
+        find the suite still green."""
+        self.assertEqual((so.CASE_MIN_BAND, so.CASE_FLAT, so.CASE_CHANGE,
+                          so.CASE_MARKS), (10, 0.90, 0.25, 1))
 
 
 class ASoftShadowNothingElseCanSee(unittest.TestCase):

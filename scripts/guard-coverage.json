@@ -1,91 +1,84 @@
 {
- "declared": 16,
- "caught": 12,
+ "declared": 48,
+ "caught": 37,
  "unguarded": [
-  "CASE_CHANGE",
-  "CASE_FLAT",
-  "CASE_MARKS",
-  "CASE_MIN_BAND"
- ],
- "constants": 76,
- "undeclared": [
-  "ARG_SAFE_CHARS",
-  "ASKS_MAX",
-  "CMD_SHIM_LIMIT",
   "COLOUR_FALLOFF",
   "CONTENT_ACCEPT",
-  "CONTENT_FAR_W",
-  "CONTENT_GATE",
-  "CREATE_PROCESS_LIMIT",
-  "DELTA_E_VISIBLE",
-  "DISPUTE_WORDS",
-  "ELEMENT_BEHIND",
   "ELEMENT_BUILT",
-  "ELEMENT_MIN",
   "ELEMENT_MOVED",
-  "ELEMENT_TAIL",
-  "ELEMENT_TAIL_MIN",
-  "FILL_DELTA",
-  "FINDING_PENALTY",
-  "FIND_LIMIT",
-  "FIND_TIMEOUT",
-  "GIVE_UP_AFTER",
-  "HOLLOW_INK_GAP",
-  "ICON_FAMILY",
   "ICON_MARGIN",
-  "ICON_NORM",
-  "ICON_READABLE",
   "INK_ABOVE",
   "INK_EDGE",
-  "INK_MIN_PIXELS",
   "INK_MIN_WIDTH",
-  "INK_SHARE",
-  "INSIST_CANDIDATES",
-  "LAYOUT_TRUST",
-  "NEEDS_ARTWORK_SHARE",
-  "NEEDS_FONT_ROUNDS",
   "NEEDS_FONT_WEAK",
-  "NEEDS_VERSION",
-  "PLATEAU_GAIN",
-  "PLATEAU_ROUNDS",
   "PRESS_LIMIT",
-  "REPAIR_TOLERANCE",
-  "RESCORE_WITHIN",
-  "RESIDUAL_SCALE",
-  "RULE_SAME",
-  "UNEXPLAINED_BELOW",
-  "WORKLIST_MAX",
-  "WORKLIST_SAME",
-  "WORKLIST_WORDS"
+  "RULE_SAME"
  ],
+ "constants": 76,
+ "undeclared": [],
  "rows": [
   {
    "constant": "CASE_CHANGE",
    "target": "CapitalsAreNotAWiderBox",
    "was": "0.25",
-   "moved_to": "0.01",
-   "result": "NO GUARD"
+   "moved_to": "0.0",
+   "result": "caught"
   },
   {
    "constant": "CASE_FLAT",
    "target": "CapitalsAreNotAWiderBox",
    "was": "0.90",
    "moved_to": "0.10",
-   "result": "NO GUARD"
+   "result": "caught"
   },
   {
    "constant": "CASE_MARKS",
    "target": "CapitalsAreNotAWiderBox",
    "was": "1",
    "moved_to": "99",
-   "result": "NO GUARD"
+   "result": "caught"
   },
   {
    "constant": "CASE_MIN_BAND",
    "target": "CapitalsAreNotAWiderBox",
    "was": "10",
    "moved_to": "3",
+   "result": "caught"
+  },
+  {
+   "constant": "COLOUR_FALLOFF",
+   "target": "ColourIsMeasuredPerceptually",
+   "was": "15.3",
+   "moved_to": "10000.0",
    "result": "NO GUARD"
+  },
+  {
+   "constant": "CONTENT_ACCEPT",
+   "target": "PairingElementsByAppearance",
+   "was": "0.35",
+   "moved_to": "0.0",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "CONTENT_FAR_W",
+   "target": "PairingElementsByAppearance",
+   "was": "2.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "CONTENT_GATE",
+   "target": "PairingElementsByAppearance",
+   "was": "1.0",
+   "moved_to": "9999.0",
+   "result": "caught"
+  },
+  {
+   "constant": "DELTA_E_VISIBLE",
+   "target": "ColourIsMeasuredPerceptually",
+   "was": "2.3",
+   "moved_to": "0.0",
+   "result": "caught"
   },
   {
    "constant": "DISPUTE_AFTER",
@@ -93,6 +86,76 @@
    "was": "2",
    "moved_to": "1",
    "result": "caught"
+  },
+  {
+   "constant": "DISPUTE_WORDS",
+   "target": "WhenTheRoundsSayTheReportIsWrong",
+   "was": "60",
+   "moved_to": "5",
+   "result": "caught"
+  },
+  {
+   "constant": "ELEMENT_BEHIND",
+   "target": "ElementsAreScoredOnTheirOwn",
+   "was": "10",
+   "moved_to": "0",
+   "result": "caught"
+  },
+  {
+   "constant": "ELEMENT_BUILT",
+   "target": "ElementsAreScoredOnTheirOwn",
+   "was": "70",
+   "moved_to": "0",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "ELEMENT_MOVED",
+   "target": "ElementFeedback",
+   "was": "6",
+   "moved_to": "999",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "FILL_DELTA",
+   "target": "PanelFillIsMeasured",
+   "was": "3.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "FINDING_PENALTY",
+   "target": "WhatTheReportAskedForAndDidNotGet",
+   "was": "1.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "GIVE_UP_AFTER",
+   "target": "PressingUnfixedProblems",
+   "was": "3",
+   "moved_to": "999",
+   "result": "caught"
+  },
+  {
+   "constant": "HOLLOW_INK_GAP",
+   "target": "AnEmptyContainerHasToBeEmpty",
+   "was": "20.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "ICON_FAMILY",
+   "target": "AGlyphFamilyWhenTheVariantIsACoinToss",
+   "was": "2",
+   "moved_to": "99",
+   "result": "caught"
+  },
+  {
+   "constant": "ICON_MARGIN",
+   "target": "WhatTheSetKnowsAboutOneWell",
+   "was": "0.03",
+   "moved_to": "0.0",
+   "result": "NO GUARD"
   },
   {
    "constant": "ICON_NAME",
@@ -109,10 +172,108 @@
    "result": "caught"
   },
   {
+   "constant": "INK_ABOVE",
+   "target": "ComponentsIsolateTheirError",
+   "was": "18",
+   "moved_to": "0",
+   "result": "NO GUARD"
+  },
+  {
    "constant": "INK_CHROMA",
    "target": "TextTheWrongColour",
    "was": "12.0",
    "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "INK_EDGE",
+   "target": "ComponentsIsolateTheirError",
+   "was": "6.0",
+   "moved_to": "0.0",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "INK_MIN_WIDTH",
+   "target": "TextTheWrongColour",
+   "was": "60",
+   "moved_to": "0",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "INK_SHARE",
+   "target": "TextTheWrongColour",
+   "was": "0.04",
+   "moved_to": "1.0",
+   "result": "caught"
+  },
+  {
+   "constant": "LAYOUT_TRUST",
+   "target": "PairingElementsByAppearance",
+   "was": "0.8",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "NEEDS_ARTWORK_SHARE",
+   "target": "WhatThePageNeedsFromThePerson",
+   "was": "15.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "NEEDS_FONT_ROUNDS",
+   "target": "WhatThePageNeedsFromThePerson",
+   "was": "3",
+   "moved_to": "0",
+   "result": "caught"
+  },
+  {
+   "constant": "NEEDS_FONT_WEAK",
+   "target": "WhatThePageNeedsFromThePerson",
+   "was": "0.25",
+   "moved_to": "0.0",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "PLATEAU_GAIN",
+   "target": "ThingsThePersonWantsFixed",
+   "was": "0.1",
+   "moved_to": "9999.0",
+   "result": "caught"
+  },
+  {
+   "constant": "PLATEAU_ROUNDS",
+   "target": "ThingsThePersonWantsFixed",
+   "was": "3",
+   "moved_to": "999",
+   "result": "caught"
+  },
+  {
+   "constant": "PRESS_LIMIT",
+   "target": "PressingUnfixedProblems",
+   "was": "3",
+   "moved_to": "999",
+   "result": "NO GUARD"
+  },
+  {
+   "constant": "REPAIR_TOLERANCE",
+   "target": "BothSelectionPathsSayWhatTheyDid",
+   "was": "0.5",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "RESCORE_WITHIN",
+   "target": "AllTheContendersAreOnOneScorer",
+   "was": "20.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "RESIDUAL_SCALE",
+   "target": "WhatTheReportAskedForAndDidNotGet",
+   "was": "3.0",
+   "moved_to": "0.001",
    "result": "caught"
   },
   {
@@ -128,6 +289,13 @@
    "was": "0.75",
    "moved_to": "0.0",
    "result": "caught"
+  },
+  {
+   "constant": "RULE_SAME",
+   "target": "LinesNothingElseCanSee",
+   "was": "6",
+   "moved_to": "0",
+   "result": "NO GUARD"
   },
   {
    "constant": "RULE_SHARE",
@@ -169,6 +337,20 @@
    "target": "ASoftShadowNothingElseCanSee",
    "was": "4",
    "moved_to": "0",
+   "result": "caught"
+  },
+  {
+   "constant": "UNEXPLAINED_BELOW",
+   "target": "ReportWatchesItself",
+   "was": "80.0",
+   "moved_to": "0.0",
+   "result": "caught"
+  },
+  {
+   "constant": "WORKLIST_SAME",
+   "target": "TheRoundsKeepAListBetweenThem",
+   "was": "0.5",
+   "moved_to": "0.0",
    "result": "caught"
   }
  ]
